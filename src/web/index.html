@@ -19,6 +19,15 @@
                 --ok: #4ec9a3;
                 --warn: #d9a441;
                 --err: #e0556a;
+                /* thinking-level composer border colors (mirror pi-tui
+                   theme.getThinkingBorderColor; bashMode is green) */
+                --think-off: #7d8aa0;
+                --think-minimal: #6e6e6e;
+                --think-low: #5f87af;
+                --think-medium: #81a2be;
+                --think-high: #b294bb;
+                --think-xhigh: #d183e8;
+                --bash-mode: #4ec9a3;
             }
             *::selection {
                 background: var(--acc);
@@ -172,7 +181,7 @@
                 padding: 8px 12px;
                 border-bottom: 1px solid var(--line);
                 color: var(--acc);
-                font-size: 12px;
+                font-size: 14px;
             }
             .surface > .sbody {
                 padding: 12px;
@@ -187,7 +196,7 @@
                 padding: 4px 14px;
                 border-top: 1px solid var(--line);
                 color: var(--dim);
-                font-size: 12px;
+                font-size: 14px;
             }
             .statusbar.show {
                 display: flex;
@@ -242,7 +251,7 @@
                 padding: 10px 14px;
                 border-bottom: 1px solid var(--line);
                 color: var(--acc);
-                font-size: 12px;
+                font-size: 14px;
                 text-transform: uppercase;
                 letter-spacing: 0.08em;
             }
@@ -270,7 +279,7 @@
                 padding: 8px 12px;
                 max-width: 320px;
                 box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-                font-size: 13px;
+                font-size: 14px;
             }
             .toast.info {
                 border-left-color: var(--acc);
@@ -288,7 +297,7 @@
             }
             .msg .role {
                 color: var(--dim);
-                font-size: 12px;
+                font-size: 14px;
                 text-transform: uppercase;
                 letter-spacing: 0.08em;
             }
@@ -354,7 +363,7 @@
                 background: color-mix(in srgb, var(--ok) 7%, #0c1117);
                 padding: 5px 8px;
                 margin: 6px 0;
-                font-size: 13px;
+                font-size: 14px;
                 border-radius: 0 4px 4px 0;
             }
             .tool.pending {
@@ -402,7 +411,7 @@
                 padding: 0;
                 background: none;
                 color: var(--txt);
-                font-size: 12px;
+                font-size: 14px;
                 white-space: pre-wrap;
                 word-break: break-word;
                 overflow-x: auto;
@@ -411,7 +420,7 @@
             .tool-more {
                 margin-top: 3px;
                 color: var(--acc2);
-                font-size: 12px;
+                font-size: 14px;
                 cursor: pointer;
                 user-select: none;
             }
@@ -423,11 +432,11 @@
                 padding-left: 10px;
                 margin: 8px 0;
                 color: var(--dim);
-                font-size: 13px;
+                font-size: 14px;
             }
             .thinking-block .think-head {
                 color: var(--acc2);
-                font-size: 12px;
+                font-size: 14px;
                 text-transform: uppercase;
                 letter-spacing: 0.04em;
                 opacity: 0.85;
@@ -460,7 +469,7 @@
             }
             .bash-cmd {
                 color: var(--acc2);
-                font-size: 13px;
+                font-size: 14px;
                 white-space: pre-wrap;
                 word-break: break-word;
             }
@@ -468,7 +477,7 @@
                 margin: 4px 0 0;
                 white-space: pre-wrap;
                 word-break: break-word;
-                font-size: 13px;
+                font-size: 14px;
                 color: var(--txt);
             }
             .panel {
@@ -481,7 +490,7 @@
                 padding: 8px 12px;
                 border-bottom: 1px solid var(--line);
                 color: var(--acc);
-                font-size: 12px;
+                font-size: 14px;
             }
             .panel > .pbody {
                 padding: 12px;
@@ -518,7 +527,7 @@
                 align-items: center;
                 gap: 8px;
                 padding: 6px 14px 0;
-                font-size: 12px;
+                font-size: 14px;
                 color: var(--dim);
             }
             .working.show {
@@ -550,6 +559,31 @@
                 max-height: 200px;
                 line-height: 1.4;
             }
+            /* Focused composer border reflects the reasoning level (set on the
+               parent .composer via data-think); data-bash overrides it while
+               the input is a `!` shell command. Only tinted while focused. */
+            form#ask #prompt:focus {
+                outline: none;
+                border-color: var(--think-off);
+            }
+            .composer[data-think="minimal"] form#ask #prompt:focus {
+                border-color: var(--think-minimal);
+            }
+            .composer[data-think="low"] form#ask #prompt:focus {
+                border-color: var(--think-low);
+            }
+            .composer[data-think="medium"] form#ask #prompt:focus {
+                border-color: var(--think-medium);
+            }
+            .composer[data-think="high"] form#ask #prompt:focus {
+                border-color: var(--think-high);
+            }
+            .composer[data-think="xhigh"] form#ask #prompt:focus {
+                border-color: var(--think-xhigh);
+            }
+            .composer[data-bash] form#ask #prompt:focus {
+                border-color: var(--bash-mode);
+            }
             .empty {
                 color: var(--dim);
             }
@@ -559,7 +593,7 @@
                lists; expanded one per line). */
             .welcome {
                 padding: 4px 0 10px;
-                font-size: 13px;
+                font-size: 14px;
                 line-height: 1.5;
                 cursor: pointer;
                 user-select: none;
@@ -600,7 +634,7 @@
             .welcome .toggle {
                 color: var(--dim);
                 margin-top: 6px;
-                font-size: 12px;
+                font-size: 14px;
             }
             /* fuzzy command typeahead (above the prompt) */
             .ac {
@@ -634,7 +668,7 @@
             }
             .ac .opt .desc {
                 color: var(--dim);
-                font-size: 12px;
+                font-size: 14px;
                 flex: 1;
                 overflow: hidden;
                 text-overflow: ellipsis;
@@ -664,7 +698,7 @@
             .picker h3 {
                 margin: 0;
                 padding: 12px 14px;
-                font-size: 12px;
+                font-size: 14px;
                 color: var(--dim);
                 text-transform: uppercase;
                 letter-spacing: 0.08em;
@@ -689,7 +723,7 @@
             }
             .picker .item .meta {
                 color: var(--dim);
-                font-size: 12px;
+                font-size: 14px;
             }
             .picker .item.active .name {
                 color: var(--acc);

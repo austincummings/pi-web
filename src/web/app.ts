@@ -69,6 +69,8 @@ let bashEl = null; // current streaming bash output block
 let thinkingEl = null; // current streaming thinking block
 let thinkingRaw = ""; // accumulated thinking text (rendered as markdown)
 let thinkingHidden = false; // mirrors pi's "hide thinking blocks" setting
+let thinkingLevel = "off"; // per-session reasoning level (focused border color)
+let thinkingSupported = false; // does the active model support cycling levels?
 let assistantRaw = ""; // accumulated assistant text (rendered as markdown)
 let threadItems = []; // last known thread list (from SSE)
 // The selected thread is driven by the URL (`/?thread=<id>`), so it survives
@@ -411,6 +413,20 @@ function toggleThinking() {
     setThinkingHidden(!thinkingHidden, true);
 }
 
+// Tint the focused composer border by the current reasoning level (mirrors the
+// pi TUI editor border via theme.getThinkingBorderColor). `data-think` selects
+// the level color in CSS; `data-bash` overrides it green while the input is a
+// `!` shell command (matching the TUI bash-mode border). The border only shows
+// the tint when focused; otherwise it stays the default `--line`.
+const $composer = $prompt?.closest(".composer") as HTMLElement | null;
+function applyThinkingBorder() {
+    if (!$composer) return;
+    $composer.dataset.think = thinkingLevel || "off";
+    // match the pi TUI: leading whitespace is ignored when detecting `!` bash
+    const bash = ($prompt?.value ?? "").trimStart().startsWith("!");
+    $composer.toggleAttribute("data-bash", bash);
+}
+
 // Re-render the streaming assistant bubble as markdown, throttled to one paint
 // per animation frame so a burst of token deltas doesn't thrash innerHTML.
 let assistantRenderPending = false;
@@ -507,7 +523,7 @@ function wrapFrameDoc(html) {
     return (
         `<!doctype html><html><head><meta charset="utf-8"><style>` +
         `:root{${frameThemeVars()}}html,body{margin:0}` +
-        `body{font:13px/1.5 ui-monospace,Menlo,monospace;color:var(--txt);background:transparent}` +
+        `body{font:14px/1.5 ui-monospace,Menlo,monospace;color:var(--txt);background:transparent}` +
         `a{color:var(--acc)}` +
         // baseline control styling so frame buttons/inputs match the cockpit
         // (extensions can override with their own <style>)
@@ -1124,6 +1140,7 @@ function showHotkeys() {
         ["Tab", "complete selected command"],
         ["Esc", "dismiss menu / overlay · interrupt the working agent"],
         ["Alt+T", "show / hide thinking blocks"],
+        ["Shift+Tab", "cycle thinking level"],
         ["/resume", "switch threads"],
         ["/new", "new thread"],
     ];
@@ -1147,8 +1164,16 @@ function autoGrow() {
 $prompt.addEventListener("input", () => {
     autoGrow();
     updateAc();
+    applyThinkingBorder(); // live `!` bash-mode border toggle
 });
 $prompt.addEventListener("keydown", (e) => {
+    // Shift+Tab cycles the reasoning level (mirrors the pi TUI). It's a browser
+    // focus-traversal key, so preventDefault to keep focus in the composer.
+    if (e.key === "Tab" && e.shiftKey) {
+        e.preventDefault();
+        postThread("/thinking-level", { op: "cycle" });
+        return;
+    }
     if ($ac.classList.contains("show")) {
         switch (e.key) {
             case "ArrowDown":
@@ -1234,6 +1259,7 @@ $ask.addEventListener("submit", (e) => {
     const text = $prompt.value;
     $prompt.value = "";
     autoGrow();
+    applyThinkingBorder(); // clear any `!` bash-mode border
     closeAc();
     runInput(text);
 });
@@ -1321,6 +1347,11 @@ function onSseMessage(e) {
             toolEls = {};
             lastToolEntry = null;
             setWorking(false);
+            break;
+        case "thinking_level":
+            thinkingLevel = m.level || "off";
+            thinkingSupported = !!m.supported;
+            applyThinkingBorder();
             break;
         case "thinking_visibility":
             setThinkingHidden(!!m.hidden, false);
