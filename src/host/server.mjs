@@ -169,6 +169,8 @@ function subscribe(s) {
             case "agent_end":
                 busy = false;
                 broadcast({ kind: "assistant_end" });
+                // names/recency may have changed — refresh the header title/list
+                broadcastThreads();
                 break;
         }
     });

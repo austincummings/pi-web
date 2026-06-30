@@ -3,10 +3,13 @@
 const $transcript = document.getElementById("transcript");
 const $panels = document.getElementById("panels");
 const $status = document.getElementById("status");
-const $threads = document.getElementById("threads");
-const $newThread = document.getElementById("newThread");
+const $threadTitle = document.getElementById("threadTitle");
+const $overlay = document.getElementById("overlay");
+const $picker = document.getElementById("picker");
 
 let assistantEl = null; // current streaming assistant bubble
+let threadItems = []; // last known thread list (from SSE)
+let activeThreadId = null;
 
 function bubble(role, text = "") {
     if ($transcript.querySelector(".empty")) $transcript.innerHTML = "";
@@ -126,31 +129,74 @@ function relTime(d) {
     return `${Math.floor(s / 86400)}d ago`;
 }
 
-function renderThreads(items) {
-    if (!$threads) return;
-    $threads.innerHTML = "";
-    if (!items || !items.length) {
-        const o = document.createElement("option");
-        o.textContent = "(no threads)";
-        $threads.appendChild(o);
-        return;
-    }
-    for (const t of items) {
-        const o = document.createElement("option");
-        o.value = t.id;
-        const label = (t.name || "(new thread)")
-            .replace(/\s+/g, " ")
-            .slice(0, 40);
-        o.textContent = `${label} · ${relTime(t.modified)}`;
-        if (t.active) o.selected = true;
-        $threads.appendChild(o);
+function threadName(t) {
+    return (t?.name || "(new thread)").replace(/\s+/g, " ").slice(0, 60);
+}
+
+function updateTitle() {
+    if (!$threadTitle) return;
+    const active =
+        threadItems.find((t) => t.id === activeThreadId) ||
+        threadItems.find((t) => t.active);
+    if (active) activeThreadId = active.id;
+    $threadTitle.textContent = active ? threadName(active) : "";
+    if (!active) {
+        $threadTitle.innerHTML = '<span class="hint">(no thread)</span>';
     }
 }
 
-$threads?.addEventListener("change", () =>
-    post("/threads/switch", { id: $threads.value }),
-);
-$newThread?.addEventListener("click", () => post("/threads", {}));
+function openPicker() {
+    if (!$overlay) return;
+    $picker.innerHTML = "<h3>Resume thread</h3>";
+
+    const mk = (cls, name, meta, onClick) => {
+        const item = document.createElement("div");
+        item.className = `item ${cls}`;
+        const n = document.createElement("span");
+        n.className = "name";
+        n.textContent = name;
+        const m = document.createElement("span");
+        m.className = "meta";
+        m.textContent = meta;
+        item.append(n, m);
+        item.onclick = onClick;
+        return item;
+    };
+
+    $picker.appendChild(
+        mk("new", "＋ New thread", "/new", () => {
+            closePicker();
+            post("/threads", {});
+        }),
+    );
+
+    for (const t of threadItems) {
+        $picker.appendChild(
+            mk(
+                t.active || t.id === activeThreadId ? "active" : "",
+                threadName(t),
+                `${t.messageCount ?? 0} msgs · ${relTime(t.modified)}`,
+                () => {
+                    closePicker();
+                    if (t.id !== activeThreadId)
+                        post("/threads/switch", { id: t.id });
+                },
+            ),
+        );
+    }
+    $overlay.classList.add("show");
+}
+
+function closePicker() {
+    $overlay?.classList.remove("show");
+}
+
+$overlay?.addEventListener("click", (e) => {
+    if (e.target === $overlay) closePicker();
+});
+document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closePicker();
+});
 
 // ---- SSE stream ----
 const es = new EventSource("/events");
@@ -168,10 +214,13 @@ es.onmessage = (e) => {
             renderPanels(m.panels);
             break;
         case "threads":
-            renderThreads(m.items);
+            threadItems = m.items || [];
+            updateTitle();
+            if ($overlay?.classList.contains("show")) openPicker();
             break;
         case "thread_switched":
-            if ($threads) $threads.value = m.id;
+            activeThreadId = m.id;
+            updateTitle();
             break;
         case "transcript_reset":
             $transcript.innerHTML = '<div class="empty">new thread</div>';
@@ -214,12 +263,25 @@ es.onmessage = (e) => {
     }
 };
 
-// ---- prompt box ----
+// ---- prompt box (with /resume and /new commands) ----
 document.getElementById("ask").addEventListener("submit", (e) => {
     e.preventDefault();
     const input = document.getElementById("prompt");
     const text = input.value.trim();
     if (!text) return;
+
+    // client-side slash commands (like pi's /resume, /new)
+    if (text === "/resume") {
+        input.value = "";
+        openPicker();
+        return;
+    }
+    if (text === "/new") {
+        input.value = "";
+        post("/threads", {});
+        return;
+    }
+
     input.value = "";
     post("/prompt", { text });
 });
