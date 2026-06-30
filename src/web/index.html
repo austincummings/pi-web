@@ -367,14 +367,13 @@
             }
             .tool-head {
                 display: flex;
-                gap: 6px;
                 align-items: baseline;
                 white-space: nowrap;
                 overflow: hidden;
-                text-overflow: ellipsis;
             }
-            .tool-mark {
+            .tool-mark:not(:empty) {
                 color: var(--acc2);
+                margin-right: 4px;
             }
             .tool.error .tool-mark {
                 color: var(--err);
@@ -382,12 +381,20 @@
             .tool-name {
                 color: var(--acc);
                 font-weight: 600;
+                margin-right: 6px;
             }
+            /* args ellipsize first (min-width:0); the muted suffix stays put. */
             .tool-args {
                 color: var(--acc);
+                min-width: 0;
                 overflow: hidden;
                 text-overflow: ellipsis;
                 white-space: nowrap;
+            }
+            .tool-dim {
+                color: var(--dim);
+                white-space: pre;
+                flex-shrink: 0;
             }
             /* The card itself carries the status wash, so the body is transparent. */
             .tool-body {

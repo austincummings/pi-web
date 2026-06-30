@@ -192,11 +192,12 @@ function renderToolCard(entry, scroll = false) {
     const mark = info.pending ? "\u23F5" : "";
     head.innerHTML =
         '<span class="tool-mark"></span><span class="tool-name"></span> ' +
-        '<span class="tool-args"></span>';
+        '<span class="tool-args"></span><span class="tool-dim"></span>';
     head.querySelector(".tool-mark").textContent = mark;
     const title = toolTitle(info.name, info.args, cwd);
     head.querySelector(".tool-name").textContent = title.name;
     head.querySelector(".tool-args").textContent = title.args;
+    head.querySelector(".tool-dim").textContent = title.dim;
     el.appendChild(head);
 
     // Extension override: a registered renderer may replace the default body.
@@ -1100,12 +1101,9 @@ $prompt.addEventListener("keydown", (e) => {
 // Alt+T toggles thinking-block visibility (persisted to pi's settings). Alt+T
 // is not browser-reserved (unlike Ctrl+T), so preventDefault reliably works.
 document.addEventListener("keydown", (e) => {
-    if (
-        e.altKey &&
-        !e.ctrlKey &&
-        !e.metaKey &&
-        (e.key === "t" || e.key === "T")
-    ) {
+    // Use e.code (physical key): under Option/Alt some layouts remap e.key to a
+    // diacritic (macOS Alt+T -> "†"), so e.key === "t" would never match.
+    if (e.code === "KeyT" && e.altKey && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         toggleThinking();
     }
@@ -1115,12 +1113,8 @@ document.addEventListener("keydown", (e) => {
 // pi-tui's "ctrl+o more"; Ctrl+O is reserved by the browser for "open file",
 // so Alt+O is used, mirroring the Alt+T thinking toggle).
 document.addEventListener("keydown", (e) => {
-    if (
-        (e.key === "o" || e.key === "O") &&
-        e.altKey &&
-        !e.ctrlKey &&
-        !e.metaKey
-    ) {
+    // e.code so Option/Alt remaps (macOS Alt+O -> "ø") don't break the match.
+    if (e.code === "KeyO" && e.altKey && !e.ctrlKey && !e.metaKey) {
         if (!lastToolEntry) return;
         e.preventDefault();
         lastToolEntry.info.expanded = !lastToolEntry.info.expanded;

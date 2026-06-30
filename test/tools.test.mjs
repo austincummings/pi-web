@@ -72,10 +72,12 @@ test("toolTitle renders bash as `$ <command>` (no bash word), like the TUI", () 
     expect(toolTitle("bash", { command: "ls -la" })).toEqual({
         name: "$",
         args: "ls -la",
+        dim: "",
     });
     expect(toolTitle("shell", { cmd: "pwd" })).toEqual({
         name: "$",
         args: "pwd",
+        dim: "",
     });
 });
 
@@ -83,10 +85,31 @@ test("toolTitle keeps the tool name + primary arg for non-bash tools", () => {
     expect(toolTitle("read", { path: "src/x.ts" })).toEqual({
         name: "read",
         args: "src/x.ts",
+        dim: "",
     });
-    expect(toolTitle("grep", { pattern: "foo" })).toEqual({
-        name: "grep",
-        args: "foo",
+});
+
+test("toolTitle appends a read line range, like the TUI", () => {
+    expect(toolTitle("read", { path: "a.ts", offset: 10, limit: 20 })).toEqual({
+        name: "read",
+        args: "a.ts",
+        dim: ":10-29",
+    });
+    expect(toolTitle("read", { path: "a.ts", offset: 5 })).toEqual({
+        name: "read",
+        args: "a.ts",
+        dim: ":5",
+    });
+});
+
+test("toolTitle shows grep/find pattern accented with a muted context suffix", () => {
+    expect(
+        toolTitle("grep", { pattern: "foo", path: "src", glob: "*.ts" }),
+    ).toEqual({ name: "grep", args: "/foo/", dim: " in src (*.ts)" });
+    expect(toolTitle("find", { pattern: "*.md", limit: 5 })).toEqual({
+        name: "find",
+        args: "*.md",
+        dim: " in . limit 5",
     });
 });
 
@@ -102,7 +125,7 @@ test("relativizePath strips the cwd prefix, leaving outside paths alone", () => 
 test("toolTitle relativizes path args against cwd", () => {
     expect(
         toolTitle("edit", { path: "/home/u/proj/src/x.ts" }, "/home/u/proj"),
-    ).toEqual({ name: "edit", args: "src/x.ts" });
+    ).toEqual({ name: "edit", args: "src/x.ts", dim: "" });
 });
 
 test("renderer registry stores and retrieves by tool name", () => {

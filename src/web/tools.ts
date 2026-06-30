@@ -43,32 +43,65 @@ export function relativizePath(p: string, cwd?: string): string {
     return p.startsWith(base) ? p.slice(base.length) : p;
 }
 
+/** Coerce a value to a trimmed string, or "" if absent/non-string. */
+function s(v: any): string {
+    return typeof v === "string" ? v : "";
+}
+
 /**
- * The header label + arg summary for a tool call, mirroring how the pi TUI
- * titles each tool. Most tools render as `<name> <primary-arg>`, but bash is
- * special-cased to `$ <command>` (no "bash" word), matching pi-tui's
- * `formatBashCall`. Path-like args are relativized against `cwd`. The returned
- * `name` is what goes in the bold title slot.
+ * The `:start-end` line-range suffix for a read call, mirroring pi-tui's
+ * `formatReadLineRange` (offset defaults to 1; limit gives the end line).
  */
-export function toolTitle(
-    name: string,
-    args: any,
-    cwd?: string,
-): { name: string; args: string } {
+export function readLineRange(args: any): string {
+    if (args?.offset === undefined && args?.limit === undefined) return "";
+    const start = args.offset ?? 1;
+    const end = args.limit !== undefined ? start + args.limit - 1 : "";
+    return `:${start}${end ? `-${end}` : ""}`;
+}
+
+export interface TitleParts {
+    /** Bold title slot (tool name, or `$` for bash). */
+    name: string;
+    /** Accented primary argument (command / path / pattern). */
+    args: string;
+    /** Muted trailing context (line range, `in <path>`, glob, limit). */
+    dim: string;
+}
+
+/**
+ * The header parts for a tool call, mirroring how the pi TUI titles each tool:
+ * a bold name slot, an accented primary argument, and a muted trailing context.
+ * bash is `$ <command>`; read appends a `:start-end` range; grep/find show the
+ * pattern accented with a muted ` in <path> (flags)` suffix; other path tools
+ * show the cwd-relative path. Falls back to a compact JSON summary.
+ */
+export function toolTitle(name: string, args: any, cwd?: string): TitleParts {
+    const a = args && typeof args === "object" ? args : {};
     if (name === "bash" || name === "shell") {
-        const cmd =
-            args && typeof args === "object"
-                ? (args.command ?? args.cmd ?? "")
-                : "";
-        return { name: "$", args: typeof cmd === "string" ? cmd : "" };
+        return { name: "$", args: s(a.command) || s(a.cmd), dim: "" };
     }
-    if (args && typeof args === "object") {
-        const p = args.path ?? args.file_path ?? args.filePath;
-        if (typeof p === "string" && p) {
-            return { name, args: relativizePath(p, cwd) };
-        }
+    if (name === "read") {
+        return {
+            name,
+            args: relativizePath(s(a.file_path) || s(a.path), cwd),
+            dim: readLineRange(a),
+        };
     }
-    return { name, args: summarizeArgs(args) };
+    if (name === "grep" || name === "find") {
+        const path = a.path ? relativizePath(s(a.path), cwd) : ".";
+        const pattern = s(a.pattern);
+        let dim = ` in ${path}`;
+        if (a.glob) dim += ` (${s(a.glob)})`;
+        if (a.limit !== undefined) dim += ` limit ${a.limit}`;
+        // grep wraps the pattern in /slashes/, find shows it bare (pi-tui).
+        const shown = name === "grep" ? `/${pattern}/` : pattern;
+        return { name, args: shown, dim };
+    }
+    const p = a.path ?? a.file_path ?? a.filePath;
+    if (typeof p === "string" && p) {
+        return { name, args: relativizePath(p, cwd), dim: "" };
+    }
+    return { name, args: summarizeArgs(args), dim: "" };
 }
 
 /**
