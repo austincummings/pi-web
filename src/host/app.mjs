@@ -5,21 +5,43 @@
  * This layer is intentionally **agent-independent** — it knows nothing about
  * createAgentSession/models/auth. Agent-coupled behavior is injected via
  * callbacks (onPrompt/onReload/threads), which keeps the core cockpit plumbing
- * (registerPanel -> snapshot -> dispatch -> setState -> broadcast, plus thread
+ * (dock/overlay -> snapshot -> dispatch -> setState -> broadcast, plus thread
  * listing/switching) testable with zero credentials.
  */
 import http from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-/** SSE fan-out bus: a set of response streams + a JSON broadcaster. */
+/**
+ * SSE fan-out bus.
+ *
+ * `clients` holds the open response streams. Each stream is tagged (by the
+ * `/events` handler) with the thread id it is viewing on `res.__threadId`, so
+ * `broadcastToThread` can fan out a thread's frames only to the clients
+ * watching it. `broadcast` still reaches everyone (e.g. the thread list).
+ *
+ * @typedef {import("node:http").ServerResponse & { __threadId?: string }} SSEClient
+ * @returns {{
+ *   clients: Set<SSEClient>,
+ *   broadcast: (msg: any) => void,
+ *   broadcastToThread: (threadId: string|undefined, msg: any) => void,
+ * }}
+ */
 export function createBus() {
+    /** @type {Set<SSEClient>} */
     const clients = new Set();
+    const frame = (msg) => `data: ${JSON.stringify(msg)}\n\n`;
     const broadcast = (msg) => {
-        const line = `data: ${JSON.stringify(msg)}\n\n`;
+        const line = frame(msg);
         for (const res of clients) res.write(line);
     };
-    return { clients, broadcast };
+    const broadcastToThread = (threadId, msg) => {
+        if (!threadId) return;
+        const line = frame(msg);
+        for (const res of clients)
+            if (res.__threadId === threadId) res.write(line);
+    };
+    return { clients, broadcast, broadcastToThread };
 }
 
 async function readBody(req) {
@@ -46,9 +68,24 @@ function sendJson(res, code, obj) {
  * @param {string}   o.web       absolute path to the static web dir
  * @param {object}   o.bus       createBus() result
  * @param {object}   o.piweb     piweb host registry (snapshot/dispatch)
- * @param {(text:string)=>void} [o.onPrompt]   user prompt handler
- * @param {()=>Promise<void>}   [o.onReload]   reload handler
+ * Every mutating route is thread-scoped: the client sends the `threadId` it is
+ * acting on (in the POST body, or `?thread=` for SSE/GET), and the host routes
+ * the call to that thread's AgentSession.
+ *
+ * @param {object} o
+ * @param {string} o.web
+ * @param {ReturnType<typeof createBus>} o.bus
+ * @param {object} o.piweb     piweb host registry/router (snapshot/dispatch)
+ * @param {(text:string, threadId?:string)=>void} [o.onPrompt]
+ * @param {(threadId?:string)=>Promise<void>} [o.onReload]
+ * @param {(threadId?:string)=>Promise<void>} [o.onInterrupt]
+ * @param {(command:string, exclude:boolean, threadId?:string)=>void} [o.onBash]
+ * @param {object} [o.sessionApi]
  * @param {{ list:()=>Promise<any[]>, create:()=>Promise<any>, switch:(id:string)=>Promise<void> }} [o.threads]
+ * @param {(send:(msg:any)=>void, ctx:{threadId?:string})=>(string|undefined)|Promise<string|undefined>} [o.onConnect]
+ *        per-client replay on (re)connect; returns the resolved thread id
+ * @param {(threadId?:string)=>void|Promise<void>} [o.onInterrupt]  interrupt the thread's turn
+ * @param {(threadId:string|undefined, op:"open"|"close", id:string)=>void} [o.onSurface]  overlay control
  * @returns {import("node:http").Server}
  */
 export function createApp({
@@ -60,6 +97,9 @@ export function createApp({
     threads,
     sessionApi,
     onBash,
+    onConnect,
+    onInterrupt,
+    onSurface,
 }) {
     const STATIC = {
         "/": ["index.html", "text/html; charset=utf-8"],
@@ -75,7 +115,15 @@ export function createApp({
 
         // liveness: up regardless of model/auth
         if (path === "/health") {
-            sendJson(res, 200, { ok: true, panels: piweb.snapshot().length });
+            const snap = piweb.snapshot?.() ?? {};
+            const d = snap.docks ?? { left: [], right: [], bottom: [] };
+            const surfaces =
+                (d.left?.length ?? 0) +
+                (d.right?.length ?? 0) +
+                (d.bottom?.length ?? 0) +
+                (d.footer?.length ?? 0) +
+                (snap.overlays?.length ?? 0);
+            sendJson(res, 200, { ok: true, surfaces });
             return;
         }
 
@@ -87,17 +135,30 @@ export function createApp({
                 Connection: "keep-alive",
             });
             res.write(": connected\n\n");
-            res.write(
-                `data: ${JSON.stringify({ kind: "panels", panels: piweb.snapshot() })}\n\n`,
-            );
+            const send = (msg) => res.write(`data: ${JSON.stringify(msg)}\n\n`);
+            // the thread this client is viewing (URL-driven selection)
+            const wanted = url.searchParams.get("thread") || undefined;
+            res.__threadId = wanted;
+            send({ kind: "surfaces", surfaces: piweb.snapshot() });
             if (threads) {
                 try {
-                    const items = await threads.list();
-                    res.write(
-                        `data: ${JSON.stringify({ kind: "threads", items })}\n\n`,
-                    );
+                    send({ kind: "threads", items: await threads.list() });
                 } catch {
                     /* listing is best-effort on connect */
+                }
+            }
+            // Resolve + replay the viewed thread to *this* client only, so a
+            // browser refresh restores the conversation (and an unknown id
+            // falls back to the default thread). Tag the connection with the
+            // resolved id so per-thread broadcasts reach it.
+            if (onConnect) {
+                try {
+                    const resolved = await onConnect(send, {
+                        threadId: wanted,
+                    });
+                    if (resolved) res.__threadId = resolved;
+                } catch {
+                    /* replay is best-effort on connect */
                 }
             }
             bus.clients.add(res);
@@ -114,7 +175,8 @@ export function createApp({
 
         // session info / changelog (read-only)
         if (req.method === "GET" && path === "/session") {
-            sendJson(res, 200, (await sessionApi?.info?.()) ?? {});
+            const threadId = url.searchParams.get("thread") || undefined;
+            sendJson(res, 200, (await sessionApi?.info?.(threadId)) ?? {});
             return;
         }
         if (req.method === "GET" && path === "/changelog") {
@@ -128,34 +190,47 @@ export function createApp({
 
         if (req.method === "POST") {
             const body = await readBody(req);
+            // thread the request targets (URL-driven selection on the client)
+            const threadId = body.threadId || undefined;
             if (path === "/prompt") {
                 const text = (body.text ?? "").trim();
-                if (text) onPrompt?.(text);
+                if (text) onPrompt?.(text, threadId);
                 res.writeHead(202).end();
                 return;
             }
             if (path === "/action") {
-                await piweb.dispatch(body.panelId, body.action, body.payload);
+                await piweb.dispatch(
+                    body.surfaceId,
+                    body.action,
+                    body.payload,
+                    threadId,
+                );
+                res.writeHead(202).end();
+                return;
+            }
+            if (path === "/surface") {
+                onSurface?.(threadId, body.op, body.id);
                 res.writeHead(202).end();
                 return;
             }
             if (path === "/session/name") {
-                await sessionApi?.setName?.(body.name);
+                await sessionApi?.setName?.(body.name, threadId);
                 res.writeHead(202).end();
                 return;
             }
             if (path === "/session/compact") {
-                sessionApi?.compact?.(); // async; progress streamed over SSE
+                sessionApi?.compact?.(threadId); // async; progress streamed over SSE
                 res.writeHead(202).end();
                 return;
             }
             if (path === "/session/export") {
-                const result = (await sessionApi?.export?.(body.format)) ?? {};
+                const result =
+                    (await sessionApi?.export?.(body.format, threadId)) ?? {};
                 sendJson(res, 200, result);
                 return;
             }
             if (path === "/bash") {
-                onBash?.(body.command, body.excludeFromContext);
+                onBash?.(body.command, body.excludeFromContext, threadId);
                 res.writeHead(202).end();
                 return;
             }
@@ -174,7 +249,12 @@ export function createApp({
                 return;
             }
             if (path === "/reload") {
-                await onReload?.();
+                await onReload?.(threadId);
+                res.writeHead(202).end();
+                return;
+            }
+            if (path === "/interrupt") {
+                onInterrupt?.(threadId); // async; result streamed over SSE
                 res.writeHead(202).end();
                 return;
             }

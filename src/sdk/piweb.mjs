@@ -11,8 +11,15 @@
  */
 const noop = () => {};
 const stub = {
-    registerPanel: noop,
-    unregisterPanel: noop,
+    dock: noop,
+    overlay: noop,
+    removeDock: noop,
+    removeOverlay: noop,
+    remove: noop,
+    openOverlay: noop,
+    closeOverlay: noop,
+    notify: noop,
+    setStatus: noop,
     clear: noop,
     present: false,
 };

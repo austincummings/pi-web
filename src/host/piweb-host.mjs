@@ -1,84 +1,240 @@
 /**
- * piweb host registry.
+ * piweb host registry — the cockpit's UI-extension surface.
  *
- * Lives in the host process alongside the agent (in-process via createAgentSession).
- * Extensions call `registerPanel` with:
- *   - render(state) -> a *serializable* component tree (no closures cross the wire)
- *   - actions: { [id]: (ctx) => void }  -> run in-process; ctx.pi is the live ExtensionAPI
+ * Lives in the host process alongside the agent (in-process via
+ * createAgentSession). It generalizes pi's TUI `ExtensionUIContext` into a 2D,
+ * serializable model. Extensions mount **surfaces**:
  *
- * The host serializes the tree, ships it to the browser, and routes action
- * events back to the in-process handler. This generalizes pi's RPC extension-UI
- * sub-protocol (fixed method set) into an open component model.
+ *   - **docks** — persistent, stackable widgets in the left / right / bottom
+ *     rails (the web analogue of pi-tui's `setWidget(aboveEditor|belowEditor)`).
+ *   - **overlays** — declarative modal cards, opened/closed on demand
+ *     (the analogue of pi-tui's `custom({ overlay })` + select/confirm/input).
+ *
+ * Plus transient `notify()` toasts and keyed `setStatus()` segments.
+ *
+ * Each surface provides `render(state) -> a *serializable* component tree` (no
+ * closures cross the wire) and `actions: { [id]: (ctx) => void }` that run
+ * in-process. The host serializes the tree, ships it to the browser, and routes
+ * action events back to the in-process handler.
+ *
+ * @typedef {"left"|"right"|"bottom"|"footer"} DockSide
+ *   bottom = above the prompt (pi-tui "aboveEditor"); footer = below the prompt
+ *   (pi-tui "belowEditor").
+ *
+ * @typedef {object} Surface
+ * @property {string} id
+ * @property {"dock"|"overlay"} kind
+ * @property {DockSide} [side]                 dock rail (kind === "dock")
+ * @property {string} [title]
+ * @property {number} order                    stable sort within a rail/layer
+ * @property {boolean} open                     overlays: currently visible?
+ * @property {object} [options]                 overlay anchor/size hints
+ * @property {(state:any)=>any} render
+ * @property {Record<string, Function>} actions
+ * @property {any} state
+ *
+ * @typedef {object} SurfaceCard  serialized surface sent to the browser
+ * @property {string} id
+ * @property {string} [title]
+ * @property {any} tree
+ * @property {object} [options]
+ *
+ * @typedef {object} SurfacesSnapshot
+ * @property {{left:SurfaceCard[], right:SurfaceCard[], bottom:SurfaceCard[], footer:SurfaceCard[]}} docks
+ * @property {SurfaceCard[]} overlays
+ * @property {{key:string, text:string}[]} status
  */
-export function createPiWebHost({ broadcastPanels, getPi }) {
-    const panels = new Map();
 
-    const renderPanel = (p) => {
+/**
+ * @param {object} o
+ * @param {(frame: any) => void} o.broadcast   send a cockpit frame to viewers
+ * @param {() => any} o.getPi                   live ExtensionAPI for this thread
+ */
+export function createPiWebHost({ broadcast, getPi }) {
+    /** @type {Map<string, Surface>} */
+    const surfaces = new Map();
+    /** @type {Map<string, string>} keyed status segments */
+    const statuses = new Map();
+    let orderSeq = 0;
+
+    /** @param {Surface} s @returns {SurfaceCard} */
+    const renderCard = (s) => {
         try {
-            return { id: p.id, title: p.title, tree: p.render(p.state) };
+            return {
+                id: s.id,
+                title: s.title,
+                tree: s.render(s.state),
+                options: s.options,
+            };
         } catch (err) {
             return {
-                id: p.id,
-                title: p.title,
+                id: s.id,
+                title: s.title,
                 tree: { type: "Text", text: `render error: ${err.message}` },
             };
         }
     };
 
-    const snapshot = () => [...panels.values()].map(renderPanel);
-    const push = () => broadcastPanels(snapshot());
+    /** @returns {SurfacesSnapshot} */
+    const snapshot = () => {
+        const docks = { left: [], right: [], bottom: [], footer: [] };
+        const overlays = [];
+        const ordered = [...surfaces.values()].sort(
+            (a, b) => a.order - b.order,
+        );
+        for (const s of ordered) {
+            if (s.kind === "overlay") {
+                if (s.open) overlays.push(renderCard(s));
+            } else {
+                (docks[s.side] ?? docks.bottom).push(renderCard(s));
+            }
+        }
+        const status = [...statuses.entries()].map(([key, text]) => ({
+            key,
+            text,
+        }));
+        return { docks, overlays, status };
+    };
+
+    const push = () => broadcast({ kind: "surfaces", surfaces: snapshot() });
+
+    /**
+     * @param {string} id
+     * @param {"dock"|"overlay"} kind
+     * @param {object} def
+     */
+    const define = (id, kind, def = {}) => {
+        const prev = surfaces.get(id);
+        surfaces.set(id, {
+            id,
+            kind,
+            side: kind === "dock" ? (def.side ?? "right") : undefined,
+            title: def.title,
+            order: def.order ?? prev?.order ?? orderSeq++,
+            // overlays start hidden; re-defining preserves visibility
+            open: kind === "overlay" ? (prev?.open ?? false) : true,
+            options: def.options,
+            render:
+                typeof def.render === "function"
+                    ? def.render
+                    : () => ({ type: "Text", text: id }),
+            actions: def.actions ?? {},
+            // preserve state across re-definition unless a new initialState is given
+            state:
+                prev && def.initialState === undefined
+                    ? prev.state
+                    : (def.initialState ?? {}),
+        });
+        push();
+    };
 
     const host = {
         present: true,
 
-        registerPanel(id, def = {}) {
-            panels.set(id, {
-                id,
-                title: def.title ?? id,
-                render:
-                    typeof def.render === "function"
-                        ? def.render
-                        : () => ({ type: "Text", text: id }),
-                actions: def.actions ?? {},
-                state: def.initialState ?? {},
+        /** Mount/update a dock surface. @param {string} id @param {object} def */
+        dock(id, def = {}) {
+            define(id, "dock", def);
+        },
+        /** Mount/update an overlay surface (starts closed). @param {string} id @param {object} def */
+        overlay(id, def = {}) {
+            define(id, "overlay", def);
+        },
+        /** @param {string} id */
+        removeDock(id) {
+            if (surfaces.delete(id)) push();
+        },
+        /** @param {string} id */
+        removeOverlay(id) {
+            if (surfaces.delete(id)) push();
+        },
+        /** @param {string} id */
+        remove(id) {
+            if (surfaces.delete(id)) push();
+        },
+
+        /** @param {string} id */
+        openOverlay(id) {
+            const s = surfaces.get(id);
+            if (s && s.kind === "overlay" && !s.open) {
+                s.open = true;
+                push();
+            }
+        },
+        /** @param {string} id */
+        closeOverlay(id) {
+            const s = surfaces.get(id);
+            if (s && s.kind === "overlay" && s.open) {
+                s.open = false;
+                push();
+            }
+        },
+
+        /**
+         * Transient toast (mirrors pi-tui ui.notify).
+         * @param {string} message
+         * @param {"info"|"warning"|"error"} [type]
+         */
+        notify(message, type = "info") {
+            broadcast({
+                kind: "notify",
+                message: String(message ?? ""),
+                level: type,
             });
+        },
+
+        /**
+         * Keyed bottom-bar status segment (mirrors pi-tui ui.setStatus).
+         * Pass undefined/"" to clear.
+         * @param {string} key
+         * @param {string} [text]
+         */
+        setStatus(key, text) {
+            if (text == null || text === "") statuses.delete(key);
+            else statuses.set(key, String(text));
             push();
         },
 
-        unregisterPanel(id) {
-            if (panels.delete(id)) push();
-        },
-
         clear() {
-            panels.clear();
+            surfaces.clear();
+            statuses.clear();
             push();
         },
 
         snapshot,
 
-        async dispatch(panelId, action, payload) {
-            const p = panels.get(panelId);
-            if (!p) return;
-            const handler = p.actions[action];
+        /**
+         * Run a surface action in-process and re-broadcast.
+         * @param {string} surfaceId
+         * @param {string} action
+         * @param {any} payload
+         */
+        async dispatch(surfaceId, action, payload) {
+            const s = surfaces.get(surfaceId);
+            if (!s) return;
+            const handler = s.actions[action];
             if (typeof handler !== "function") return;
             const ctx = {
                 payload,
                 get state() {
-                    return p.state;
+                    return s.state;
                 },
                 setState(patch) {
                     const next =
-                        typeof patch === "function" ? patch(p.state) : patch;
-                    p.state = { ...p.state, ...next };
+                        typeof patch === "function" ? patch(s.state) : patch;
+                    s.state = { ...s.state, ...next };
                     push();
                 },
                 pi: getPi(),
+                // let handlers drive overlays / toasts (e.g. a button opens a modal)
+                openOverlay: (id) => host.openOverlay(id),
+                closeOverlay: (id) => host.closeOverlay(id),
+                notify: (m, t) => host.notify(m, t),
             };
             try {
                 await handler(ctx);
             } catch (err) {
                 console.error(
-                    `[piweb] action ${panelId}.${action} failed:`,
+                    `[piweb] action ${surfaceId}.${action} failed:`,
                     err,
                 );
             }

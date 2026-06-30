@@ -6,6 +6,24 @@
  * Transport (SSE/POST/static/health/threads) lives in ./app.mjs and is
  * agent-independent; this file owns agent bootstrap, the event -> cockpit
  * translation, and the thread (session) lifecycle.
+ *
+ * Multi-thread model
+ * ------------------
+ * Every thread is a fully independent AgentSession (bound to its own
+ * SessionManager + extension resourceLoader + piweb panel registry), kept alive
+ * in `threadRuntimes`. Threads run *in parallel*: a background thread keeps
+ * processing its turn even when no browser is looking at it.
+ *
+ * Selection is per-client, driven by the URL (`/?thread=<id>` ⇒
+ * `/events?thread=<id>`). Each SSE connection is tagged with the thread it is
+ * viewing, and a thread's events are routed only to the clients viewing it
+ * (`bus.broadcastToThread`). Different browser tabs can therefore watch
+ * different threads at the same time; "switching" is just reopening the SSE
+ * stream with a new `?thread`. Nothing is ever disposed, so no work is lost.
+ *
+ * Because there is no single server-wide "focused" thread, every mutating
+ * request (`/prompt`, `/bash`, `/action`, `/session/*`, `/reload`) carries the
+ * thread id it targets.
  */
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -24,6 +42,28 @@ import {
 import { createPiWebHost } from "./piweb-host.mjs";
 import { createBus, createApp } from "./app.mjs";
 
+/**
+ * @typedef {import("@earendil-works/pi-coding-agent").AgentSession} AgentSession
+ * @typedef {import("@earendil-works/pi-coding-agent").ExtensionAPI} ExtensionAPI
+ * @typedef {ReturnType<typeof createPiWebHost>} PiWebRegistry
+ */
+
+/**
+ * A live, independently-running conversation thread.
+ *
+ * @typedef {object} ThreadRuntime
+ * @property {string} id                       session id (stable registry key)
+ * @property {SessionManager} sm               this thread's session manager
+ * @property {AgentSession|null} session       the in-process agent session
+ * @property {ExtensionAPI|null} pi            this thread's live ExtensionAPI
+ * @property {PiWebRegistry|null} piweb        this thread's panel registry
+ * @property {DefaultResourceLoader|null} resourceLoader  extension loader
+ * @property {(() => void)|null} unsubscribe   detaches the event listener
+ * @property {boolean} busy                    a turn is currently in flight
+ */
+
+/** A serializable server->client cockpit frame. @typedef {{kind:string,[k:string]:any}} CockpitMessage */
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..", "..");
 const WEB = join(__dirname, "..", "web");
@@ -35,27 +75,79 @@ const cwd = process.cwd();
 const bus = createBus();
 const broadcast = bus.broadcast;
 
-// ---- piweb host (injected into extensions) --------------------------------
-const piweb = createPiWebHost({
-    broadcastPanels: (panels) => broadcast({ kind: "panels", panels }),
-    getPi: () => piweb._pi,
-});
-globalThis.__PIWEB__ = piweb;
+// ---- thread registry ------------------------------------------------------
+/** @type {Map<string, ThreadRuntime>} */
+const threadRuntimes = new Map();
+/** Fallback thread for clients that connect without a `?thread`. @type {ThreadRuntime|null} */
+let defaultThread = null;
+/** Thread whose extensions are registering panels *right now* (during boot/reload). @type {ThreadRuntime|null} */
+let bindingThread = null;
+/** Thread currently handling a panel action dispatch. @type {ThreadRuntime|null} */
+let dispatchingThread = null;
 
-// ---- agent session --------------------------------------------------------
-const resourceLoader = new DefaultResourceLoader({
-    cwd,
-    agentDir: getAgentDir(),
-    additionalExtensionPaths: [join(ROOT, "extensions", "hello-panel.ts")],
-    // Inline factory captures the live ExtensionAPI so panel actions can call back
-    // into the agent (pi.sendUserMessage, registerTool, etc).
-    extensionFactories: [
-        (pi) => {
-            piweb._pi = pi;
-        },
-    ],
-});
-await resourceLoader.reload();
+/** @param {string|undefined|null} id */
+const sessionFor = (id) =>
+    id ? (threadRuntimes.get(id)?.session ?? null) : null;
+
+// ---- piweb router (injected into extensions) ------------------------------
+// Each thread has its own panel registry; the global __PIWEB__ that extensions
+// talk to routes to whichever thread is currently binding (during boot/reload)
+// or dispatching (during a panel action). Panel writes reach only the clients
+// viewing that thread, via the thread registry's broadcast().
+const nullRegistry = {
+    dock() {},
+    overlay() {},
+    removeDock() {},
+    removeOverlay() {},
+    remove() {},
+    openOverlay() {},
+    closeOverlay() {},
+    notify() {},
+    setStatus() {},
+    clear() {},
+    snapshot() {
+        return {
+            docks: { left: [], right: [], bottom: [], footer: [] },
+            overlays: [],
+            status: [],
+        };
+    },
+    async dispatch() {},
+};
+const activeRegistry = () =>
+    (bindingThread ?? dispatchingThread)?.piweb ?? nullRegistry;
+const piweb = {
+    present: true,
+    dock: (...a) => activeRegistry().dock(...a),
+    overlay: (...a) => activeRegistry().overlay(...a),
+    removeDock: (...a) => activeRegistry().removeDock(...a),
+    removeOverlay: (...a) => activeRegistry().removeOverlay(...a),
+    remove: (...a) => activeRegistry().remove(...a),
+    openOverlay: (...a) => activeRegistry().openOverlay(...a),
+    closeOverlay: (...a) => activeRegistry().closeOverlay(...a),
+    notify: (...a) => activeRegistry().notify(...a),
+    setStatus: (...a) => activeRegistry().setStatus(...a),
+    clear: (...a) => activeRegistry().clear(...a),
+    snapshot: () => activeRegistry().snapshot(),
+    /**
+     * Route a surface action to the owning thread's registry.
+     * @param {string} surfaceId
+     * @param {string} action
+     * @param {any} payload
+     * @param {string} [threadId]
+     */
+    async dispatch(surfaceId, action, payload, threadId) {
+        const t = threadId ? threadRuntimes.get(threadId) : null;
+        if (!t?.piweb) return;
+        dispatchingThread = t;
+        try {
+            await t.piweb.dispatch(surfaceId, action, payload);
+        } finally {
+            dispatchingThread = null;
+        }
+    },
+};
+globalThis.__PIWEB__ = piweb;
 
 // pi-web defaults to the `meridian` provider. That provider is registered by
 // the pi-meridian extension *during* session startup, so it isn't resolvable
@@ -67,7 +159,11 @@ const authStorage = AuthStorage.create();
 const modelRegistry = ModelRegistry.create(authStorage);
 
 // ---- text helpers ---------------------------------------------------------
-// pull plain text out of a message's content (string | block[])
+/**
+ * Pull plain text out of a message's content (string | block[]).
+ * @param {unknown} content
+ * @returns {string}
+ */
 function textOf(content) {
     if (typeof content === "string") return content;
     if (!Array.isArray(content)) return "";
@@ -76,24 +172,20 @@ function textOf(content) {
         .map((b) => b.text)
         .join("");
 }
+/**
+ * @param {unknown} raw
+ * @returns {string}
+ */
 function describeError(raw) {
     if (!raw) return "model returned an error";
     try {
-        return JSON.parse(raw)?.error?.message ?? String(raw);
+        return JSON.parse(String(raw))?.error?.message ?? String(raw);
     } catch {
         return String(raw);
     }
 }
 
-// ---- session lifecycle ----------------------------------------------------
-// The agent has no in-place "load another session", so switching threads means
-// recreating the AgentSession bound to a different SessionManager. The same
-// resourceLoader is reused; panels are keyed by id so re-registration is
-// idempotent.
-let session = null;
-let unsubscribe = null;
-let busy = false; // a turn is running — block thread switches while true
-
+/** @param {AgentSession} s */
 async function pinModel(s) {
     const model = modelRegistry.find(PROVIDER, MODEL_ID);
     if (model) {
@@ -109,29 +201,57 @@ async function pinModel(s) {
     }
 }
 
-// translate agent events -> cockpit messages.
-// This provider/model emits message_start/message_end (no text_delta stream),
-// so render the final message content; use deltas only when they exist.
-function subscribe(s) {
+// Maintain a host-managed "ctx" status segment (model + context usage) so the
+// bottom context bar behaves like pi's footer out of the box. Extensions can
+// add their own segments alongside it via piweb.setStatus().
+/** @param {ThreadRuntime} thread */
+function updateContextStatus(thread) {
+    const s = thread.session;
+    if (!thread.piweb || !s) return;
+    let text = "";
+    try {
+        const model = s.state?.model;
+        const u = s.getContextUsage?.();
+        const parts = [];
+        if (model) parts.push(`${model.provider}/${model.id}`);
+        if (u?.percent != null) parts.push(`ctx ${Math.round(u.percent)}%`);
+        else if (u?.tokens != null) parts.push(`ctx ${u.tokens} tok`);
+        text = parts.join("  ·  ");
+    } catch {}
+    thread.piweb.setStatus("ctx", text || undefined);
+}
+
+// ---- per-thread event translation -----------------------------------------
+// Translate one thread's agent events -> cockpit frames, routed to the clients
+// viewing this thread. Background threads (no current viewers) still run; their
+// frames simply reach nobody and are restored via replay on the next view.
+/**
+ * @param {ThreadRuntime} thread
+ * @returns {() => void} unsubscribe
+ */
+function subscribe(thread) {
     let streamed = false;
-    return s.subscribe((ev) => {
+    /** @param {CockpitMessage} msg */
+    const emit = (msg) => bus.broadcastToThread(thread.id, msg);
+    return thread.session.subscribe((ev) => {
         switch (ev.type) {
             case "message_start":
-                if (ev.message?.role === "user")
-                    broadcast({
-                        kind: "user",
-                        text: textOf(ev.message.content),
-                    });
-                else if (ev.message?.role === "assistant") {
+                if (ev.message?.role === "user") {
+                    emit({ kind: "user", text: textOf(ev.message.content) });
+                } else if (ev.message?.role === "assistant") {
                     streamed = false;
-                    busy = true;
+                    if (!thread.busy) {
+                        thread.busy = true;
+                        // drive the cockpit "Working" spinner (pi-tui style)
+                        emit({ kind: "working", busy: true });
+                    }
                 }
                 break;
             case "message_update": {
                 const e = ev.assistantMessageEvent;
                 if (e?.type === "text_delta") {
                     streamed = true;
-                    broadcast({ kind: "delta", text: e.delta });
+                    emit({ kind: "delta", text: e.delta });
                 }
                 break;
             }
@@ -139,19 +259,19 @@ function subscribe(s) {
                 const m = ev.message;
                 if (m?.role !== "assistant") break;
                 if (m.stopReason === "error" || m.errorMessage)
-                    broadcast({
+                    emit({
                         kind: "error",
                         text: describeError(m.errorMessage),
                     });
                 else if (!streamed) {
                     const text = textOf(m.content);
-                    if (text) broadcast({ kind: "assistant_full", text });
+                    if (text) emit({ kind: "assistant_full", text });
                 }
-                broadcast({ kind: "assistant_end" });
+                emit({ kind: "assistant_end" });
                 break;
             }
             case "tool_execution_start":
-                broadcast({
+                emit({
                     kind: "tool",
                     id: ev.toolCallId,
                     name: ev.toolName,
@@ -160,7 +280,7 @@ function subscribe(s) {
                 });
                 break;
             case "tool_execution_end":
-                broadcast({
+                emit({
                     kind: "tool",
                     id: ev.toolCallId,
                     name: ev.toolName,
@@ -169,32 +289,127 @@ function subscribe(s) {
                 });
                 break;
             case "agent_end":
-                busy = false;
-                broadcast({ kind: "assistant_end" });
-                // names/recency may have changed — refresh the header title/list
+                thread.busy = false;
+                emit({ kind: "assistant_end" });
+                emit({ kind: "working", busy: false });
+                updateContextStatus(thread); // refresh the context bar
+                // names/recency/running may have changed — refresh the list
                 broadcastThreads();
                 break;
         }
     });
 }
 
-async function bootSession(sessionManager) {
-    const created = await createAgentSession({
-        cwd,
-        resourceLoader,
-        sessionManager,
-        authStorage,
-        modelRegistry,
+// ---- thread creation ------------------------------------------------------
+// Booting a thread instantiates its own extensions (capturing this thread's pi
+// + routing panel registration into this thread's registry) and AgentSession.
+// Creation is serialized so the transient `bindingThread` pointer can't be
+// clobbered by a concurrent boot.
+let createChain = Promise.resolve();
+
+/**
+ * @param {SessionManager} sm
+ * @returns {ThreadRuntime}
+ */
+function makeThread(sm) {
+    /** @type {ThreadRuntime} */
+    const thread = {
+        id: sm.getSessionId(),
+        sm,
+        session: null,
+        pi: null,
+        piweb: null,
+        resourceLoader: null,
+        unsubscribe: null,
+        busy: false,
+    };
+    thread.piweb = createPiWebHost({
+        // panels reach only the clients viewing this thread
+        // surface frames reach only the clients viewing this thread
+        broadcast: (frame) => bus.broadcastToThread(thread.id, frame),
+        getPi: () => thread.pi,
     });
-    session = created.session;
-    await pinModel(session);
-    unsubscribe = subscribe(session);
-    return session;
+    return thread;
 }
 
-// Replay a thread's history into the transcript after a reset.
-function replayTranscript(s) {
-    broadcast({ kind: "transcript_reset" });
+/**
+ * Boot (or resume) a thread into the registry.
+ * @param {SessionManager} sm
+ * @returns {Promise<ThreadRuntime>}
+ */
+function createThread(sm) {
+    const run = createChain.then(async () => {
+        const thread = makeThread(sm);
+        const resourceLoader = new DefaultResourceLoader({
+            cwd,
+            agentDir: getAgentDir(),
+            additionalExtensionPaths: [
+                join(ROOT, "extensions", "hello-panel.ts"),
+            ],
+            // Inline factory captures this thread's live ExtensionAPI so panel
+            // actions call back into *this* thread (pi.sendUserMessage, etc).
+            extensionFactories: [
+                (pi) => {
+                    thread.pi = pi;
+                },
+            ],
+        });
+        await resourceLoader.reload();
+        thread.resourceLoader = resourceLoader;
+
+        bindingThread = thread; // route panel registration to this thread
+        try {
+            const created = await createAgentSession({
+                cwd,
+                resourceLoader,
+                sessionManager: sm,
+                authStorage,
+                modelRegistry,
+            });
+            thread.session = created.session;
+        } finally {
+            bindingThread = null;
+        }
+
+        await pinModel(thread.session);
+        thread.unsubscribe = subscribe(thread);
+        threadRuntimes.set(thread.id, thread);
+        updateContextStatus(thread);
+        return thread;
+    });
+    createChain = run.then(
+        () => {},
+        () => {},
+    );
+    return run;
+}
+
+/**
+ * Resolve a thread id to a live runtime, resuming it from disk if necessary.
+ * @param {string|undefined|null} id
+ * @returns {Promise<ThreadRuntime|null>}
+ */
+async function ensureLoaded(id) {
+    if (!id) return null;
+    const existing = threadRuntimes.get(id);
+    if (existing) return existing;
+    const infos = await SessionManager.list(cwd);
+    const info = infos.find((i) => i.id === id);
+    if (!info) return null;
+    return createThread(SessionManager.open(info.path));
+}
+
+// Replay a thread's history into the transcript.
+// `send` writes to a single client (used on SSE connect / per-thread replay).
+// NOTE: this reads buildSessionContext() (in-memory), which works even for
+// threads not yet flushed to disk (the SDK only writes the .jsonl after the
+// first assistant message) — so a refresh restores a brand-new thread too.
+/**
+ * @param {AgentSession} s
+ * @param {(msg: CockpitMessage) => void} send
+ */
+function replayTranscript(s, send) {
+    send({ kind: "transcript_reset" });
     let messages = [];
     try {
         const ctx = s.sessionManager.buildSessionContext?.();
@@ -203,33 +418,87 @@ function replayTranscript(s) {
         messages = [];
     }
     for (const m of messages) {
-        if (m?.role === "user") {
-            broadcast({ kind: "user", text: textOf(m.content) });
-        } else if (m?.role === "assistant") {
-            const text = textOf(m.content);
-            if (text) broadcast({ kind: "assistant_full", text });
-            broadcast({ kind: "assistant_end" });
+        switch (m?.role) {
+            case "user":
+                send({ kind: "user", text: textOf(m.content) });
+                break;
+            case "assistant": {
+                const text = textOf(m.content);
+                if (text) send({ kind: "assistant_full", text });
+                send({ kind: "assistant_end" });
+                // Tool calls live as `toolCall` blocks inside the assistant
+                // message; re-emit each as a tool "start" (its matching
+                // "end" comes from the toolResult message below).
+                if (Array.isArray(m.content)) {
+                    for (const b of m.content) {
+                        if (b?.type === "toolCall")
+                            send({
+                                kind: "tool",
+                                id: b.id,
+                                name: b.name,
+                                status: "start",
+                                args: b.arguments,
+                            });
+                    }
+                }
+                break;
+            }
+            case "toolResult":
+                send({
+                    kind: "tool",
+                    id: m.toolCallId,
+                    name: m.toolName,
+                    status: "end",
+                    isError: !!m.isError,
+                });
+                break;
+            case "bashExecution":
+                // user-run shell (! / !!) is stored as its own message
+                send({
+                    kind: "bash",
+                    status: "start",
+                    command: m.command,
+                    excludeFromContext: !!m.excludeFromContext,
+                });
+                if (m.output)
+                    send({ kind: "bash", status: "chunk", text: m.output });
+                send({
+                    kind: "bash",
+                    status: "end",
+                    exitCode: m.exitCode ?? null,
+                    cancelled: !!m.cancelled,
+                    truncated: !!m.truncated,
+                });
+                break;
         }
     }
 }
 
-async function switchTo(sessionManager) {
-    if (busy) throw new Error("cannot switch threads while a turn is running");
-    if (unsubscribe) {
-        unsubscribe();
-        unsubscribe = null;
+/**
+ * Resolve + replay the thread a freshly-connected client is viewing. Sends that
+ * client its panels and transcript, and returns the resolved id so the SSE
+ * connection can be tagged (and the browser can canonicalize its URL).
+ * @param {(msg: CockpitMessage) => void} send
+ * @param {string|undefined} threadId
+ * @returns {Promise<string|undefined>}
+ */
+async function handleConnect(send, threadId) {
+    let t = null;
+    try {
+        t = await ensureLoaded(threadId);
+    } catch {
+        t = null;
     }
-    if (session) session.dispose();
-    piweb.clear();
-    // re-instantiate extensions (re-registers panels) for the new session
-    await resourceLoader.reload();
-    await bootSession(sessionManager);
-    replayTranscript(session);
-    broadcast({
-        kind: "thread_switched",
-        id: session.sessionManager.getSessionId(),
-    });
-    broadcastThreads();
+    if (!t) t = defaultThread;
+    if (!t?.session || !t.piweb) return undefined;
+    updateContextStatus(t);
+    send({ kind: "surfaces", surfaces: t.piweb.snapshot() });
+    replayTranscript(t.session, send);
+    send({ kind: "thread_switched", id: t.id });
+    // reflect the thread's current activity (e.g. focusing a busy background
+    // thread should show the spinner immediately)
+    send({ kind: "working", busy: !!t.busy });
+    return t.id;
 }
 
 // ---- threads (sessions) ---------------------------------------------------
@@ -241,74 +510,129 @@ function broadcastThreads() {
 }
 
 const threads = {
+    /** @returns {Promise<Array<object>>} */
     async list() {
         const infos = await SessionManager.list(cwd);
-        const activeId = session?.sessionManager.getSessionId();
-        return infos
+        const items = infos
             .slice()
             .sort((a, b) => new Date(b.modified) - new Date(a.modified))
-            .map((i) => ({
-                id: i.id,
-                name: i.name || i.firstMessage || "(new thread)",
-                messageCount: i.messageCount,
-                modified: i.modified,
-                active: i.id === activeId,
-            }));
+            .map((i) => {
+                const rt = threadRuntimes.get(i.id);
+                return {
+                    id: i.id,
+                    name: i.name || i.firstMessage || "(new thread)",
+                    messageCount: i.messageCount,
+                    modified: i.modified,
+                    running: rt?.busy ?? false, // turn in flight (any viewer or none)
+                    loaded: !!rt, // live in the registry (running in-process)
+                };
+            });
+        // The SDK only flushes a session to disk after its first assistant
+        // message, so brand-new or still-running threads won't appear in
+        // `infos`. Surface every live in-registry thread so they stay visible
+        // and resumable across browser refreshes (the server keeps them alive).
+        const onDisk = new Set(infos.map((i) => i.id));
+        for (const [id, rt] of threadRuntimes) {
+            if (onDisk.has(id)) continue;
+            const sm = rt.session?.sessionManager;
+            let messageCount = 0;
+            let firstMessage = "";
+            try {
+                const msgs = sm?.buildSessionContext?.().messages ?? [];
+                messageCount = msgs.length;
+                const u = msgs.find((m) => m?.role === "user");
+                if (u) firstMessage = textOf(u.content).slice(0, 80);
+            } catch {}
+            items.unshift({
+                id,
+                name: sm?.getSessionName?.() || firstMessage || "(new thread)",
+                messageCount,
+                modified: new Date(),
+                running: rt.busy ?? false,
+                loaded: true,
+            });
+        }
+        return items;
     },
+    /** Create a fresh thread and return its id (the client navigates to it). */
     async create() {
-        await switchTo(SessionManager.create(cwd));
-        return { id: session.sessionManager.getSessionId() };
+        const t = await createThread(SessionManager.create(cwd));
+        return { id: t.id };
     },
+    /**
+     * Resume a thread into the registry (clients view it by reopening the SSE
+     * stream with `?thread=<id>`; this just guarantees it is live).
+     * @param {string} id
+     */
     async switch(id) {
         if (!id) return;
-        if (id === session?.sessionManager.getSessionId()) return;
-        const infos = await SessionManager.list(cwd);
-        const info = infos.find((i) => i.id === id);
-        if (!info) throw new Error(`unknown thread: ${id}`);
-        await switchTo(SessionManager.open(info.path));
+        const t = await ensureLoaded(id);
+        if (!t) throw new Error(`unknown thread: ${id}`);
     },
 };
 
 // ---- session commands (/session, /name, /compact, /export, /changelog) ----
+// All operate on the thread named by the calling client (threadId).
 const sessionApi = {
-    info() {
-        const sm = session?.sessionManager;
+    /** @param {string} [threadId] */
+    info(threadId) {
+        const s = sessionFor(threadId);
+        const sm = s?.sessionManager;
         return {
             id: sm?.getSessionId(),
             name: sm?.getSessionName() ?? null,
-            stats: session?.getSessionStats?.() ?? null,
-            usage: session?.getContextUsage?.() ?? null,
+            stats: s?.getSessionStats?.() ?? null,
+            usage: s?.getContextUsage?.() ?? null,
         };
     },
-    setName(name) {
+    /**
+     * @param {string} name
+     * @param {string} [threadId]
+     */
+    setName(name, threadId) {
         const n = (name ?? "").trim();
-        if (n && session) {
-            session.setSessionName(n);
+        const s = sessionFor(threadId);
+        if (n && s) {
+            s.setSessionName(n);
             broadcastThreads();
-            broadcast({ kind: "system", text: `renamed thread to “${n}”` });
+            bus.broadcastToThread(threadId, {
+                kind: "system",
+                text: `renamed thread to “${n}”`,
+            });
         }
     },
-    async compact() {
-        if (!session) return;
-        broadcast({ kind: "system", text: "compacting context…" });
+    /** @param {string} [threadId] */
+    async compact(threadId) {
+        const s = sessionFor(threadId);
+        if (!s) return;
+        bus.broadcastToThread(threadId, {
+            kind: "system",
+            text: "compacting context…",
+        });
         try {
-            await session.compact();
-            broadcast({ kind: "system", text: "context compacted" });
+            await s.compact();
+            bus.broadcastToThread(threadId, {
+                kind: "system",
+                text: "context compacted",
+            });
             broadcastThreads();
         } catch (err) {
-            broadcast({
+            bus.broadcastToThread(threadId, {
                 kind: "error",
                 text: "compact failed: " + String(err?.message ?? err),
             });
         }
     },
-    async export(format) {
-        if (!session) return { error: "no active session" };
+    /**
+     * @param {"html"|"jsonl"} format
+     * @param {string} [threadId]
+     */
+    async export(format, threadId) {
+        const s = sessionFor(threadId);
+        if (!s) return { error: "no active session" };
         try {
             const path =
-                format === "jsonl"
-                    ? session.exportToJsonl()
-                    : await session.exportToHtml();
+                format === "jsonl" ? s.exportToJsonl() : await s.exportToHtml();
             return { path, format: format === "jsonl" ? "jsonl" : "html" };
         } catch (err) {
             return { error: String(err?.message ?? err) };
@@ -328,10 +652,18 @@ const sessionApi = {
 };
 
 // ---- shell execution (! adds output to context, !! keeps it local) -------
-async function runBash(command, excludeFromContext) {
+/**
+ * @param {string} command
+ * @param {boolean} excludeFromContext
+ * @param {string} [threadId]
+ */
+async function runBash(command, excludeFromContext, threadId) {
     const cmd = (command ?? "").trim();
-    if (!session || !cmd) return;
-    broadcast({
+    const s = sessionFor(threadId);
+    if (!s || !cmd) return;
+    /** @param {CockpitMessage} msg */
+    const emit = (msg) => bus.broadcastToThread(threadId, msg);
+    emit({
         kind: "bash",
         status: "start",
         command: cmd,
@@ -339,18 +671,18 @@ async function runBash(command, excludeFromContext) {
     });
     let streamed = false;
     try {
-        const result = await session.executeBash(
+        const result = await s.executeBash(
             cmd,
             (chunk) => {
                 streamed = true;
-                broadcast({ kind: "bash", status: "chunk", text: chunk });
+                emit({ kind: "bash", status: "chunk", text: chunk });
             },
             { excludeFromContext: !!excludeFromContext },
         );
         if (!streamed && result?.output) {
-            broadcast({ kind: "bash", status: "chunk", text: result.output });
+            emit({ kind: "bash", status: "chunk", text: result.output });
         }
-        broadcast({
+        emit({
             kind: "bash",
             status: "end",
             exitCode: result?.exitCode ?? null,
@@ -358,7 +690,7 @@ async function runBash(command, excludeFromContext) {
             truncated: !!result?.truncated,
         });
     } catch (err) {
-        broadcast({
+        emit({
             kind: "error",
             text: "bash failed: " + String(err?.message ?? err),
         });
@@ -366,8 +698,9 @@ async function runBash(command, excludeFromContext) {
 }
 
 // ---- boot -----------------------------------------------------------------
-// Persist sessions so threads survive restarts; resume the most recent.
-await bootSession(SessionManager.continueRecent(cwd));
+// Persist sessions so threads survive restarts; resume the most recent as the
+// default thread for clients that connect without a `?thread`.
+defaultThread = await createThread(SessionManager.continueRecent(cwd));
 
 // ---- http -----------------------------------------------------------------
 const server = createApp({
@@ -376,24 +709,94 @@ const server = createApp({
     piweb,
     threads,
     sessionApi,
-    onBash: (command, exclude) => runBash(command, exclude),
-    onPrompt: (text) =>
-        session
-            .prompt(text)
-            .catch((err) =>
-                broadcast({ kind: "error", text: String(err?.message ?? err) }),
-            ),
-    onReload: async () => {
-        // best-effort self-modify hook: re-discover extensions on disk
-        piweb.clear();
+    // On SSE (re)connect, resolve + replay the thread this client is viewing
+    // (from `?thread`), returning the resolved id so the connection is tagged.
+    onConnect: (send, ctx) => handleConnect(send, ctx?.threadId),
+    /**
+     * @param {string} command
+     * @param {boolean} exclude
+     * @param {string} [threadId]
+     */
+    onBash: (command, exclude, threadId) => runBash(command, exclude, threadId),
+    /**
+     * Client-driven overlay control (Esc / backdrop close).
+     * @param {string} [threadId]
+     * @param {"open"|"close"} op
+     * @param {string} id
+     */
+    onSurface: (threadId, op, id) => {
+        const t = threadId ? threadRuntimes.get(threadId) : null;
+        if (!t?.piweb || !id) return;
+        if (op === "open") t.piweb.openOverlay(id);
+        else if (op === "close") t.piweb.closeOverlay(id);
+    },
+    /**
+     * @param {string} text
+     * @param {string} [threadId]
+     */
+    onPrompt: (text, threadId) => {
+        const s = sessionFor(threadId);
+        if (!s) return;
+        s.prompt(text).catch((err) =>
+            bus.broadcastToThread(threadId, {
+                kind: "error",
+                text: String(err?.message ?? err),
+            }),
+        );
+    },
+    /**
+     * Interrupt the agent mid-turn (Esc in the cockpit). Aborts the current
+     * operation and waits for the thread to go idle.
+     * @param {string} [threadId]
+     */
+    onInterrupt: async (threadId) => {
+        const s = sessionFor(threadId);
+        if (!s?.isStreaming) return;
         try {
-            await resourceLoader.reload();
-            broadcast({ kind: "system", text: "reloaded extensions" });
+            await s.abort();
+            bus.broadcastToThread(threadId, {
+                kind: "system",
+                text: "interrupted",
+            });
         } catch (err) {
-            broadcast({
+            bus.broadcastToThread(threadId, {
+                kind: "error",
+                text: "interrupt failed: " + String(err?.message ?? err),
+            });
+        } finally {
+            const t = threadId ? threadRuntimes.get(threadId) : null;
+            if (t) t.busy = false;
+            bus.broadcastToThread(threadId, { kind: "working", busy: false });
+            broadcastThreads();
+        }
+    },
+    /**
+     * Self-modify hook: re-discover extensions for the given thread and
+     * re-register its panels.
+     * @param {string} [threadId]
+     */
+    onReload: async (threadId) => {
+        const t = threadId ? threadRuntimes.get(threadId) : null;
+        if (!t?.resourceLoader || !t.piweb) return;
+        t.piweb.clear();
+        bindingThread = t;
+        try {
+            await t.resourceLoader.reload();
+            bus.broadcastToThread(threadId, {
+                kind: "surfaces",
+                surfaces: t.piweb.snapshot(),
+            });
+            bus.broadcastToThread(threadId, {
+                kind: "system",
+                text: "reloaded extensions",
+            });
+        } catch (err) {
+            bus.broadcastToThread(threadId, {
                 kind: "error",
                 text: "reload failed: " + String(err?.message ?? err),
             });
+        } finally {
+            bindingThread = null;
         }
     },
 });
@@ -406,7 +809,14 @@ server.listen(PORT, HOST, () => {
 
 process.on("SIGINT", () => {
     try {
-        session?.dispose();
+        for (const t of threadRuntimes.values()) {
+            try {
+                t.unsubscribe?.();
+                t.session?.dispose();
+            } catch {
+                /* best-effort */
+            }
+        }
     } finally {
         process.exit(0);
     }
