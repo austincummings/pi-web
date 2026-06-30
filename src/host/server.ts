@@ -784,9 +784,11 @@ function buildWelcome(rl) {
         );
         add(
             "Extensions",
-            safe(() => rl.getExtensions().extensions, []).map((e) =>
-                resourceLabel(e.path),
-            ),
+            safe(() => rl.getExtensions().extensions, [])
+                // Skip synthetic/inline extensions (e.g. "<inline:1>"), like the
+                // factory pi-web injects to capture each thread's ExtensionAPI.
+                .filter((e) => !e.path.startsWith("<"))
+                .map((e) => resourceLabel(e.path)),
         );
         add(
             "Themes",
