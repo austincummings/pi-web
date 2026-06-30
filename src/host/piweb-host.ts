@@ -107,7 +107,7 @@ export function createPiWebHost({ broadcast, getPi }) {
      * @param {"dock"|"overlay"} kind
      * @param {object} def
      */
-    const define = (id, kind, def = {}) => {
+    const define = (id, kind, def: Record<string, any> = {}) => {
         const prev = surfaces.get(id);
         surfaces.set(id, {
             id,

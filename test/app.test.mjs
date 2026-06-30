@@ -7,8 +7,8 @@
  * (dock -> snapshot -> dispatch -> setState -> broadcast).
  */
 import { test, expect } from "bun:test";
-import { createBus, createApp } from "../src/host/app.mjs";
-import { createPiWebHost } from "../src/host/piweb-host.mjs";
+import { createBus, createApp } from "../src/host/app.ts";
+import { createPiWebHost } from "../src/host/piweb-host.ts";
 
 function startServer() {
     const bus = createBus();
@@ -174,7 +174,7 @@ test("/files returns the project file list for the @ mention typeahead", async (
         piweb,
         listFiles: async () => {
             called++;
-            return ["src/web/app.js", "README.md"];
+            return ["src/web/app.ts", "README.md"];
         },
     });
     const base = await new Promise((r) =>
@@ -186,7 +186,7 @@ test("/files returns the project file list for the @ mention typeahead", async (
         const res = await fetch(`${base}/files`);
         expect(res.status).toBe(200);
         const body = await res.json();
-        expect(body.items).toEqual(["src/web/app.js", "README.md"]);
+        expect(body.items).toEqual(["src/web/app.ts", "README.md"]);
         expect(called).toBe(1);
     } finally {
         server.close();
@@ -496,6 +496,34 @@ test("/surface forwards overlay open/close to onSurface", async () => {
             body: JSON.stringify({ threadId: "t1", op: "close", id: "m" }),
         });
         expect(calls).toContain("close:m@t1");
+    } finally {
+        server.close();
+    }
+});
+
+test("/app.js serves the bundled TS front-end (build-web)", async () => {
+    const { makeWebBundler } = await import("../src/host/build-web.ts");
+    const bus = createBus();
+    const piweb = createPiWebHost({ broadcast: () => {}, getPi: () => ({}) });
+    const server = createApp({
+        web: "src/web",
+        bus,
+        piweb,
+        bundleWeb: makeWebBundler("src/web"),
+    });
+    const base = await new Promise((r) =>
+        server.listen(0, "127.0.0.1", () =>
+            r(`http://127.0.0.1:${server.address().port}`),
+        ),
+    );
+    try {
+        const res = await fetch(`${base}/app.js`);
+        expect(res.status).toBe(200);
+        expect(res.headers.get("content-type")).toContain("javascript");
+        const code = await res.text();
+        // fuzzy.ts + markdown.ts are bundled into the single entrypoint
+        expect(code).toContain("fuzzyMatch");
+        expect(code).toContain("renderMarkdown");
     } finally {
         server.close();
     }

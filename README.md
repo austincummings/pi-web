@@ -27,13 +27,14 @@ browser cockpit  ──SSE/POST──►  host (Bun)
 
 ## Files
 
-| Path                      | Role                                                                |
-| ------------------------- | ------------------------------------------------------------------- |
-| `src/host/server.mjs`     | HTTP host: in-process agent + SSE/POST bus                          |
-| `src/host/piweb-host.mjs` | `piweb` registry: docks/overlays, state, action dispatch            |
-| `src/sdk/piweb.mjs`       | `@pi-web/sdk` shim extensions import (resolves to host or no-op)    |
-| `src/web/`                | Browser cockpit: transcript + component-tree renderer               |
-| `.pi/extensions/`         | Project extensions (e.g. `context-bar/` — the glass-cockpit footer) |
+| Path                     | Role                                                                |
+| ------------------------ | ------------------------------------------------------------------- |
+| `src/host/server.ts`     | HTTP host: in-process agent + SSE/POST bus                          |
+| `src/host/piweb-host.ts` | `piweb` registry: docks/overlays, state, action dispatch            |
+| `src/host/build-web.ts`  | bundles the TS front-end (`src/web/*.ts`) via Bun → `/app.js`       |
+| `src/sdk/piweb.ts`       | `@pi-web/sdk` shim extensions import (resolves to host or no-op)    |
+| `src/web/`               | Browser cockpit: transcript + component-tree renderer               |
+| `.pi/extensions/`        | Project extensions (e.g. `context-bar/` — the glass-cockpit footer) |
 
 ## Run
 

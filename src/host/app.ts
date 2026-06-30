@@ -8,9 +8,55 @@
  * (dock/overlay -> snapshot -> dispatch -> setState -> broadcast, plus thread
  * listing/switching) testable with zero credentials.
  */
-import http, { Server } from "node:http";
+import http, {
+    Server,
+    type IncomingMessage,
+    type ServerResponse,
+} from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+
+/** An SSE response stream, tagged with the thread id the client is viewing. */
+type SSEClient = ServerResponse & { __threadId?: string };
+
+/** A JSON-ish bus frame. */
+type Frame = Record<string, unknown>;
+
+export interface Bus {
+    clients: Set<SSEClient>;
+    broadcast: (msg: Frame) => void;
+    broadcastToThread: (threadId: string | undefined, msg: Frame) => void;
+}
+
+/** Options for {@link createApp}. Everything agent-coupled is an optional hook. */
+export interface AppOptions {
+    web: string;
+    bus: Bus;
+    piweb: any;
+    theme?: Record<string, string>;
+    bundleWeb?: () => Promise<string>;
+    onPrompt?: (text: string, threadId?: string) => void;
+    onReload?: (threadId?: string) => void | Promise<void>;
+    onInterrupt?: (threadId?: string) => void | Promise<void>;
+    onBash?: (command: string, exclude: boolean, threadId?: string) => void;
+    onSurface?: (
+        threadId: string | undefined,
+        op: "open" | "close",
+        id: string,
+    ) => void;
+    onThinkingVisibility?: (hidden: boolean, threadId?: string) => void;
+    onConnect?: (
+        send: (msg: Frame) => void,
+        ctx: { threadId?: string },
+    ) => (string | undefined) | Promise<string | undefined>;
+    listFiles?: () => string[] | Promise<string[]>;
+    threads?: {
+        list: () => Promise<any[]>;
+        create?: () => Promise<any>;
+        switch?: (id: string) => Promise<void>;
+    };
+    sessionApi?: Record<string, (...args: any[]) => any>;
+}
 
 /**
  * SSE fan-out bus.
@@ -27,10 +73,9 @@ import { join } from "node:path";
  *   broadcastToThread: (threadId: string|undefined, msg: any) => void,
  * }}
  */
-export function createBus() {
-    /** @type {Set<SSEClient>} */
-    const clients = new Set();
-    const frame = (msg) => `data: ${JSON.stringify(msg)}\n\n`;
+export function createBus(): Bus {
+    const clients = new Set<SSEClient>();
+    const frame = (msg: Frame) => `data: ${JSON.stringify(msg)}\n\n`;
     const broadcast = (msg) => {
         const line = frame(msg);
         for (const res of clients) res.write(line);
@@ -103,17 +148,17 @@ export function createApp({
     onSurface,
     onThinkingVisibility,
     listFiles,
-}: { web: string; bus: object; piweb: PiWeb; }): Server {
+    bundleWeb,
+}: AppOptions): Server {
+    // `/app.js` is produced by the TS bundler (see build-web.ts); the rest are
+    // served verbatim from src/web.
     const STATIC = {
         "/": ["index.html", "text/html; charset=utf-8"],
         "/index.html": ["index.html", "text/html; charset=utf-8"],
-        "/app.js": ["app.js", "text/javascript; charset=utf-8"],
-        "/fuzzy.mjs": ["fuzzy.mjs", "text/javascript; charset=utf-8"],
-        "/markdown.mjs": ["markdown.mjs", "text/javascript; charset=utf-8"],
     };
 
-    return http.createServer(async (req, res) => {
-        const url = new URL(req.url, "http://localhost");
+    return http.createServer(async (req: IncomingMessage, res: SSEClient) => {
+        const url = new URL(req.url ?? "/", "http://localhost");
         const path = url.pathname;
 
         // liveness: up regardless of model/auth
@@ -279,6 +324,23 @@ export function createApp({
                 return;
             }
             res.writeHead(404).end();
+            return;
+        }
+
+        // bundled front-end entrypoint
+        if (path === "/app.js" && bundleWeb) {
+            try {
+                const code = await bundleWeb();
+                res.writeHead(200, {
+                    "Content-Type": "text/javascript; charset=utf-8",
+                }).end(code);
+            } catch (err) {
+                res.writeHead(500, {
+                    "Content-Type": "text/javascript; charset=utf-8",
+                }).end(
+                    `/* web build failed */\nconsole.error(${JSON.stringify(String(err?.message ?? err))});`,
+                );
+            }
             return;
         }
 

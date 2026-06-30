@@ -2,7 +2,7 @@
  * Parity tests for the ported fuzzy matcher (mirrors pi-tui semantics).
  */
 import { test, expect } from "bun:test";
-import { fuzzyMatch, fuzzyFilter } from "../src/web/fuzzy.mjs";
+import { fuzzyMatch, fuzzyFilter } from "../src/web/fuzzy.ts";
 
 const CMDS = [{ label: "/resume" }, { label: "/new" }];
 

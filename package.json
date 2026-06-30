@@ -6,7 +6,9 @@
     "description": "Self-modifiable web cockpit for the pi coding agent",
     "scripts": {
         "start": "bun run src/host/server.ts",
-        "dev": "bun --watch src/host/server.ts",
+        "dev": "PI_WEB_DEV=1 bun --watch src/host/server.ts",
+        "build": "bun build src/web/app.ts --target=browser --outdir dist",
+        "typecheck": "tsc --noEmit",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
         "test": "bun test"
@@ -18,6 +20,8 @@
         "@earendil-works/pi-coding-agent": "0.80.2"
     },
     "devDependencies": {
-        "prettier": "^3.9.4"
+        "@types/bun": "^1.3.0",
+        "prettier": "^3.9.4",
+        "typescript": "^5.7.0"
     }
 }

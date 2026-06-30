@@ -2,7 +2,7 @@
  * Tests for the basic safe Markdown renderer.
  */
 import { test, expect } from "bun:test";
-import { renderMarkdown } from "../src/web/markdown.mjs";
+import { renderMarkdown } from "../src/web/markdown.ts";
 
 test("escapes HTML (no injection)", () => {
     const out = renderMarkdown("<script>alert(1)</script>");

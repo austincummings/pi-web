@@ -45,6 +45,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { createPiWebHost } from "./piweb-host.ts";
+import { makeWebBundler } from "./build-web.ts";
 import { createBus, createApp } from "./app.ts";
 
 /**
@@ -620,7 +621,11 @@ const threads = {
         const infos = await SessionManager.list(cwd);
         const items = infos
             .slice()
-            .sort((a, b) => new Date(b.modified) - new Date(a.modified))
+            .sort(
+                (a, b) =>
+                    new Date(b.modified).getTime() -
+                    new Date(a.modified).getTime(),
+            )
             .map((i) => {
                 const rt = threadRuntimes.get(i.id);
                 return {
@@ -852,6 +857,8 @@ const server = createApp({
     theme: piTheme,
     bus,
     piweb,
+    // TS front-end bundle (cached in prod, rebuilt per-request when PI_WEB_DEV=1)
+    bundleWeb: makeWebBundler(WEB, process.env.PI_WEB_DEV === "1"),
     threads,
     sessionApi,
     // Project file list for the browser's `@` mention typeahead.

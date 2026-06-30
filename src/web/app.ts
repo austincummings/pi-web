@@ -1,7 +1,7 @@
 // pi-web cockpit client: transcript stream, extension panels, thread switching,
 // and a fuzzy command typeahead (ported from pi-tui's fuzzy matcher).
-import { fuzzyFilter } from "/fuzzy.mjs";
-import { renderMarkdown } from "/markdown.mjs";
+import { fuzzyFilter } from "./fuzzy.ts";
+import { renderMarkdown } from "./markdown.ts";
 
 const $transcript = document.getElementById("transcript");
 const $dockLeft = document.getElementById("dock-left");
@@ -15,8 +15,8 @@ const $status = document.getElementById("status");
 const $threadTitle = document.getElementById("threadTitle");
 const $overlay = document.getElementById("overlay");
 const $picker = document.getElementById("picker");
-const $prompt = document.getElementById("prompt");
-const $ask = document.getElementById("ask");
+const $prompt = document.getElementById("prompt") as HTMLTextAreaElement;
+const $ask = document.getElementById("ask") as HTMLFormElement;
 const $ac = document.getElementById("ac");
 const $working = document.getElementById("working");
 
@@ -149,8 +149,10 @@ function thinkingBubble() {
     if ($transcript.querySelector(".empty")) $transcript.innerHTML = "";
     const el = document.createElement("div");
     el.className = "thinking-block";
-    el.innerHTML = '<div class="think-head">thinking</div><div class="think-body"></div>';
-    el.querySelector(".think-head").onclick = () => toggleThinking();
+    el.innerHTML =
+        '<div class="think-head">thinking</div><div class="think-body"></div>';
+    (el.querySelector(".think-head") as HTMLElement).onclick = () =>
+        toggleThinking();
     $transcript.appendChild(el);
     $transcript.scrollTop = $transcript.scrollHeight;
     return el;
@@ -962,7 +964,12 @@ $prompt.addEventListener("keydown", (e) => {
 // Alt+T toggles thinking-block visibility (persisted to pi's settings). Alt+T
 // is not browser-reserved (unlike Ctrl+T), so preventDefault reliably works.
 document.addEventListener("keydown", (e) => {
-    if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === "t" || e.key === "T")) {
+    if (
+        e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        (e.key === "t" || e.key === "T")
+    ) {
         e.preventDefault();
         toggleThinking();
     }
@@ -1030,7 +1037,7 @@ function onSseMessage(e) {
             // apply the active pi theme palette to the cockpit CSS variables
             if (m.vars)
                 for (const [k, v] of Object.entries(m.vars))
-                    document.documentElement.style.setProperty(k, v);
+                    document.documentElement.style.setProperty(k, String(v));
             break;
         case "surfaces":
             renderSurfaces(m.surfaces);
