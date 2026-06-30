@@ -8,6 +8,12 @@ import {
     getToolRenderer,
     registerToolRenderer,
 } from "./tools.ts";
+import {
+    keyHintsLine,
+    sectionSummary,
+    hasResources,
+    type WelcomeInfo,
+} from "./welcome.ts";
 
 // Expose the tool-renderer registry so client-side extensions can override how
 // a tool's result is displayed (web counterpart to pi-tui's renderResult).
@@ -16,6 +22,7 @@ import {
 });
 
 const $transcript = document.getElementById("transcript");
+const $welcome = document.getElementById("welcome");
 const $dockLeft = document.getElementById("dock-left");
 const $dockRight = document.getElementById("dock-right");
 const $dockBottom = document.getElementById("dock-bottom");
@@ -166,6 +173,74 @@ let lastToolEntry = null;
 // The agent's working directory (from the `config` frame); used to show
 // cwd-relative tool paths like the TUI.
 let cwd = "";
+
+// Startup / reload intro view (#5/#12): the version banner + loaded resources,
+// rendered above the transcript. Collapsed by default (compact comma lists),
+// click to expand (one resource per line), mirroring the TUI header.
+let welcomeInfo: WelcomeInfo | null = null;
+let welcomeExpanded = false;
+
+function renderWelcome() {
+    if (!$welcome) return;
+    const info = welcomeInfo;
+    if (!info) {
+        $welcome.hidden = true;
+        return;
+    }
+    $welcome.hidden = false;
+    $welcome.classList.toggle("expanded", welcomeExpanded);
+    $welcome.innerHTML = "";
+
+    const logo = document.createElement("div");
+    logo.className = "logo";
+    logo.textContent = "pi";
+    if (info.version) {
+        const ver = document.createElement("span");
+        ver.className = "ver";
+        ver.textContent = ` v${info.version}`;
+        logo.appendChild(ver);
+    }
+    $welcome.appendChild(logo);
+
+    const hints = document.createElement("div");
+    hints.className = "hints";
+    hints.textContent = keyHintsLine();
+    $welcome.appendChild(hints);
+
+    if (hasResources(info)) {
+        const secs = document.createElement("div");
+        secs.className = "sections";
+        for (const s of info.sections) {
+            if (!s.items || !s.items.length) continue;
+            const sec = document.createElement("div");
+            sec.className = "sec";
+            const name = document.createElement("span");
+            name.className = "sec-name";
+            name.textContent = `[${s.name}] `;
+            const items = document.createElement("span");
+            items.className = "sec-items";
+            items.textContent = welcomeExpanded
+                ? s.items.join("\n")
+                : sectionSummary(s.items);
+            sec.appendChild(name);
+            sec.appendChild(items);
+            secs.appendChild(sec);
+        }
+        $welcome.appendChild(secs);
+    }
+
+    const toggle = document.createElement("div");
+    toggle.className = "toggle";
+    toggle.textContent = welcomeExpanded
+        ? "collapse"
+        : "show loaded resources (click)";
+    $welcome.appendChild(toggle);
+
+    $welcome.onclick = () => {
+        welcomeExpanded = !welcomeExpanded;
+        renderWelcome();
+    };
+}
 
 // True when the transcript is scrolled (near) to the bottom, so we only
 // auto-follow new output when the user hasn't scrolled up to read history.
@@ -1183,6 +1258,14 @@ function onSseMessage(e) {
         case "config":
             // working directory, so tool cards can show cwd-relative paths
             if (typeof m.cwd === "string") cwd = m.cwd;
+            break;
+        case "welcome":
+            // startup / reload intro: version banner + loaded resources
+            welcomeInfo = {
+                version: m.version || "",
+                sections: m.sections || [],
+            };
+            renderWelcome();
             break;
         case "theme":
             // apply the active pi theme palette to the cockpit CSS variables

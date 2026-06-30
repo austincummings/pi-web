@@ -553,6 +553,54 @@
             .empty {
                 color: var(--dim);
             }
+            /* startup / reload intro view (banner + loaded resources), echoing
+               the pi TUI header. Sits above the transcript and is click-to-
+               expand (collapsed shows compact comma lists; expanded one per line). */
+            .welcome {
+                padding: 10px 14px 4px;
+                font-size: 13px;
+                line-height: 1.5;
+                cursor: pointer;
+                user-select: none;
+            }
+            .welcome .logo {
+                font-weight: 700;
+                color: var(--acc);
+            }
+            .welcome .logo .ver {
+                color: var(--dim);
+                font-weight: 400;
+            }
+            .welcome .hints {
+                color: var(--muted);
+            }
+            .welcome .onboard {
+                color: var(--dim);
+                margin-top: 4px;
+            }
+            .welcome .sections {
+                margin-top: 8px;
+            }
+            .welcome .sec {
+                margin-top: 4px;
+            }
+            .welcome .sec-name {
+                color: var(--acc2);
+                font-weight: 600;
+            }
+            .welcome .sec-items {
+                color: var(--dim);
+            }
+            .welcome.expanded .sec-items {
+                white-space: pre;
+                display: block;
+                margin-left: 1em;
+            }
+            .welcome .toggle {
+                color: var(--dim);
+                margin-top: 6px;
+                font-size: 12px;
+            }
             /* fuzzy command typeahead (above the prompt) */
             .ac {
                 position: absolute;
@@ -664,6 +712,7 @@
                 <span class="sp"></span>
                 <span id="status" class="empty">connecting…</span>
             </header>
+            <div id="welcome" class="welcome" hidden></div>
             <div id="transcript">
                 <div class="empty">
                     Ask pi something, or use a dock registered by an extension →

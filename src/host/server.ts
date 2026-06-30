@@ -47,6 +47,18 @@ import {
 import { createPiWebHost } from "./piweb-host.ts";
 import { makeWebBundler } from "./build-web.ts";
 import { createBus, createApp } from "./app.ts";
+import { createRequire } from "node:module";
+
+// pi version, for the startup banner (mirrors the TUI's `pi v<version>` logo).
+const PI_VERSION = (() => {
+    try {
+        return createRequire(import.meta.url)(
+            "@earendil-works/pi-coding-agent/package.json",
+        ).version as string;
+    } catch {
+        return "";
+    }
+})();
 
 /**
  * @typedef {import("@earendil-works/pi-coding-agent").AgentSession} AgentSession
@@ -589,6 +601,66 @@ function replayTranscript(s, send) {
  * @param {string|undefined} threadId
  * @returns {Promise<string|undefined>}
  */
+// A short, human label for a resource path. Extensions usually live in
+// `.../<name>/index.ts`, so prefer the containing folder name; otherwise the
+// basename. Plain files are shown cwd-relative.
+function resourceLabel(p) {
+    const rel = p.startsWith(cwd + "/") ? p.slice(cwd.length + 1) : p;
+    const parts = rel.split("/");
+    const base = parts[parts.length - 1] || rel;
+    if (/^index\.[mc]?[jt]sx?$/.test(base) && parts.length >= 2) {
+        return parts[parts.length - 2];
+    }
+    return rel;
+}
+
+// Gather the loaded resources for the startup/reload intro view, mirroring the
+// TUI's `showLoadedResources` sections (Context, Skills, Prompts, Extensions,
+// Themes). Each accessor is guarded so one broken loader can't sink the banner.
+function buildWelcome(rl) {
+    const sections = [];
+    const add = (name, items) => {
+        const list = (items || []).filter(Boolean);
+        if (list.length) sections.push({ name, items: list });
+    };
+    const safe = (fn, fallback) => {
+        try {
+            return fn();
+        } catch {
+            return fallback;
+        }
+    };
+    if (rl) {
+        add(
+            "Context",
+            safe(() => rl.getAgentsFiles().agentsFiles, []).map((f) =>
+                resourceLabel(f.path),
+            ),
+        );
+        add(
+            "Skills",
+            safe(() => rl.getSkills().skills, []).map((s) => s.name),
+        );
+        add(
+            "Prompts",
+            safe(() => rl.getPrompts().prompts, []).map((p) => `/${p.name}`),
+        );
+        add(
+            "Extensions",
+            safe(() => rl.getExtensions().extensions, []).map((e) =>
+                resourceLabel(e.path),
+            ),
+        );
+        add(
+            "Themes",
+            safe(() => rl.getThemes().themes, [])
+                .filter((t) => t.sourcePath)
+                .map((t) => t.name || resourceLabel(t.sourcePath)),
+        );
+    }
+    return { version: PI_VERSION, sections };
+}
+
 async function handleConnect(send, threadId) {
     let t = null;
     try {
@@ -601,6 +673,8 @@ async function handleConnect(send, threadId) {
     // Tell the client the working directory so it can show cwd-relative tool
     // paths (read/write/edit/ls), matching the pi TUI.
     send({ kind: "config", cwd });
+    // startup/reload intro: version banner + loaded resources (#5/#12)
+    send({ kind: "welcome", ...buildWelcome(t.resourceLoader) });
     send({ kind: "surfaces", surfaces: t.piweb.snapshot() });
     // reflect the persisted pi "hide thinking blocks" setting
     send({ kind: "thinking_visibility", hidden: thinkingHidden(t.session) });
@@ -960,6 +1034,11 @@ const server = createApp({
             bus.broadcastToThread(threadId, {
                 kind: "surfaces",
                 surfaces: t.piweb.snapshot(),
+            });
+            // refresh the intro view with the newly loaded resources (#5)
+            bus.broadcastToThread(threadId, {
+                kind: "welcome",
+                ...buildWelcome(t.resourceLoader),
             });
             bus.broadcastToThread(threadId, {
                 kind: "system",

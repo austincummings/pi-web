@@ -8,15 +8,14 @@ Simple, line-based backlog. Check items off as they land.
 - [x] 2. Investigate a basic/standard request router instead of the bespoke one. (Evaluated Bun.serve / Hono / in-house; chose a dependency-free `method+exact-path` router in `src/host/router.ts` since all routes are flat. Replaced the 199-line if-chain.)
 - [x] 3. Style the composer scrollbar; make all scrollbars match the transcript view styling. (Promoted the transcript's `::-webkit-scrollbar` + Firefox `scrollbar-*` treatment to a global `*` rule in index.html.)
 - [x] 4. Render tool calls neatly: per-call cards with arg summary + collapsed result body (expand via click or **alt+o** — ctrl+o is browser-reserved), error/pending states. Host now emits tool result text (live + replay). Client `window.piweb.registerToolRenderer(name, fn)` allows overrides (host->browser bridge tracked in #10).
-- [ ] 5. Add the starting/reload context intro view (find pi's name for it) showing [Context], [Extensions], [Themes], etc.
+- [x] 5. Add the starting/reload context intro view (pi calls it the startup header + "loaded resources"). Host emits a `welcome` frame (version + Context/Skills/Prompts/Extensions/Themes from the session resourceLoader, on connect and after /reload); client renders a collapsible banner above the transcript (`src/web/welcome.ts` + `#welcome`). Folded together with #12.
 - [ ] 6. Stop the transcript area from scrolling horizontally; tool-call output currently overruns the right edge.
 - [ ] 7. Clean up the code: add tests, tidy interfaces and walk through them, remove unused styles/styling.
 - [ ] 8. Set the web page title dynamically as an extension point, mirroring how the pi TUI sets the terminal title.
 - [ ] 9. Highlight the focused composer border based on the current thinking mode.
 - [ ] 10. Explore what the pi TUI exposes to extensions for the transcript view (custom message/tool-output rendering) and expose similar in pi-web: custom HTML/canvas in place of a message, ideally interactive.
 - [ ] 11. Fix extensions not loading on first app load (only load after /reload).
-- [ ] 12. Show a webified version of the TUI startup banner at the top of threads:
-      `pi v0.80.2` / `escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more` / `Press ctrl+o to show full startup help and loaded resources.`
+- [x] 12. Show a webified version of the TUI startup banner at the top of threads. Done as part of #5: the `#welcome` banner shows `pi v<version>` + a compact key-hint strip (`esc interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · alt+o more`, alt+o since ctrl+o is browser-reserved) and click-to-expand loaded resources.
 - [ ] 13. Render markdown tables in the transcript view.
 - [ ] 14. Add an "open project" modal overlay (à la Zed's folder picker) so daemon-hosted agents can be cd'd into a chosen working directory.
 - [ ] 15. Add the /model model picker that the TUI has.
@@ -70,6 +69,31 @@ Simple, line-based backlog. Check items off as they land.
       host-presence/no-op guard. To build: - [ ] `setWidget` rename + widened placement (folds in #20) — replaces `dock` - [ ] blocking dialog request/response so `select`/`confirm`/`input`/`editor`
       can `await` (`POST /ui-response` + `ui_request` SSE; see carried-over bridge) - [ ] `registerMessageRenderer` (folds in #19) - [ ] `setTitle` web page-title hook (folds in #8) - [ ] `setFooter` — footer replacement hook - [ ] `setWorkingMessage` / `setWorkingVisible` / `setWorkingIndicator` - [ ] `setEditorText` / `getEditorText` / `pasteToEditor` composer bridge - [ ] `addAutocompleteProvider` — extension-supplied completion - [ ] `getToolsExpanded` / `setToolsExpanded` programmatic control - [ ] theme API: `getAllThemes` / `getTheme` / `setTheme` / `theme.fg(...)` - [ ] `ctx.mode === "web"` so portable extensions can branch on the medium - [ ] N/A in a browser: `setEditorComponent` / `getEditorComponent` (TUI
       Component swap) — document as out of scope rather than implement
+
+- [ ] 23. Reach theme-palette parity with the pi TUI. `loadPiTheme()` in
+      `src/host/server.ts` flattens only ~11 of the TUI theme's tokens into cockpit
+      CSS vars (`--bg`, `--panel`, `--line`, `--txt`, `--muted`, `--dim`, `--acc`,
+      `--acc2`, `--ok`, `--warn`, `--err`); everything else in the theme JSON is
+      dropped, so the web can't honor the full palette. See a matrix of the two
+      palettes in the analysis behind this item. Gaps to close (port or decide N/A):
+    - [ ] tool-card status tints — consume the theme's literal `toolPendingBg` /
+          `toolSuccessBg` / `toolErrorBg` / `toolTitle` / `toolOutput` instead of the
+          hard-coded `color-mix(...)` tints in `index.html` (AGENTS.md ethos)
+    - [ ] markdown styling — `mdHeading`, `mdLink`, `mdLinkUrl`, `mdCode`,
+          `mdCodeBlock`, `mdCodeBlockBorder`, `mdQuote`, `mdQuoteBorder`, `mdHr`,
+          `mdListBullet`
+    - [ ] diff colors — `toolDiffAdded` / `toolDiffRemoved` / `toolDiffContext`
+    - [ ] syntax highlighting — the 9 `syntax*` slots (pairs with #19)
+    - [ ] thinking-level gradient — `thinkingOff/Minimal/Low/Medium/High/Xhigh`
+          (pairs with #9: color the focused composer/indicator by level)
+    - [ ] message styling — `selectedBg`, `userMessageBg/Text`,
+          `customMessageBg/Text/Label`
+    - [ ] misc raw slots — `hover`, `borderVariant`, `comment`, `cyan`,
+          `brightCyan`, `dimBlue`, `bashMode`, plus the `export` block
+    - [ ] add `:root` fallbacks in `index.html` for `--muted` / `--ok` / `--warn`
+          (sent by the host today but have no default if a theme omits them)
+    - [ ] widen `frameThemeVars()` so sandboxed extension iframes get the full set
+          (currently only 7 vars; no `--err`/`--ok`/`--warn`/`--muted`)
 
 ## Docs
 
