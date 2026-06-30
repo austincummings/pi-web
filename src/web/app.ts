@@ -14,6 +14,11 @@ import {
     hasResources,
     type WelcomeInfo,
 } from "./welcome.ts";
+import {
+    PiFrame,
+    type PiFrameActionDetail,
+    type PiFrameNotifyDetail,
+} from "./pi-frame.ts";
 
 // Expose the tool-renderer registry so client-side extensions can override how
 // a tool's result is displayed (web counterpart to pi-tui's renderResult).
@@ -476,80 +481,10 @@ function gotoThread(id) {
 }
 
 // ---- component-tree renderer (serializable UI from extensions) ----
-// ---- sandboxed custom HTML (Frame node) ----
-// Extensions can return { type:"Frame", html, height? }. The html runs in a
-// sandboxed iframe (allow-scripts, NO allow-same-origin) so arbitrary
-// HTML/CSS/JS is isolated from the web UI's DOM, cookies, and JS. A tiny
-// bridge lets the frame dispatch surface actions and report its height.
-// Inside the frame: window.piweb.action(name, payload),
-// window.piweb.notify(msg, level), or any [data-action] element.
-const mountedFrames = new Map(); // iframe -> { surfaceId, autoHeight }
-let frameBridgeInstalled = false;
-function installFrameBridge() {
-    if (frameBridgeInstalled) return;
-    frameBridgeInstalled = true;
-    window.addEventListener("message", (e) => {
-        // sandboxed frames have a null origin, so identify by window identity
-        let frame, meta;
-        for (const [f, m] of mountedFrames) {
-            if (f.contentWindow === e.source) {
-                frame = f;
-                meta = m;
-                break;
-            }
-        }
-        if (!meta) return;
-        const msg = e.data;
-        if (!msg || msg.__piweb !== true) return;
-        if (msg.type === "action")
-            postThread("/action", {
-                surfaceId: meta.surfaceId,
-                action: msg.action,
-                payload: msg.payload ?? {},
-            });
-        else if (msg.type === "notify") toast(msg.message, msg.level);
-        else if (msg.type === "height" && meta.autoHeight)
-            frame.style.height =
-                Math.max(24, Math.min(Number(msg.height) || 0, 4000)) + "px";
-    });
-}
-
-// copy the web UI theme vars into the frame so it matches the active theme
-function frameThemeVars() {
-    const cs = getComputedStyle(document.documentElement);
-    return ["--bg", "--panel", "--line", "--txt", "--dim", "--acc", "--acc2"]
-        .map((n) => `${n}:${cs.getPropertyValue(n).trim()}`)
-        .join(";");
-}
-
-// Wrap extension-provided body HTML into a full sandboxed document with the
-// theme + bridge bootstrap. (`<\/script>` is escaped so the bootstrap survives
-// being embedded in this module.)
-function wrapFrameDoc(html) {
-    return (
-        `<!doctype html><html><head><meta charset="utf-8"><style>` +
-        `:root{${frameThemeVars()}}html,body{margin:0}` +
-        `body{font:14px/1.5 ui-monospace,Menlo,monospace;color:var(--txt);background:transparent}` +
-        `a{color:var(--acc)}` +
-        // baseline control styling so frame buttons/inputs match the web UI
-        // (extensions can override with their own <style>)
-        `button{font:inherit;background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer}` +
-        `button:hover{border-color:var(--acc)}` +
-        `button.primary{background:linear-gradient(90deg,var(--acc),var(--acc2));border:none;color:#fff}` +
-        `input,select,textarea{font:inherit;background:#0c1117;color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:6px 8px}` +
-        `code,pre{background:#0c1117;border:1px solid var(--line);border-radius:4px}` +
-        `</style></head><body>${html}<script>(function(){` +
-        `function send(m){m.__piweb=true;parent.postMessage(m,'*');}` +
-        `window.piweb={action:function(a,p){send({type:'action',action:a,payload:p||{}});},` +
-        `notify:function(msg,l){send({type:'notify',message:msg,level:l||'info'});}};` +
-        `document.addEventListener('click',function(e){var el=e.target.closest&&e.target.closest('[data-action]');` +
-        `if(el){send({type:'action',action:el.getAttribute('data-action'),payload:{}});}});` +
-        `function report(){send({type:'height',height:document.documentElement.scrollHeight});}` +
-        `if(window.ResizeObserver){new ResizeObserver(report).observe(document.documentElement);}` +
-        `window.addEventListener('load',report);setTimeout(report,0);})();<\/script></body></html>`
-    );
-}
-
+// Sandboxed custom HTML (the Frame node) is handled by the <pi-frame> custom
+// element (./pi-frame.ts), which owns its iframe lifecycle and emits bubbling
+// `piframe-action` / `piframe-notify` events. Those are routed to the host once,
+// below (see the document-level listeners near `toast`).
 function renderNode(node, surfaceId) {
     if (!node || typeof node !== "object")
         return document.createTextNode(String(node ?? ""));
@@ -612,19 +547,12 @@ function renderNode(node, surfaceId) {
             return i;
         }
         case "Frame": {
-            // arbitrary HTML/CSS/JS, isolated in a sandboxed iframe
-            const iframe = document.createElement("iframe");
-            iframe.className = "frame";
-            iframe.setAttribute("sandbox", "allow-scripts");
-            iframe.setAttribute("scrolling", "no");
-            const autoHeight = node.height == null;
-            iframe.style.width = "100%";
-            iframe.style.border = "0";
-            iframe.style.display = "block";
-            iframe.style.height = (autoHeight ? 80 : node.height) + "px";
-            mountedFrames.set(iframe, { surfaceId, autoHeight });
-            iframe.srcdoc = wrapFrameDoc(node.html ?? "");
-            return iframe;
+            // arbitrary HTML/CSS/JS, isolated in a sandboxed <pi-frame>
+            const frame = document.createElement("pi-frame") as PiFrame;
+            frame.surfaceId = surfaceId;
+            frame.frameHtml = node.html ?? "";
+            if (node.height != null) frame.frameHeight = node.height;
+            return frame;
         }
         default: {
             const d = document.createElement("div");
@@ -733,11 +661,9 @@ function renderStatus(segments) {
 }
 
 function renderSurfaces(s) {
-    // frames are re-created on every surface render; reset the bridge registry
-    // (old iframes are detached when docks/overlays rebuild) and ensure the
-    // single window message listener is installed.
-    mountedFrames.clear();
-    installFrameBridge();
+    // <pi-frame> elements are re-created on every surface render; each owns its
+    // own message listener (added/removed via connected/disconnectedCallback),
+    // so there's no central registry to reset here.
     const docks = s?.docks ?? { left: [], right: [], bottom: [] };
     renderDock($dockLeft, docks.left);
     renderDock($dockRight, docks.right);
@@ -753,6 +679,17 @@ function closeTopOverlay() {
     const id = openOverlays[openOverlays.length - 1];
     if (id) postThread("/surface", { op: "close", id });
 }
+
+// Route events bubbling out of <pi-frame> sandboxed frames to the host: surface
+// actions go to the active thread; notify() calls become toasts.
+document.addEventListener("piframe-action", (e) => {
+    const d = (e as CustomEvent<PiFrameActionDetail>).detail;
+    postThread("/action", d);
+});
+document.addEventListener("piframe-notify", (e) => {
+    const d = (e as CustomEvent<PiFrameNotifyDetail>).detail;
+    toast(d.message, d.level);
+});
 
 function toast(message, level = "info") {
     if (!$toastLayer) return;
@@ -848,9 +785,27 @@ function updateTitle() {
     }
 }
 
+// Selectable rows in the resume picker, in visual order, for keyboard nav.
+// `pickerNav` gates the arrow/Enter handling so the generic showOverlay()
+// dialog (which reuses #picker) isn't affected.
+let pickerItems = [];
+let pickerIndex = -1;
+let pickerNav = false;
+
+function setPickerSel(i) {
+    if (!pickerItems.length) return;
+    pickerIndex = (i + pickerItems.length) % pickerItems.length;
+    pickerItems.forEach((el, idx) =>
+        el.classList.toggle("sel", idx === pickerIndex),
+    );
+    pickerItems[pickerIndex].scrollIntoView({ block: "nearest" });
+}
+
 function openPicker() {
     if (!$overlay) return;
     $picker.innerHTML = "<h3>Resume thread</h3>";
+    pickerItems = [];
+    pickerNav = true;
 
     const mk = (cls, name, meta, onClick) => {
         const item = document.createElement("div");
@@ -874,6 +829,7 @@ function openPicker() {
             newThread(cwd);
         }),
     );
+    pickerItems.push($picker.lastElementChild);
 
     // Group threads by working directory (sessions are partitioned per-cwd), so
     // it's clear where each thread runs. The active thread's group sorts first.
@@ -915,13 +871,27 @@ function openPicker() {
             );
             item.title = t.cwd || "";
             $picker.appendChild(item);
+            pickerItems.push(item);
         }
     }
+    // Preselect the active thread (else the first row) so Enter has a target.
+    const activeIdx = pickerItems.findIndex((el) =>
+        el.classList.contains("active"),
+    );
+    setPickerSel(activeIdx >= 0 ? activeIdx : 0);
+    // Blur the composer so its Up/Down history-browse handler doesn't compete
+    // with the picker's arrow-key navigation while the modal is open.
+    $prompt?.blur();
     $overlay.classList.add("show");
 }
 
 function closePicker() {
+    const wasNav = pickerNav;
     $overlay?.classList.remove("show");
+    pickerNav = false;
+    pickerItems = [];
+    pickerIndex = -1;
+    if (wasNav) $prompt?.focus(); // return focus to the composer
 }
 
 $overlay?.addEventListener("click", (e) => {
@@ -1228,6 +1198,7 @@ async function getJson(path) {
 
 function showOverlay(title, contentEl) {
     if (!$overlay) return;
+    pickerNav = false;
     $picker.innerHTML = "";
     const h = document.createElement("h3");
     h.textContent = title;
@@ -1472,6 +1443,37 @@ document.addEventListener("keydown", (e) => {
         e.preventDefault();
         lastToolEntry.info.expanded = !lastToolEntry.info.expanded;
         renderToolCard(lastToolEntry, false);
+    }
+});
+
+// Resume picker keyboard nav: Up/Down move the selection, Enter activates the
+// highlighted row, Home/End jump to the ends. Escape is handled below.
+document.addEventListener("keydown", (e) => {
+    if (!pickerNav || !$overlay?.classList.contains("show")) return;
+    // Ignore the very keystroke that opened the picker (e.g. the Enter that
+    // submitted `/resume`), which calls preventDefault() before bubbling here.
+    if (e.defaultPrevented) return;
+    switch (e.key) {
+        case "ArrowDown":
+            e.preventDefault();
+            setPickerSel(pickerIndex + 1);
+            break;
+        case "ArrowUp":
+            e.preventDefault();
+            setPickerSel(pickerIndex - 1);
+            break;
+        case "Home":
+            e.preventDefault();
+            setPickerSel(0);
+            break;
+        case "End":
+            e.preventDefault();
+            setPickerSel(pickerItems.length - 1);
+            break;
+        case "Enter":
+            e.preventDefault();
+            pickerItems[pickerIndex]?.click();
+            break;
     }
 });
 

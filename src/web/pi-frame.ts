@@ -1,0 +1,156 @@
+// <pi-frame> — a sandboxed host for extension-provided HTML/CSS/JS.
+//
+// Extensions can return { type:"Frame", html, height? } as a surface node. The
+// html runs in a sandboxed iframe (allow-scripts, NO allow-same-origin) so
+// arbitrary HTML/CSS/JS is isolated from the web UI's DOM, cookies, and JS.
+//
+// The element owns its whole lifecycle: it builds the iframe + bootstrap
+// document, scopes a `message` listener to its own contentWindow, auto-sizes to
+// content height, and tears the listener down on disconnect. Instead of calling
+// back into the host directly, it emits bubbling CustomEvents so the host can
+// stay decoupled:
+//   - "piframe-action"  detail: { surfaceId, action, payload }
+//   - "piframe-notify"  detail: { message, level }
+//
+// Inside the frame: window.piweb.action(name, payload),
+// window.piweb.notify(msg, level), or any [data-action] element.
+
+export interface PiFrameActionDetail {
+    surfaceId: string;
+    action: string;
+    payload: Record<string, unknown>;
+}
+
+export interface PiFrameNotifyDetail {
+    message: string;
+    level: string;
+}
+
+// Theme vars copied into the frame so its baseline styling matches the active
+// pi theme (the frame is a separate document, so CSS variables don't inherit).
+const THEME_VARS = [
+    "--bg",
+    "--panel",
+    "--line",
+    "--txt",
+    "--dim",
+    "--acc",
+    "--acc2",
+];
+
+function frameThemeVars(): string {
+    const cs = getComputedStyle(document.documentElement);
+    return THEME_VARS.map((n) => `${n}:${cs.getPropertyValue(n).trim()}`).join(
+        ";",
+    );
+}
+
+// Wrap extension-provided body HTML into a full sandboxed document with the
+// theme + bridge bootstrap. (`<\/script>` is escaped so the bootstrap survives
+// being embedded in this module.)
+function wrapFrameDoc(html: string): string {
+    return (
+        `<!doctype html><html><head><meta charset="utf-8"><style>` +
+        `:root{${frameThemeVars()}}html,body{margin:0}` +
+        `body{font:14px/1.5 ui-monospace,Menlo,monospace;color:var(--txt);background:transparent}` +
+        `a{color:var(--acc)}` +
+        // baseline control styling so frame buttons/inputs match the web UI
+        // (extensions can override with their own <style>)
+        `button{font:inherit;background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer}` +
+        `button:hover{border-color:var(--acc)}` +
+        `button.primary{background:linear-gradient(90deg,var(--acc),var(--acc2));border:none;color:#fff}` +
+        `input,select,textarea{font:inherit;background:#0c1117;color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:6px 8px}` +
+        `code,pre{background:#0c1117;border:1px solid var(--line);border-radius:4px}` +
+        `</style></head><body>${html}<script>(function(){` +
+        `function send(m){m.__piweb=true;parent.postMessage(m,'*');}` +
+        `window.piweb={action:function(a,p){send({type:'action',action:a,payload:p||{}});},` +
+        `notify:function(msg,l){send({type:'notify',message:msg,level:l||'info'});}};` +
+        `document.addEventListener('click',function(e){var el=e.target.closest&&e.target.closest('[data-action]');` +
+        `if(el){send({type:'action',action:el.getAttribute('data-action'),payload:{}});}});` +
+        `function report(){send({type:'height',height:document.documentElement.scrollHeight});}` +
+        `if(window.ResizeObserver){new ResizeObserver(report).observe(document.documentElement);}` +
+        `window.addEventListener('load',report);setTimeout(report,0);})();<\/script></body></html>`
+    );
+}
+
+export class PiFrame extends HTMLElement {
+    /** The surface id this frame belongs to (sent with action events). */
+    surfaceId = "";
+    /** Extension-provided body HTML. */
+    frameHtml = "";
+    /** Fixed pixel height, or null to auto-size to content. */
+    frameHeight: number | null = null;
+
+    private iframe: HTMLIFrameElement | null = null;
+    private readonly onMessage = (e: MessageEvent) => this.handleMessage(e);
+
+    private get autoHeight(): boolean {
+        return this.frameHeight == null;
+    }
+
+    connectedCallback(): void {
+        if (!this.iframe) this.build();
+        // Sandboxed frames have a null origin, so we can't filter by origin;
+        // handleMessage() identifies our frame by contentWindow identity.
+        window.addEventListener("message", this.onMessage);
+    }
+
+    disconnectedCallback(): void {
+        window.removeEventListener("message", this.onMessage);
+    }
+
+    private build(): void {
+        const iframe = document.createElement("iframe");
+        iframe.className = "frame";
+        iframe.setAttribute("sandbox", "allow-scripts");
+        iframe.setAttribute("scrolling", "no");
+        iframe.style.width = "100%";
+        iframe.style.border = "0";
+        iframe.style.display = "block";
+        iframe.style.height = (this.autoHeight ? 80 : this.frameHeight) + "px";
+        iframe.srcdoc = wrapFrameDoc(this.frameHtml);
+        this.iframe = iframe;
+        this.appendChild(iframe);
+    }
+
+    private handleMessage(e: MessageEvent): void {
+        if (!this.iframe || e.source !== this.iframe.contentWindow) return;
+        const msg = e.data;
+        if (!msg || msg.__piweb !== true) return;
+        if (msg.type === "action") {
+            this.emit<PiFrameActionDetail>("piframe-action", {
+                surfaceId: this.surfaceId,
+                action: msg.action,
+                payload: msg.payload ?? {},
+            });
+        } else if (msg.type === "notify") {
+            this.emit<PiFrameNotifyDetail>("piframe-notify", {
+                message: msg.message,
+                level: msg.level,
+            });
+        } else if (msg.type === "height" && this.autoHeight) {
+            this.iframe.style.height =
+                Math.max(24, Math.min(Number(msg.height) || 0, 4000)) + "px";
+        }
+    }
+
+    private emit<T>(type: string, detail: T): void {
+        this.dispatchEvent(
+            new CustomEvent<T>(type, { detail, bubbles: true, composed: true }),
+        );
+    }
+}
+
+if (!customElements.get("pi-frame")) {
+    customElements.define("pi-frame", PiFrame);
+}
+
+declare global {
+    interface HTMLElementTagNameMap {
+        "pi-frame": PiFrame;
+    }
+    interface HTMLElementEventMap {
+        "piframe-action": CustomEvent<PiFrameActionDetail>;
+        "piframe-notify": CustomEvent<PiFrameNotifyDetail>;
+    }
+}

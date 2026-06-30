@@ -732,8 +732,12 @@
                 gap: 10px;
                 align-items: baseline;
             }
-            .picker .item:hover {
+            .picker .item:hover,
+            .picker .item.sel {
                 background: #0c1117;
+            }
+            .picker .item.sel {
+                box-shadow: inset 2px 0 0 var(--acc);
             }
             .picker .item .name {
                 flex: 1;
