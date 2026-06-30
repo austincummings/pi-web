@@ -1,7 +1,7 @@
 /**
  * Minimal front-end build step.
  *
- * The browser cockpit is authored in TypeScript (`src/web/*.ts`) and bundled
+ * The browser web UI is authored in TypeScript (`src/web/*.ts`) and bundled
  * with Bun's built-in bundler — no extra toolchain. `app.ts` is the single
  * entrypoint; it pulls in `fuzzy.ts` / `markdown.ts`, and the result is served
  * as `/app.js`.

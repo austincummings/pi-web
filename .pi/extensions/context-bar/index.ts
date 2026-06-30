@@ -1,5 +1,5 @@
 /**
- * context-bar — replicates the pi-tui "context-bar" footer in the pi-web cockpit.
+ * context-bar — replicates the pi-tui "context-bar" footer in the pi-web web UI.
  *
  * Renders into the bottom context bar (via piweb.setStatus segments): working
  * dir (~), git branch, model + thinking level, a 20-cell context-window usage
@@ -80,7 +80,7 @@ export default function (pi: any) {
         try {
             // Route to *this thread's* surface registry by session id rather
             // than the host's global `currentThread` pointer: extension event
-            // handlers run before the cockpit listener that sets currentThread,
+            // handlers run before the server listener that sets currentThread,
             // so it is stale (or points at another thread) when we render here.
             // forSession returns null during session_start (thread not yet
             // registered) — fall back to the global router, correctly bound then.
@@ -146,7 +146,7 @@ export default function (pi: any) {
                 },
             );
         } catch {
-            /* best-effort cockpit chrome */
+            /* best-effort web UI chrome */
         }
     }
 

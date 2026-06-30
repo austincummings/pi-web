@@ -1,7 +1,7 @@
 /**
  * Tiny `node:http` router.
  *
- * The cockpit's routes are flat (no path params — ids travel in the body or
+ * The web UI's routes are flat (no path params — ids travel in the body or
  * `?thread=`), so this is a deliberate, dependency-free `method + exact-path`
  * table rather than a full framework. It keeps the `(req, res)` signature that
  * `createApp` and every test harness rely on, and makes the route set

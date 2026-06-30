@@ -1,5 +1,5 @@
 /**
- * piweb host registry — the cockpit's UI-extension surface.
+ * piweb host registry — the web UI's UI-extension surface.
  *
  * Lives in the host process alongside the agent (in-process via
  * createAgentSession). It generalizes pi's TUI `ExtensionUIContext` into a 2D,
@@ -47,7 +47,7 @@
 
 /**
  * @param {object} o
- * @param {(frame: any) => void} o.broadcast   send a cockpit frame to viewers
+ * @param {(frame: any) => void} o.broadcast   send a server message to viewers
  * @param {() => any} o.getPi                   live ExtensionAPI for this thread
  */
 export function createPiWebHost({ broadcast, getPi }) {

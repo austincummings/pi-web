@@ -46,7 +46,7 @@ Simple, line-based backlog. Check items off as they land.
       `dock` as a thin deprecated alias for one release. See `docs/widget.md` for the
       full spec.
 
-- [ ] 21. Reach slash-command parity with the pi TUI. The web cockpit (`src/web/app.ts`
+- [ ] 21. Reach slash-command parity with the pi TUI. The web UI (`src/web/app.ts`
       `COMMANDS`) currently ships 10 of the TUI's 22 commands. Shared today:
       `/resume`, `/new`, `/name`, `/session`, `/compact`, `/copy`, `/export`,
       `/reload`, `/hotkeys`, `/changelog`. Missing in web (port or decide N/A):
@@ -71,7 +71,7 @@ Simple, line-based backlog. Check items off as they land.
       Component swap) — document as out of scope rather than implement
 
 - [ ] 23. Reach theme-palette parity with the pi TUI. `loadPiTheme()` in
-      `src/host/server.ts` flattens only ~11 of the TUI theme's tokens into cockpit
+      `src/host/server.ts` flattens only ~11 of the TUI theme's tokens into web UI
       CSS vars (`--bg`, `--panel`, `--line`, `--txt`, `--muted`, `--dim`, `--acc`,
       `--acc2`, `--ok`, `--warn`, `--err`); everything else in the theme JSON is
       dropped, so the web can't honor the full palette. See a matrix of the two

@@ -1,6 +1,6 @@
 # pi-web
 
-A **self-modifiable web cockpit** for the [`pi`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) coding agent.
+A **self-modifiable web UI** for the [`pi`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) coding agent.
 
 It runs `pi` **in-process** via the SDK (`createAgentSession`) and exposes a
 `piweb` API that extensions use to define **custom web UI** — a serializable
@@ -9,7 +9,7 @@ superset of pi's `ExtensionUIContext`. The agent can author its own panels.
 ## Architecture
 
 ```
-browser cockpit  ──SSE/POST──►  host (Bun)
+browser web UI  ──SSE/POST──►  host (Bun)
   transcript                      createAgentSession()  ← pi runs in-process
   panels (component trees)        DefaultResourceLoader  ← loads extensions
                                   piweb host registry    ← injected as globalThis.__PIWEB__
@@ -33,7 +33,7 @@ browser cockpit  ──SSE/POST──►  host (Bun)
 | `src/host/piweb-host.ts` | `piweb` registry: docks/overlays, state, action dispatch            |
 | `src/host/build-web.ts`  | bundles the TS front-end (`src/web/*.ts`) via Bun → `/app.js`       |
 | `src/sdk/piweb.ts`       | `@pi-web/sdk` shim extensions import (resolves to host or no-op)    |
-| `src/web/`               | Browser cockpit: transcript + component-tree renderer               |
+| `src/web/`               | Browser web UI: transcript + component-tree renderer                |
 | `.pi/extensions/`        | Project extensions (e.g. `context-bar/` — the glass-cockpit footer) |
 
 ## Run
@@ -44,7 +44,7 @@ bun start            # → http://localhost:4321
 # or: bun dev        # watch mode (restarts on file changes)
 ```
 
-Open the cockpit:
+Open the web UI:
 
 - **Chat** with pi in the center (streaming transcript, tool calls).
 - **Docks** (left/right rails, bottom tray) + the below-prompt **context bar**
@@ -59,7 +59,7 @@ Open the cockpit:
 
 ## The self-modifiable loop
 
-1. In the cockpit, ask pi to build a new panel.
+1. In the web UI, ask pi to build a new panel.
 2. pi writes an extension to `extensions/` (or `~/.pi/agent/extensions/`) calling
    `piweb.registerPanel(...)`.
 3. Click **reload ext** → host re-discovers extensions → the new panel appears.

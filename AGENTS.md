@@ -4,7 +4,7 @@ Guidance for agents working in pi-web.
 
 ## Design ethos: match the pi TUI by default
 
-pi-web is a web cockpit for the same agent the pi TUI drives. **Unless there is a
+pi-web is a web UI for the same agent the pi TUI drives. **Unless there is a
 deliberate reason to diverge, the web UI should match the look and feel of the pi
 TUI.** When deciding how something should render or behave, the default answer is
 "however pi's terminal UI does it."

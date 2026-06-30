@@ -3,7 +3,7 @@
     "version": "0.0.1",
     "private": true,
     "type": "module",
-    "description": "Self-modifiable web cockpit for the pi coding agent",
+    "description": "Self-modifiable web UI for the pi coding agent",
     "scripts": {
         "start": "bun run src/host/server.ts",
         "dev": "PI_WEB_DEV=1 bun --watch src/host/server.ts",

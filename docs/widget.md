@@ -1,4 +1,4 @@
-# `piweb.setWidget` — sticky extension chrome for the cockpit
+# `piweb.setWidget` — sticky extension chrome for the web UI
 
 Status: **proposed** (TODO #20). This document specifies the rename of the
 current `dock` surface API to `setWidget`, aligning pi-web with pi's TUI
@@ -9,7 +9,7 @@ current `dock` surface API to `setWidget`, aligning pi-web with pi's TUI
 ## 1. Why
 
 pi-web's design goal (README) is to be _"a serializable superset of pi's
-`ExtensionUIContext`."_ The cockpit already honors that for `notify` and
+`ExtensionUIContext`."_ The web UI already honors that for `notify` and
 `setStatus` — they keep pi's exact TUI names, and the project's `context-bar`
 extension depends on `setStatus`. But the persistent-widget primitive was named
 `dock`, inventing a new term for a concept pi already calls `setWidget`.
@@ -20,7 +20,7 @@ This spec brings that primitive back in line:
 - **Extend via options, not new methods.** Widen `placement` instead of adding
   rails as separate calls.
 - **Drop-in for plain pi extensions.** A portable extension that calls
-  `setWidget(key, ["line"])` behaves correctly under the cockpit and no-ops under
+  `setWidget(key, ["line"])` behaves correctly under the web UI and no-ops under
   a terminal with no host.
 
 Modals stay separate: `overlay` is **not** folded into `setWidget` (pi's modal
@@ -128,7 +128,7 @@ and the call no-ops via the SDK shim).
 
 - `aboveEditor` / `belowEditor` are the pi-parity slots (sticky, full-width,
   around the prompt). The `context-bar`-style footer lives at `belowEditor`.
-- `left` / `right` are stackable vertical rails unique to the web cockpit.
+- `left` / `right` are stackable vertical rails unique to the web UI.
 - Within any placement, widgets sort by `order` (then insertion order).
 
 ## 5. Host implementation notes
@@ -169,7 +169,7 @@ primitives. The intended long-term mapping:
 
 ## 7. Examples
 
-Plain pi extension (portable; works in terminal and cockpit):
+Plain pi extension (portable; works in terminal and web UI):
 
 ```ts
 export default function (pi) {
@@ -179,7 +179,7 @@ export default function (pi) {
 }
 ```
 
-Rich cockpit widget with state + an action:
+Rich web UI widget with state + an action:
 
 ```ts
 const piweb = globalThis.__PIWEB__;
