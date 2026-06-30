@@ -15,6 +15,7 @@ import http, {
 } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createRouter } from "./router.ts";
 
 /** An SSE response stream, tagged with the thread id the client is viewing. */
 type SSEClient = ServerResponse & { __threadId?: string };
@@ -157,195 +158,179 @@ export function createApp({
         "/index.html": ["index.html", "text/html; charset=utf-8"],
     };
 
-    return http.createServer(async (req: IncomingMessage, res: SSEClient) => {
-        const url = new URL(req.url ?? "/", "http://localhost");
-        const path = url.pathname;
+    const router = createRouter({ readBody });
 
-        // liveness: up regardless of model/auth
-        if (path === "/health") {
-            const snap = piweb.snapshot?.() ?? {};
-            const d = snap.docks ?? { left: [], right: [], bottom: [] };
-            const surfaces =
-                (d.left?.length ?? 0) +
-                (d.right?.length ?? 0) +
-                (d.bottom?.length ?? 0) +
-                (d.footer?.length ?? 0) +
-                (snap.overlays?.length ?? 0);
-            sendJson(res, 200, { ok: true, surfaces });
-            return;
-        }
+    // ---- GET routes ---------------------------------------------------------
 
-        // SSE event stream
-        if (path === "/events") {
-            res.writeHead(200, {
-                "Content-Type": "text/event-stream",
-                "Cache-Control": "no-cache",
-                Connection: "keep-alive",
-            });
-            res.write(": connected\n\n");
-            const send = (msg) => res.write(`data: ${JSON.stringify(msg)}\n\n`);
-            // the thread this client is viewing (URL-driven selection)
-            const wanted = url.searchParams.get("thread") || undefined;
-            res.__threadId = wanted;
-            // push the active pi theme first so CSS vars apply before render
-            if (theme) send({ kind: "theme", vars: theme });
-            send({ kind: "surfaces", surfaces: piweb.snapshot() });
-            if (threads) {
-                try {
-                    send({ kind: "threads", items: await threads.list() });
-                } catch {
-                    /* listing is best-effort on connect */
-                }
-            }
-            // Resolve + replay the viewed thread to *this* client only, so a
-            // browser refresh restores the conversation (and an unknown id
-            // falls back to the default thread). Tag the connection with the
-            // resolved id so per-thread broadcasts reach it.
-            if (onConnect) {
-                try {
-                    const resolved = await onConnect(send, {
-                        threadId: wanted,
-                    });
-                    if (resolved) res.__threadId = resolved;
-                } catch {
-                    /* replay is best-effort on connect */
-                }
-            }
-            bus.clients.add(res);
-            req.on("close", () => bus.clients.delete(res));
-            return;
-        }
+    // liveness: up regardless of model/auth
+    router.get("/health", ({ res }) => {
+        const snap = piweb.snapshot?.() ?? {};
+        const d = snap.docks ?? { left: [], right: [], bottom: [] };
+        const surfaces =
+            (d.left?.length ?? 0) +
+            (d.right?.length ?? 0) +
+            (d.bottom?.length ?? 0) +
+            (d.footer?.length ?? 0) +
+            (snap.overlays?.length ?? 0);
+        sendJson(res, 200, { ok: true, surfaces });
+    });
 
-        // list threads
-        if (req.method === "GET" && path === "/threads") {
-            const items = threads ? await threads.list() : [];
-            sendJson(res, 200, { items });
-            return;
-        }
-
-        // session info / changelog (read-only)
-        if (req.method === "GET" && path === "/session") {
-            const threadId = url.searchParams.get("thread") || undefined;
-            sendJson(res, 200, (await sessionApi?.info?.(threadId)) ?? {});
-            return;
-        }
-        if (req.method === "GET" && path === "/changelog") {
-            sendJson(
-                res,
-                200,
-                (await sessionApi?.changelog?.()) ?? { text: "" },
-            );
-            return;
-        }
-
-        // project file list for the `@` mention typeahead (read-only). The
-        // client caches this and fuzzy-filters locally as the user types.
-        if (req.method === "GET" && path === "/files") {
-            const items = listFiles ? await listFiles() : [];
-            sendJson(res, 200, { items });
-            return;
-        }
-
-        if (req.method === "POST") {
-            const body = await readBody(req);
-            // thread the request targets (URL-driven selection on the client)
-            const threadId = body.threadId || undefined;
-            if (path === "/prompt") {
-                const text = (body.text ?? "").trim();
-                if (text) onPrompt?.(text, threadId);
-                res.writeHead(202).end();
-                return;
-            }
-            if (path === "/action") {
-                await piweb.dispatch(
-                    body.surfaceId,
-                    body.action,
-                    body.payload,
-                    threadId,
-                );
-                res.writeHead(202).end();
-                return;
-            }
-            if (path === "/surface") {
-                onSurface?.(threadId, body.op, body.id);
-                res.writeHead(202).end();
-                return;
-            }
-            if (path === "/session/name") {
-                await sessionApi?.setName?.(body.name, threadId);
-                res.writeHead(202).end();
-                return;
-            }
-            if (path === "/session/compact") {
-                sessionApi?.compact?.(threadId); // async; progress streamed over SSE
-                res.writeHead(202).end();
-                return;
-            }
-            if (path === "/session/export") {
-                const result =
-                    (await sessionApi?.export?.(body.format, threadId)) ?? {};
-                sendJson(res, 200, result);
-                return;
-            }
-            if (path === "/bash") {
-                onBash?.(body.command, body.excludeFromContext, threadId);
-                res.writeHead(202).end();
-                return;
-            }
-            if (path === "/threads") {
-                const result = (await threads?.create?.()) ?? {};
-                sendJson(res, 200, result);
-                return;
-            }
-            if (path === "/threads/switch") {
-                try {
-                    await threads?.switch?.(body.id);
-                    res.writeHead(202).end();
-                } catch (err) {
-                    sendJson(res, 409, { error: String(err?.message ?? err) });
-                }
-                return;
-            }
-            if (path === "/reload") {
-                await onReload?.(threadId);
-                res.writeHead(202).end();
-                return;
-            }
-            if (path === "/interrupt") {
-                onInterrupt?.(threadId); // async; result streamed over SSE
-                res.writeHead(202).end();
-                return;
-            }
-            if (path === "/thinking") {
-                // toggle the global "hide thinking blocks" pi setting; the new
-                // value is broadcast to all clients over SSE
-                onThinkingVisibility?.(!!body.hidden, threadId);
-                res.writeHead(202).end();
-                return;
-            }
-            res.writeHead(404).end();
-            return;
-        }
-
-        // bundled front-end entrypoint
-        if (path === "/app.js" && bundleWeb) {
+    // SSE event stream
+    router.get("/events", async ({ req, res, url }) => {
+        res.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive",
+        });
+        res.write(": connected\n\n");
+        const send = (msg) => res.write(`data: ${JSON.stringify(msg)}\n\n`);
+        // the thread this client is viewing (URL-driven selection)
+        const wanted = url.searchParams.get("thread") || undefined;
+        res.__threadId = wanted;
+        // push the active pi theme first so CSS vars apply before render
+        if (theme) send({ kind: "theme", vars: theme });
+        send({ kind: "surfaces", surfaces: piweb.snapshot() });
+        if (threads) {
             try {
-                const code = await bundleWeb();
-                res.writeHead(200, {
-                    "Content-Type": "text/javascript; charset=utf-8",
-                }).end(code);
-            } catch (err) {
-                res.writeHead(500, {
-                    "Content-Type": "text/javascript; charset=utf-8",
-                }).end(
-                    `/* web build failed */\nconsole.error(${JSON.stringify(String(err?.message ?? err))});`,
-                );
+                send({ kind: "threads", items: await threads.list() });
+            } catch {
+                /* listing is best-effort on connect */
             }
+        }
+        // Resolve + replay the viewed thread to *this* client only, so a
+        // browser refresh restores the conversation (and an unknown id falls
+        // back to the default thread). Tag the connection with the resolved id
+        // so per-thread broadcasts reach it.
+        if (onConnect) {
+            try {
+                const resolved = await onConnect(send, { threadId: wanted });
+                if (resolved) res.__threadId = resolved;
+            } catch {
+                /* replay is best-effort on connect */
+            }
+        }
+        bus.clients.add(res);
+        req.on("close", () => bus.clients.delete(res));
+    });
+
+    // list threads
+    router.get("/threads", async ({ res }) => {
+        const items = threads ? await threads.list() : [];
+        sendJson(res, 200, { items });
+    });
+
+    // session info / changelog (read-only)
+    router.get("/session", async ({ res, url }) => {
+        const threadId = url.searchParams.get("thread") || undefined;
+        sendJson(res, 200, (await sessionApi?.info?.(threadId)) ?? {});
+    });
+    router.get("/changelog", async ({ res }) => {
+        sendJson(res, 200, (await sessionApi?.changelog?.()) ?? { text: "" });
+    });
+
+    // project file list for the `@` mention typeahead (read-only). The client
+    // caches this and fuzzy-filters locally as the user types.
+    router.get("/files", async ({ res }) => {
+        const items = listFiles ? await listFiles() : [];
+        sendJson(res, 200, { items });
+    });
+
+    // bundled front-end entrypoint (built by build-web.ts)
+    router.get("/app.js", async ({ res }) => {
+        if (!bundleWeb) {
+            res.writeHead(404).end("not found");
             return;
         }
+        try {
+            const code = await bundleWeb();
+            res.writeHead(200, {
+                "Content-Type": "text/javascript; charset=utf-8",
+            }).end(code);
+        } catch (err) {
+            res.writeHead(500, {
+                "Content-Type": "text/javascript; charset=utf-8",
+            }).end(
+                `/* web build failed */\nconsole.error(${JSON.stringify(String(err?.message ?? err))});`,
+            );
+        }
+    });
 
-        // static
-        const entry = STATIC[path];
+    // ---- POST routes (thread-scoped: threadId travels in the body) ----------
+
+    router.post("/prompt", ({ res, body }) => {
+        const text = (body.text ?? "").trim();
+        if (text) onPrompt?.(text, body.threadId || undefined);
+        res.writeHead(202).end();
+    });
+    router.post("/action", async ({ res, body }) => {
+        await piweb.dispatch(
+            body.surfaceId,
+            body.action,
+            body.payload,
+            body.threadId || undefined,
+        );
+        res.writeHead(202).end();
+    });
+    router.post("/surface", ({ res, body }) => {
+        onSurface?.(body.threadId || undefined, body.op, body.id);
+        res.writeHead(202).end();
+    });
+    router.post("/session/name", async ({ res, body }) => {
+        await sessionApi?.setName?.(body.name, body.threadId || undefined);
+        res.writeHead(202).end();
+    });
+    router.post("/session/compact", ({ res, body }) => {
+        sessionApi?.compact?.(body.threadId || undefined); // streamed over SSE
+        res.writeHead(202).end();
+    });
+    router.post("/session/export", async ({ res, body }) => {
+        const result =
+            (await sessionApi?.export?.(
+                body.format,
+                body.threadId || undefined,
+            )) ?? {};
+        sendJson(res, 200, result);
+    });
+    router.post("/bash", ({ res, body }) => {
+        onBash?.(
+            body.command,
+            body.excludeFromContext,
+            body.threadId || undefined,
+        );
+        res.writeHead(202).end();
+    });
+    router.post("/threads", async ({ res }) => {
+        const result = (await threads?.create?.()) ?? {};
+        sendJson(res, 200, result);
+    });
+    router.post("/threads/switch", async ({ res, body }) => {
+        try {
+            await threads?.switch?.(body.id);
+            res.writeHead(202).end();
+        } catch (err) {
+            sendJson(res, 409, { error: String(err?.message ?? err) });
+        }
+    });
+    router.post("/reload", async ({ res, body }) => {
+        await onReload?.(body.threadId || undefined);
+        res.writeHead(202).end();
+    });
+    router.post("/interrupt", ({ res, body }) => {
+        onInterrupt?.(body.threadId || undefined); // streamed over SSE
+        res.writeHead(202).end();
+    });
+    router.post("/thinking", ({ res, body }) => {
+        // toggle the global "hide thinking blocks" pi setting; broadcast on SSE
+        onThinkingVisibility?.(!!body.hidden, body.threadId || undefined);
+        res.writeHead(202).end();
+    });
+
+    // ---- static files (GET) + 404 fallback ----------------------------------
+    router.fallback(async ({ req, res, url }) => {
+        const entry =
+            req.method === "GET" || req.method === "HEAD"
+                ? STATIC[url.pathname]
+                : undefined;
         if (entry) {
             try {
                 const buf = await readFile(join(web, entry[0]));
@@ -357,4 +342,8 @@ export function createApp({
         }
         res.writeHead(404).end("not found");
     });
+
+    return http.createServer((req: IncomingMessage, res: SSEClient) =>
+        router.handle(req, res),
+    );
 }
