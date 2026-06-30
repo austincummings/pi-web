@@ -213,6 +213,20 @@ const piweb = {
     clear: (...a) => activeRegistry().clear(...a),
     snapshot: () => activeRegistry().snapshot(),
     /**
+     * Resolve a thread's concrete surface registry by its session id (== thread
+     * id). Lets event-driven extensions (e.g. context-bar) write to *their own*
+     * thread's surface without relying on the global `currentThread` pointer —
+     * which is set by the cockpit listener that runs *after* extension handlers,
+     * so it is stale/cross-thread when an extension's `pi.on(...)` fires.
+     * Returns null when the thread isn't registered yet (e.g. during
+     * session_start, before threadRuntimes is populated) so callers fall back to
+     * the global router (which routes via bindingThread at that moment).
+     * @param {string|undefined|null} id
+     */
+    forSession(id) {
+        return (id && threadRuntimes.get(id)?.piweb) || null;
+    },
+    /**
      * Route a surface action to the owning thread's registry.
      * @param {string} surfaceId
      * @param {string} action

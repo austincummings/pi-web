@@ -78,6 +78,15 @@ export default function (pi: any) {
 
     function render(ctx: any) {
         try {
+            // Route to *this thread's* surface registry by session id rather
+            // than the host's global `currentThread` pointer: extension event
+            // handlers run before the cockpit listener that sets currentThread,
+            // so it is stale (or points at another thread) when we render here.
+            // forSession returns null during session_start (thread not yet
+            // registered) — fall back to the global router, correctly bound then.
+            const sid = ctx?.sessionManager?.getSessionId?.();
+            const surface = piweb.forSession?.(sid) ?? piweb;
+
             const home = os.homedir();
             const usage = ctx.getContextUsage?.();
             const contextWindow =
@@ -113,21 +122,29 @@ export default function (pi: any) {
 
             // keyed segments (sorted by key; the "cb/" prefix groups them and is
             // never shown). Passing undefined clears a segment.
-            piweb.setStatus("cb/0-dir", dir || undefined, { tone: "accent" });
-            piweb.setStatus("cb/1-branch", branch ? `(${branch})` : undefined, {
-                tone: "muted",
-            });
-            piweb.setStatus("cb/2-model", modelText, { tone: "text" });
-            piweb.setStatus("cb/4-ctx", `ctx: ${bar} ${pctStr}`, { tone });
-            piweb.setStatus(
+            surface.setStatus("cb/0-dir", dir || undefined, { tone: "accent" });
+            surface.setStatus(
+                "cb/1-branch",
+                branch ? `(${branch})` : undefined,
+                {
+                    tone: "muted",
+                },
+            );
+            surface.setStatus("cb/2-model", modelText, { tone: "text" });
+            surface.setStatus("cb/4-ctx", `ctx: ${bar} ${pctStr}`, { tone });
+            surface.setStatus(
                 "cb/5-win",
                 contextWindow > 0 ? `/${fmtTokens(contextWindow)}` : undefined,
                 { tone: "dim" },
             );
-            piweb.setStatus("cb/9-cost", cost > 0 ? fmtCost(cost) : undefined, {
-                align: "right",
-                tone: "success",
-            });
+            surface.setStatus(
+                "cb/9-cost",
+                cost > 0 ? fmtCost(cost) : undefined,
+                {
+                    align: "right",
+                    tone: "success",
+                },
+            );
         } catch {
             /* best-effort cockpit chrome */
         }
