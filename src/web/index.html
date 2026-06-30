@@ -354,6 +354,26 @@
                 padding-left: 10px;
                 color: var(--dim);
             }
+            /* Tables scroll within their own wrapper so a wide table can't
+               overrun the transcript's right edge (see TODO #6). */
+            .msg .body .table-wrap {
+                overflow-x: auto;
+                margin: 6px 0;
+            }
+            .msg .body table {
+                border-collapse: collapse;
+                font-size: inherit;
+            }
+            .msg .body th,
+            .msg .body td {
+                border: 1px solid var(--line);
+                padding: 4px 8px;
+                text-align: left;
+            }
+            .msg .body thead th {
+                background: var(--panel);
+                font-weight: 600;
+            }
             /* The TUI conveys status by tinting the whole tool block (toolPendingBg /
                toolSuccessBg / toolErrorBg) rather than using a glyph, so we wash the
                entire card and match the left border to it. Default = success. */

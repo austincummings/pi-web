@@ -17,6 +17,25 @@ function safeUrl(url) {
     return "#";
 }
 
+// Split a table row into trimmed cells, ignoring the optional
+// leading/trailing pipes. Operates on already-escaped text.
+function splitRow(line) {
+    const s = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+    return s.split("|").map((c) => c.trim());
+}
+
+// A GFM table starts where a header row (contains "|") is immediately
+// followed by a delimiter row whose every cell is `:?-+:?` (---, :--, --:,
+// :-:). The two-line lookahead avoids misfiring on stray "|" in prose.
+function isTableStart(lines, i) {
+    const head = lines[i];
+    const delim = lines[i + 1];
+    if (!head || !delim || !head.includes("|") || !delim.includes("|"))
+        return false;
+    const cells = splitRow(delim);
+    return cells.length > 0 && cells.every((c) => /^:?-+:?$/.test(c));
+}
+
 // Inline formatting. Operates on already-escaped text.
 function inline(text) {
     let out = text;
@@ -130,6 +149,44 @@ export function renderMarkdown(src) {
             continue;
         }
 
+        // GFM table: header row + delimiter row, then body rows
+        if (isTableStart(lines, i)) {
+            closeList();
+            const headers = splitRow(lines[i]);
+            const aligns = splitRow(lines[i + 1]).map((c) => {
+                const l = c.startsWith(":");
+                const r = c.endsWith(":");
+                if (l && r) return "center";
+                if (r) return "right";
+                if (l) return "left";
+                return "";
+            });
+            i += 2;
+            const cell = (tag, txt, idx) => {
+                const a = aligns[idx];
+                const style = a ? ` style="text-align:${a}"` : "";
+                return `<${tag}${style}>${inline(txt)}</${tag}>`;
+            };
+            const head = headers.map((c, idx) => cell("th", c, idx)).join("");
+            const rows = [];
+            while (
+                i < lines.length &&
+                lines[i].includes("|") &&
+                !/^\s*$/.test(lines[i])
+            ) {
+                const cells = splitRow(lines[i++]);
+                const tds = headers
+                    .map((_, idx) => cell("td", cells[idx] ?? "", idx))
+                    .join("");
+                rows.push(`<tr>${tds}</tr>`);
+            }
+            html.push(
+                `<div class="table-wrap"><table><thead><tr>${head}</tr></thead>` +
+                    `<tbody>${rows.join("")}</tbody></table></div>`,
+            );
+            continue;
+        }
+
         // paragraph: gather consecutive "plain" lines
         closeList();
         const buf = [line];
@@ -141,7 +198,8 @@ export function renderMarkdown(src) {
             !/^#{1,6}\s/.test(lines[i]) &&
             !/^>\s?/.test(lines[i]) &&
             !/^\s*[-*+]\s+/.test(lines[i]) &&
-            !/^\s*\d+\.\s+/.test(lines[i])
+            !/^\s*\d+\.\s+/.test(lines[i]) &&
+            !isTableStart(lines, i)
         ) {
             buf.push(lines[i++]);
         }

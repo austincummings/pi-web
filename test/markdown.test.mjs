@@ -35,3 +35,37 @@ test("links are sanitized", () => {
     );
     expect(renderMarkdown("[x](javascript:alert(1))")).toContain('href="#"');
 });
+
+test("renders a basic table", () => {
+    const out = renderMarkdown("| a | b |\n| --- | --- |\n| 1 | 2 |");
+    expect(out).toContain("<table>");
+    expect(out).toContain("<thead>");
+    expect((out.match(/<th[ >]/g) || []).length).toBe(2);
+    expect((out.match(/<td[ >]/g) || []).length).toBe(2);
+    expect(out).toContain('<div class="table-wrap">');
+});
+
+test("table column alignment", () => {
+    const out = renderMarkdown(
+        "| l | c | r |\n| :-- | :-: | --: |\n| 1 | 2 | 3 |",
+    );
+    expect(out).toContain("text-align:center");
+    expect(out).toContain("text-align:right");
+});
+
+test("inline formatting inside table cells", () => {
+    const out = renderMarkdown("| h |\n| --- |\n| **bold** |");
+    expect(out).toContain("<strong>bold</strong>");
+});
+
+test("table cells are escaped (no injection)", () => {
+    const out = renderMarkdown("| h |\n| --- |\n| <img> |");
+    expect(out).toContain("&lt;img&gt;");
+    expect(out).not.toContain("<img>");
+});
+
+test("a lone pipe in prose stays a paragraph", () => {
+    const out = renderMarkdown("this | that\nand more");
+    expect(out).toContain("<p>");
+    expect(out).not.toContain("<table>");
+});
