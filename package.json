@@ -1,0 +1,13 @@
+{
+  "name": "pi-web",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Self-modifiable web cockpit for the pi coding agent",
+  "scripts": {
+    "start": "node src/host/server.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.80.2"
+  }
+}

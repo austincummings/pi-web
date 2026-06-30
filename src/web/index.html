@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>pi-web cockpit</title>
+<style>
+  :root { --bg:#0b0f14; --panel:#121821; --line:#1f2a37; --txt:#d7e0ea; --dim:#7d8aa0; --acc:#6aa0ff; --acc2:#8b5cf6; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; background:var(--bg); color:var(--txt); height:100vh; display:flex; }
+  .col { display:flex; flex-direction:column; height:100vh; }
+  #left { flex:1 1 60%; border-right:1px solid var(--line); }
+  #right { flex:1 1 40%; min-width:320px; }
+  header { padding:10px 14px; border-bottom:1px solid var(--line); display:flex; gap:10px; align-items:center; }
+  header b { color:var(--acc); } header .sp { flex:1; }
+  button { font:inherit; background:var(--panel); color:var(--txt); border:1px solid var(--line); border-radius:6px; padding:5px 10px; cursor:pointer; }
+  button:hover { border-color:var(--acc); }
+  button.primary { background:linear-gradient(90deg,var(--acc),var(--acc2)); border:none; color:#fff; }
+  #transcript { flex:1; overflow:auto; padding:14px; }
+  #panels { flex:1; overflow:auto; padding:14px; display:flex; flex-direction:column; gap:14px; }
+  .msg { margin:0 0 12px; white-space:pre-wrap; word-break:break-word; }
+  .msg .role { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
+  .msg.user .role { color:var(--acc); } .msg.assistant .role { color:var(--acc2); }
+  .tool { color:var(--dim); border-left:2px solid var(--line); padding-left:8px; margin:6px 0; font-size:12px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  .panel > .ptitle { padding:8px 12px; border-bottom:1px solid var(--line); color:var(--acc); font-size:12px; }
+  .panel > .pbody { padding:12px; display:flex; flex-direction:column; gap:8px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  .divider { height:1px; background:var(--line); margin:4px 0; }
+  input[type=text]{ font:inherit; background:#0c1117; border:1px solid var(--line); color:var(--txt); border-radius:6px; padding:6px 8px; width:100%; }
+  form#ask { display:flex; gap:8px; padding:12px 14px; border-top:1px solid var(--line); }
+  form#ask input { flex:1; }
+  .empty { color:var(--dim); }
+</style>
+</head>
+<body>
+  <div id="left" class="col">
+    <header><b>pi-web</b><span>cockpit</span><span class="sp"></span><span id="status" class="empty">connecting…</span></header>
+    <div id="transcript"><div class="empty">Ask pi something, or use the self-registered panel →</div></div>
+    <form id="ask"><input id="prompt" type="text" placeholder="message pi…" autocomplete="off" autofocus /><button class="primary">send</button></form>
+  </div>
+  <div id="right" class="col">
+    <header><b>panels</b><span class="dim">defined by extensions via piweb</span><span class="sp"></span><button id="reload">reload ext</button></header>
+    <div id="panels"><div class="empty">no panels yet</div></div>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
