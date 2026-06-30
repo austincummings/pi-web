@@ -51,7 +51,15 @@ function sendJson(res, code, obj) {
  * @param {{ list:()=>Promise<any[]>, create:()=>Promise<any>, switch:(id:string)=>Promise<void> }} [o.threads]
  * @returns {import("node:http").Server}
  */
-export function createApp({ web, bus, piweb, onPrompt, onReload, threads }) {
+export function createApp({
+    web,
+    bus,
+    piweb,
+    onPrompt,
+    onReload,
+    threads,
+    sessionApi,
+}) {
     const STATIC = {
         "/": ["index.html", "text/html; charset=utf-8"],
         "/index.html": ["index.html", "text/html; charset=utf-8"],
@@ -102,6 +110,20 @@ export function createApp({ web, bus, piweb, onPrompt, onReload, threads }) {
             return;
         }
 
+        // session info / changelog (read-only)
+        if (req.method === "GET" && path === "/session") {
+            sendJson(res, 200, (await sessionApi?.info?.()) ?? {});
+            return;
+        }
+        if (req.method === "GET" && path === "/changelog") {
+            sendJson(
+                res,
+                200,
+                (await sessionApi?.changelog?.()) ?? { text: "" },
+            );
+            return;
+        }
+
         if (req.method === "POST") {
             const body = await readBody(req);
             if (path === "/prompt") {
@@ -113,6 +135,21 @@ export function createApp({ web, bus, piweb, onPrompt, onReload, threads }) {
             if (path === "/action") {
                 await piweb.dispatch(body.panelId, body.action, body.payload);
                 res.writeHead(202).end();
+                return;
+            }
+            if (path === "/session/name") {
+                await sessionApi?.setName?.(body.name);
+                res.writeHead(202).end();
+                return;
+            }
+            if (path === "/session/compact") {
+                sessionApi?.compact?.(); // async; progress streamed over SSE
+                res.writeHead(202).end();
+                return;
+            }
+            if (path === "/session/export") {
+                const result = (await sessionApi?.export?.(body.format)) ?? {};
+                sendJson(res, 200, result);
                 return;
             }
             if (path === "/threads") {

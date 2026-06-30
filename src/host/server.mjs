@@ -7,6 +7,7 @@
  * agent-independent; this file owns agent bootstrap, the event -> cockpit
  * translation, and the thread (session) lifecycle.
  */
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -15,6 +16,7 @@ import {
     DefaultResourceLoader,
     SessionManager,
     getAgentDir,
+    getPackageDir,
     AuthStorage,
     ModelRegistry,
 } from "@earendil-works/pi-coding-agent";
@@ -267,6 +269,64 @@ const threads = {
     },
 };
 
+// ---- session commands (/session, /name, /compact, /export, /changelog) ----
+const sessionApi = {
+    info() {
+        const sm = session?.sessionManager;
+        return {
+            id: sm?.getSessionId(),
+            name: sm?.getSessionName() ?? null,
+            stats: session?.getSessionStats?.() ?? null,
+            usage: session?.getContextUsage?.() ?? null,
+        };
+    },
+    setName(name) {
+        const n = (name ?? "").trim();
+        if (n && session) {
+            session.setSessionName(n);
+            broadcastThreads();
+            broadcast({ kind: "system", text: `renamed thread to “${n}”` });
+        }
+    },
+    async compact() {
+        if (!session) return;
+        broadcast({ kind: "system", text: "compacting context…" });
+        try {
+            await session.compact();
+            broadcast({ kind: "system", text: "context compacted" });
+            broadcastThreads();
+        } catch (err) {
+            broadcast({
+                kind: "error",
+                text: "compact failed: " + String(err?.message ?? err),
+            });
+        }
+    },
+    async export(format) {
+        if (!session) return { error: "no active session" };
+        try {
+            const path =
+                format === "jsonl"
+                    ? session.exportToJsonl()
+                    : await session.exportToHtml();
+            return { path, format: format === "jsonl" ? "jsonl" : "html" };
+        } catch (err) {
+            return { error: String(err?.message ?? err) };
+        }
+    },
+    async changelog() {
+        try {
+            const text = await readFile(
+                join(getPackageDir(), "CHANGELOG.md"),
+                "utf8",
+            );
+            return { text: text.slice(0, 20000) };
+        } catch (err) {
+            return { text: "", error: String(err?.message ?? err) };
+        }
+    },
+};
+
 // ---- boot -----------------------------------------------------------------
 // Persist sessions so threads survive restarts; resume the most recent.
 await bootSession(SessionManager.continueRecent(cwd));
@@ -277,6 +337,7 @@ const server = createApp({
     bus,
     piweb,
     threads,
+    sessionApi,
     onPrompt: (text) =>
         session
             .prompt(text)

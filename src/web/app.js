@@ -24,6 +24,46 @@ const COMMANDS = [
         description: "Switch to another thread",
     },
     { value: "/new", label: "/new", description: "Start a new thread" },
+    {
+        value: "/reload",
+        label: "/reload",
+        description: "Reload extensions, skills, prompts, themes",
+    },
+    {
+        value: "/copy",
+        label: "/copy",
+        description: "Copy the last assistant message",
+    },
+    {
+        value: "/compact",
+        label: "/compact",
+        description: "Compact the conversation context",
+    },
+    {
+        value: "/name",
+        label: "/name",
+        description: "Set this thread's display name — /name <title>",
+    },
+    {
+        value: "/session",
+        label: "/session",
+        description: "Show session info and stats",
+    },
+    {
+        value: "/export",
+        label: "/export",
+        description: "Export session — /export [html|jsonl]",
+    },
+    {
+        value: "/changelog",
+        label: "/changelog",
+        description: "Show the pi changelog",
+    },
+    {
+        value: "/hotkeys",
+        label: "/hotkeys",
+        description: "Show keyboard shortcuts",
+    },
 ];
 
 function bubble(role, text = "") {
@@ -249,7 +289,8 @@ function closeAc() {
 
 function updateAc() {
     const v = $prompt.value;
-    if (!v.startsWith("/")) {
+    // only suggest while typing the command token itself (no args yet)
+    if (!v.startsWith("/") || /\s/.test(v)) {
         closeAc();
         return;
     }
@@ -271,18 +312,139 @@ function acceptAc(run) {
     }
 }
 
+function notice(text) {
+    bubble("system", text);
+}
+
+async function getJson(path) {
+    try {
+        return await (await fetch(path)).json();
+    } catch {
+        return null;
+    }
+}
+
+function showOverlay(title, contentEl) {
+    if (!$overlay) return;
+    $picker.innerHTML = "";
+    const h = document.createElement("h3");
+    h.textContent = title;
+    const body = document.createElement("div");
+    body.style.padding = "12px 14px";
+    body.appendChild(contentEl);
+    $picker.append(h, body);
+    $overlay.classList.add("show");
+}
+
 function runInput(text) {
     text = (text ?? "").trim();
     if (!text) return;
-    if (text === "/resume") {
-        openPicker();
-        return;
-    }
-    if (text === "/new") {
-        post("/threads", {});
-        return;
+    if (text.startsWith("/")) {
+        const sp = text.indexOf(" ");
+        const cmd = sp === -1 ? text : text.slice(0, sp);
+        const arg = sp === -1 ? "" : text.slice(sp + 1).trim();
+        if (runCommand(cmd, arg)) return;
     }
     post("/prompt", { text });
+}
+
+// returns true if handled as a cockpit command
+function runCommand(cmd, arg) {
+    switch (cmd) {
+        case "/resume":
+            openPicker();
+            return true;
+        case "/new":
+            post("/threads", {});
+            return true;
+        case "/reload":
+            post("/reload", {});
+            return true;
+        case "/copy":
+            copyLastAssistant();
+            return true;
+        case "/compact":
+            post("/session/compact", {});
+            return true;
+        case "/name":
+            if (!arg) notice("usage: /name <title>");
+            else post("/session/name", { name: arg });
+            return true;
+        case "/session":
+            showSessionInfo();
+            return true;
+        case "/export":
+            doExport(arg);
+            return true;
+        case "/changelog":
+            showChangelog();
+            return true;
+        case "/hotkeys":
+            showHotkeys();
+            return true;
+        default:
+            return false;
+    }
+}
+
+function copyLastAssistant() {
+    const nodes = $transcript.querySelectorAll(".msg.assistant .body");
+    const text = nodes.length ? nodes[nodes.length - 1].textContent : "";
+    if (!text) {
+        notice("nothing to copy");
+        return;
+    }
+    (navigator.clipboard?.writeText(text) ?? Promise.reject()).then(
+        () => notice("copied last message"),
+        () => notice("copy failed (clipboard unavailable)"),
+    );
+}
+
+async function doExport(format) {
+    const fmt = format === "jsonl" ? "jsonl" : "html";
+    const r = await (await post("/session/export", { format: fmt })).json();
+    if (r?.path) notice(`exported (${r.format}) → ${r.path}`);
+    else notice("export failed" + (r?.error ? `: ${r.error}` : ""));
+}
+
+async function showSessionInfo() {
+    const info = await getJson("/session");
+    const pre = document.createElement("pre");
+    pre.style.whiteSpace = "pre-wrap";
+    pre.style.margin = "0";
+    pre.textContent = info
+        ? JSON.stringify(info, null, 2)
+        : "(no session info)";
+    showOverlay("Session", pre);
+}
+
+async function showChangelog() {
+    const r = await getJson("/changelog");
+    const pre = document.createElement("pre");
+    pre.style.whiteSpace = "pre-wrap";
+    pre.style.margin = "0";
+    pre.textContent = r?.text || "(changelog unavailable)";
+    showOverlay("Changelog", pre);
+}
+
+function showHotkeys() {
+    const wrap = document.createElement("div");
+    const keys = [
+        ["Enter", "send message / run selected command"],
+        ["/", "open command typeahead"],
+        ["↑ / ↓", "move through command suggestions"],
+        ["Tab", "complete selected command"],
+        ["Esc", "dismiss menu / overlay"],
+        ["/resume", "switch threads"],
+        ["/new", "new thread"],
+    ];
+    wrap.innerHTML = keys
+        .map(
+            ([k, d]) =>
+                `<div style="display:flex;gap:12px;padding:3px 0"><b style="color:var(--acc);min-width:90px">${k}</b><span>${d}</span></div>`,
+        )
+        .join("");
+    showOverlay("Keyboard shortcuts", wrap);
 }
 
 $prompt.addEventListener("input", updateAc);

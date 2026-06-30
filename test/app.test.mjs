@@ -160,6 +160,58 @@ test("thread routes delegate to injected callbacks", async () => {
     }
 });
 
+test("session command routes delegate to sessionApi", async () => {
+    const calls = [];
+    const bus = createBus();
+    const piweb = createPiWebHost({
+        broadcastPanels: () => {},
+        getPi: () => ({}),
+    });
+    const server = createApp({
+        web: "src/web",
+        bus,
+        piweb,
+        sessionApi: {
+            info: async () => ({ id: "s1", name: "demo" }),
+            setName: async (n) => calls.push(`name:${n}`),
+            compact: async () => calls.push("compact"),
+            export: async (fmt) => ({ path: `/tmp/x.${fmt}`, format: fmt }),
+            changelog: async () => ({ text: "# changelog" }),
+        },
+    });
+    const base = await new Promise((r) =>
+        server.listen(0, "127.0.0.1", () =>
+            r(`http://127.0.0.1:${server.address().port}`),
+        ),
+    );
+    try {
+        expect((await (await fetch(`${base}/session`)).json()).id).toBe("s1");
+        expect(
+            (await (await fetch(`${base}/changelog`)).json()).text,
+        ).toContain("changelog");
+
+        await fetch(`${base}/session/name`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: "renamed" }),
+        });
+        await fetch(`${base}/session/compact`, { method: "POST" });
+        const exp = await (
+            await fetch(`${base}/session/export`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ format: "jsonl" }),
+            })
+        ).json();
+        expect(exp.path).toBe("/tmp/x.jsonl");
+
+        expect(calls).toContain("name:renamed");
+        expect(calls).toContain("compact");
+    } finally {
+        server.close();
+    }
+});
+
 test("thread routes: list / create / switch are wired to callbacks", async () => {
     const calls = [];
     const bus = createBus();
