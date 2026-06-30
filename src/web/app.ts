@@ -22,7 +22,6 @@ import {
 });
 
 const $transcript = document.getElementById("transcript");
-const $welcome = document.getElementById("welcome");
 const $dockLeft = document.getElementById("dock-left");
 const $dockRight = document.getElementById("dock-right");
 const $dockBottom = document.getElementById("dock-bottom");
@@ -132,7 +131,7 @@ const COMMANDS = [
 ];
 
 function bubble(role, text = "") {
-    if ($transcript.querySelector(".empty")) $transcript.innerHTML = "";
+    clearEmpty();
     const el = document.createElement("div");
     el.className = `msg ${role}`;
     el.innerHTML = `<div class="role">${role}</div><div class="body"></div>`;
@@ -143,7 +142,7 @@ function bubble(role, text = "") {
 }
 
 function bashBubble(command, excluded) {
-    if ($transcript.querySelector(".empty")) $transcript.innerHTML = "";
+    clearEmpty();
     const el = document.createElement("div");
     el.className = "bash";
     const head = document.createElement("div");
@@ -175,21 +174,35 @@ let lastToolEntry = null;
 let cwd = "";
 
 // Startup / reload intro view (#5/#12): the version banner + loaded resources,
-// rendered above the transcript. Collapsed by default (compact comma lists),
-// click to expand (one resource per line), mirroring the TUI header.
+// emitted as the first entry in the transcript (scrolls with the content rather
+// than sticking to the top). Collapsed by default (compact comma lists), click
+// to expand (one resource per line), mirroring the TUI header.
 let welcomeInfo: WelcomeInfo | null = null;
 let welcomeExpanded = false;
 
+// Remove placeholder copy without nuking real transcript entries (e.g. the
+// welcome banner). Used wherever the first message replaces the empty state.
+function clearEmpty() {
+    $transcript.querySelectorAll(".empty").forEach((e) => e.remove());
+}
+
 function renderWelcome() {
-    if (!$welcome) return;
+    let el = $transcript.querySelector(".welcome") as HTMLElement | null;
     const info = welcomeInfo;
     if (!info) {
-        $welcome.hidden = true;
+        if (el) el.remove();
         return;
     }
-    $welcome.hidden = false;
-    $welcome.classList.toggle("expanded", welcomeExpanded);
-    $welcome.innerHTML = "";
+    if (!el) {
+        el = document.createElement("div");
+        el.className = "welcome";
+    }
+    // keep the banner pinned as the first transcript entry
+    if ($transcript.firstChild !== el) {
+        $transcript.insertBefore(el, $transcript.firstChild);
+    }
+    el.classList.toggle("expanded", welcomeExpanded);
+    el.innerHTML = "";
 
     const logo = document.createElement("div");
     logo.className = "logo";
@@ -200,12 +213,12 @@ function renderWelcome() {
         ver.textContent = ` v${info.version}`;
         logo.appendChild(ver);
     }
-    $welcome.appendChild(logo);
+    el.appendChild(logo);
 
     const hints = document.createElement("div");
     hints.className = "hints";
     hints.textContent = keyHintsLine();
-    $welcome.appendChild(hints);
+    el.appendChild(hints);
 
     if (hasResources(info)) {
         const secs = document.createElement("div");
@@ -226,7 +239,7 @@ function renderWelcome() {
             sec.appendChild(items);
             secs.appendChild(sec);
         }
-        $welcome.appendChild(secs);
+        el.appendChild(secs);
     }
 
     const toggle = document.createElement("div");
@@ -234,9 +247,9 @@ function renderWelcome() {
     toggle.textContent = welcomeExpanded
         ? "collapse"
         : "show loaded resources (click)";
-    $welcome.appendChild(toggle);
+    el.appendChild(toggle);
 
-    $welcome.onclick = () => {
+    el.onclick = () => {
         welcomeExpanded = !welcomeExpanded;
         renderWelcome();
     };
@@ -326,7 +339,7 @@ function renderToolCard(entry, scroll = false) {
 function applyToolFrame(m) {
     let entry = toolEls[m.id];
     if (!entry) {
-        if ($transcript.querySelector(".empty")) $transcript.innerHTML = "";
+        clearEmpty();
         const el = document.createElement("div");
         el.className = "tool";
         $transcript.appendChild(el);
@@ -358,7 +371,7 @@ function applyToolFrame(m) {
 // A collapsible thinking/reasoning trace. Clicking the header (or Ctrl+T)
 // toggles visibility, which is persisted to pi's `hideThinkingBlock` setting.
 function thinkingBubble() {
-    if ($transcript.querySelector(".empty")) $transcript.innerHTML = "";
+    clearEmpty();
     const el = document.createElement("div");
     el.className = "thinking-block";
     el.innerHTML =
@@ -1302,6 +1315,7 @@ function onSseMessage(e) {
             break;
         case "transcript_reset":
             $transcript.innerHTML = '<div class="empty">new thread</div>';
+            renderWelcome(); // re-pin the banner as the first transcript entry
             assistantEl = null;
             thinkingEl = null;
             toolEls = {};

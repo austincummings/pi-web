@@ -554,10 +554,11 @@
                 color: var(--dim);
             }
             /* startup / reload intro view (banner + loaded resources), echoing
-               the pi TUI header. Sits above the transcript and is click-to-
-               expand (collapsed shows compact comma lists; expanded one per line). */
+               the pi TUI header. Rendered as the first transcript entry (scrolls
+               with content) and click-to-expand (collapsed shows compact comma
+               lists; expanded one per line). */
             .welcome {
-                padding: 10px 14px 4px;
+                padding: 4px 0 10px;
                 font-size: 13px;
                 line-height: 1.5;
                 cursor: pointer;
@@ -712,7 +713,6 @@
                 <span class="sp"></span>
                 <span id="status" class="empty">connecting…</span>
             </header>
-            <div id="welcome" class="welcome" hidden></div>
             <div id="transcript">
                 <div class="empty">
                     Ask pi something, or use a dock registered by an extension →
