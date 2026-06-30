@@ -212,6 +212,43 @@ test("session command routes delegate to sessionApi", async () => {
     }
 });
 
+test("/bash delegates to onBash with the exclude flag", async () => {
+    const calls = [];
+    const bus = createBus();
+    const piweb = createPiWebHost({
+        broadcastPanels: () => {},
+        getPi: () => ({}),
+    });
+    const server = createApp({
+        web: "src/web",
+        bus,
+        piweb,
+        onBash: (command, exclude) =>
+            calls.push(`${exclude ? "!!" : "!"}${command}`),
+    });
+    const base = await new Promise((r) =>
+        server.listen(0, "127.0.0.1", () =>
+            r(`http://127.0.0.1:${server.address().port}`),
+        ),
+    );
+    try {
+        await fetch(`${base}/bash`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ command: "ls", excludeFromContext: false }),
+        });
+        await fetch(`${base}/bash`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ command: "pwd", excludeFromContext: true }),
+        });
+        expect(calls).toContain("!ls");
+        expect(calls).toContain("!!pwd");
+    } finally {
+        server.close();
+    }
+});
+
 test("thread routes: list / create / switch are wired to callbacks", async () => {
     const calls = [];
     const bus = createBus();

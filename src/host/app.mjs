@@ -59,6 +59,7 @@ export function createApp({
     onReload,
     threads,
     sessionApi,
+    onBash,
 }) {
     const STATIC = {
         "/": ["index.html", "text/html; charset=utf-8"],
@@ -150,6 +151,11 @@ export function createApp({
             if (path === "/session/export") {
                 const result = (await sessionApi?.export?.(body.format)) ?? {};
                 sendJson(res, 200, result);
+                return;
+            }
+            if (path === "/bash") {
+                onBash?.(body.command, body.excludeFromContext);
+                res.writeHead(202).end();
                 return;
             }
             if (path === "/threads") {

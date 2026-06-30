@@ -13,6 +13,7 @@ const $ask = document.getElementById("ask");
 const $ac = document.getElementById("ac");
 
 let assistantEl = null; // current streaming assistant bubble
+let bashEl = null; // current streaming bash output block
 let threadItems = []; // last known thread list (from SSE)
 let activeThreadId = null;
 
@@ -72,6 +73,21 @@ function bubble(role, text = "") {
     el.className = `msg ${role}`;
     el.innerHTML = `<div class="role">${role}</div><div class="body"></div>`;
     el.querySelector(".body").textContent = text;
+    $transcript.appendChild(el);
+    $transcript.scrollTop = $transcript.scrollHeight;
+    return el;
+}
+
+function bashBubble(command, excluded) {
+    if ($transcript.querySelector(".empty")) $transcript.innerHTML = "";
+    const el = document.createElement("div");
+    el.className = "bash";
+    const head = document.createElement("div");
+    head.className = "bash-cmd";
+    head.textContent = (excluded ? "!! " : "! ") + command;
+    const body = document.createElement("pre");
+    body.className = "body";
+    el.append(head, body);
     $transcript.appendChild(el);
     $transcript.scrollTop = $transcript.scrollHeight;
     return el;
@@ -339,6 +355,12 @@ function showOverlay(title, contentEl) {
 function runInput(text) {
     text = (text ?? "").trim();
     if (!text) return;
+    if (text.startsWith("!")) {
+        const exclude = text.startsWith("!!");
+        const command = text.slice(exclude ? 2 : 1).trim();
+        if (command) post("/bash", { command, excludeFromContext: exclude });
+        return;
+    }
     if (text.startsWith("/")) {
         const sp = text.indexOf(" ");
         const cmd = sp === -1 ? text : text.slice(0, sp);
@@ -537,6 +559,23 @@ es.onmessage = (e) => {
             break;
         case "assistant_end":
             assistantEl = null;
+            break;
+        case "bash":
+            if (m.status === "start") {
+                bashEl = bashBubble(m.command, m.excludeFromContext);
+            } else if (m.status === "chunk") {
+                if (!bashEl) bashEl = bashBubble("", false);
+                bashEl.querySelector(".body").textContent += m.text;
+                $transcript.scrollTop = $transcript.scrollHeight;
+            } else if (m.status === "end") {
+                if (bashEl && m.exitCode != null && m.exitCode !== 0) {
+                    const code = document.createElement("div");
+                    code.className = "bash-cmd";
+                    code.textContent = `exit ${m.exitCode}`;
+                    bashEl.appendChild(code);
+                }
+                bashEl = null;
+            }
             break;
         case "tool": {
             const el = document.createElement("div");

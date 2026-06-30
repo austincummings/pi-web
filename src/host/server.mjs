@@ -327,6 +327,44 @@ const sessionApi = {
     },
 };
 
+// ---- shell execution (! adds output to context, !! keeps it local) -------
+async function runBash(command, excludeFromContext) {
+    const cmd = (command ?? "").trim();
+    if (!session || !cmd) return;
+    broadcast({
+        kind: "bash",
+        status: "start",
+        command: cmd,
+        excludeFromContext: !!excludeFromContext,
+    });
+    let streamed = false;
+    try {
+        const result = await session.executeBash(
+            cmd,
+            (chunk) => {
+                streamed = true;
+                broadcast({ kind: "bash", status: "chunk", text: chunk });
+            },
+            { excludeFromContext: !!excludeFromContext },
+        );
+        if (!streamed && result?.output) {
+            broadcast({ kind: "bash", status: "chunk", text: result.output });
+        }
+        broadcast({
+            kind: "bash",
+            status: "end",
+            exitCode: result?.exitCode ?? null,
+            cancelled: !!result?.cancelled,
+            truncated: !!result?.truncated,
+        });
+    } catch (err) {
+        broadcast({
+            kind: "error",
+            text: "bash failed: " + String(err?.message ?? err),
+        });
+    }
+}
+
 // ---- boot -----------------------------------------------------------------
 // Persist sessions so threads survive restarts; resume the most recent.
 await bootSession(SessionManager.continueRecent(cwd));
@@ -338,6 +376,7 @@ const server = createApp({
     piweb,
     threads,
     sessionApi,
+    onBash: (command, exclude) => runBash(command, exclude),
     onPrompt: (text) =>
         session
             .prompt(text)
