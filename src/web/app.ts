@@ -3,7 +3,7 @@
 import { fuzzyFilter } from "./fuzzy.ts";
 import { renderMarkdown } from "./markdown.ts";
 import {
-    summarizeArgs,
+    toolTitle,
     truncateResult,
     getToolRenderer,
     registerToolRenderer,
@@ -164,7 +164,20 @@ function renderAssistant(el, text) {
 let toolEls = {};
 let lastToolEntry = null;
 
-function renderToolCard(entry) {
+// True when the transcript is scrolled (near) to the bottom, so we only
+// auto-follow new output when the user hasn't scrolled up to read history.
+function nearBottom(pad = 40) {
+    return (
+        $transcript.scrollHeight -
+            $transcript.scrollTop -
+            $transcript.clientHeight <
+        pad
+    );
+}
+
+// `scroll` is only honored when new agent output arrives; user-initiated
+// expand/collapse re-renders pass `false` so the view stays put.
+function renderToolCard(entry, scroll = false) {
     const info = entry.info;
     const el = entry.el;
     el.innerHTML = "";
@@ -178,8 +191,9 @@ function renderToolCard(entry) {
         '<span class="tool-mark"></span><span class="tool-name"></span> ' +
         '<span class="tool-args"></span>';
     head.querySelector(".tool-mark").textContent = mark;
-    head.querySelector(".tool-name").textContent = info.name;
-    head.querySelector(".tool-args").textContent = summarizeArgs(info.args);
+    const title = toolTitle(info.name, info.args);
+    head.querySelector(".tool-name").textContent = title.name;
+    head.querySelector(".tool-args").textContent = title.args;
     el.appendChild(head);
 
     // Extension override: a registered renderer may replace the default body.
@@ -189,7 +203,7 @@ function renderToolCard(entry) {
             const node = custom({ ...info });
             if (node) {
                 el.appendChild(node);
-                $transcript.scrollTop = $transcript.scrollHeight;
+                if (scroll) $transcript.scrollTop = $transcript.scrollHeight;
                 return;
             }
         } catch {
@@ -211,12 +225,12 @@ function renderToolCard(entry) {
                 : `+${hidden} more line${hidden === 1 ? "" : "s"} (alt+o)`;
             more.onclick = () => {
                 info.expanded = !info.expanded;
-                renderToolCard(entry);
+                renderToolCard(entry, false);
             };
             el.appendChild(more);
         }
     }
-    $transcript.scrollTop = $transcript.scrollHeight;
+    if (scroll) $transcript.scrollTop = $transcript.scrollHeight;
 }
 
 // Apply a `tool` SSE frame: create or update the card for this call id.
@@ -249,7 +263,7 @@ function applyToolFrame(m) {
         if (m.result != null) entry.info.result = String(m.result);
     }
     lastToolEntry = entry;
-    renderToolCard(entry);
+    renderToolCard(entry, nearBottom());
 }
 
 // A collapsible thinking/reasoning trace. Clicking the header (or Ctrl+T)
@@ -1097,7 +1111,7 @@ document.addEventListener("keydown", (e) => {
         if (!lastToolEntry) return;
         e.preventDefault();
         lastToolEntry.info.expanded = !lastToolEntry.info.expanded;
-        renderToolCard(lastToolEntry);
+        renderToolCard(lastToolEntry, false);
     }
 });
 

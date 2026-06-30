@@ -33,6 +33,26 @@ export function summarizeArgs(args: any): string {
 }
 
 /**
+ * The header label + arg summary for a tool call, mirroring how the pi TUI
+ * titles each tool. Most tools render as `<name> <primary-arg>`, but bash is
+ * special-cased to `$ <command>` (no "bash" word), matching pi-tui's
+ * `formatBashCall`. The returned `name` is what goes in the bold title slot.
+ */
+export function toolTitle(
+    name: string,
+    args: any,
+): { name: string; args: string } {
+    if (name === "bash" || name === "shell") {
+        const cmd =
+            args && typeof args === "object"
+                ? (args.command ?? args.cmd ?? "")
+                : "";
+        return { name: "$", args: typeof cmd === "string" ? cmd : "" };
+    }
+    return { name, args: summarizeArgs(args) };
+}
+
+/**
  * Split result text into the visible portion plus the count of hidden lines.
  * When `expanded`, everything is shown. Trailing whitespace is trimmed so the
  * line count is accurate.

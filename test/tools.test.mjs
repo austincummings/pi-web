@@ -5,6 +5,7 @@
 import { test, expect } from "bun:test";
 import {
     summarizeArgs,
+    toolTitle,
     truncateResult,
     registerToolRenderer,
     getToolRenderer,
@@ -54,6 +55,28 @@ test("truncateResult expanded shows everything", () => {
 test("truncateResult trims trailing whitespace before counting", () => {
     const text = "a\nb\n\n\n   ";
     expect(truncateResult(text, false)).toEqual({ shown: "a\nb", hidden: 0 });
+});
+
+test("toolTitle renders bash as `$ <command>` (no bash word), like the TUI", () => {
+    expect(toolTitle("bash", { command: "ls -la" })).toEqual({
+        name: "$",
+        args: "ls -la",
+    });
+    expect(toolTitle("shell", { cmd: "pwd" })).toEqual({
+        name: "$",
+        args: "pwd",
+    });
+});
+
+test("toolTitle keeps the tool name + primary arg for non-bash tools", () => {
+    expect(toolTitle("read", { path: "src/x.ts" })).toEqual({
+        name: "read",
+        args: "src/x.ts",
+    });
+    expect(toolTitle("grep", { pattern: "foo" })).toEqual({
+        name: "grep",
+        args: "foo",
+    });
 });
 
 test("renderer registry stores and retrieves by tool name", () => {
