@@ -1,6 +1,7 @@
 // pi-web cockpit client: transcript stream, extension panels, thread switching,
 // and a fuzzy command typeahead (ported from pi-tui's fuzzy matcher).
 import { fuzzyFilter } from "/fuzzy.mjs";
+import { renderMarkdown } from "/markdown.mjs";
 
 const $transcript = document.getElementById("transcript");
 const $panels = document.getElementById("panels");
@@ -14,6 +15,7 @@ const $ac = document.getElementById("ac");
 
 let assistantEl = null; // current streaming assistant bubble
 let bashEl = null; // current streaming bash output block
+let assistantRaw = ""; // accumulated assistant text (rendered as markdown)
 let threadItems = []; // last known thread list (from SSE)
 let activeThreadId = null;
 
@@ -91,6 +93,11 @@ function bashBubble(command, excluded) {
     $transcript.appendChild(el);
     $transcript.scrollTop = $transcript.scrollHeight;
     return el;
+}
+
+function renderAssistant(el, text) {
+    el.querySelector(".body").innerHTML = renderMarkdown(text);
+    $transcript.scrollTop = $transcript.scrollHeight;
 }
 
 function post(path, body) {
@@ -547,18 +554,25 @@ es.onmessage = (e) => {
             assistantEl = null;
             break;
         case "delta":
-            if (!assistantEl) assistantEl = bubble("assistant", "");
-            assistantEl.querySelector(".body").textContent += m.text;
+            if (!assistantEl) {
+                assistantEl = bubble("assistant", "");
+                assistantRaw = "";
+            }
+            assistantRaw += m.text;
+            // show raw text while streaming; render markdown on completion
+            assistantEl.querySelector(".body").textContent = assistantRaw;
             $transcript.scrollTop = $transcript.scrollHeight;
             break;
         case "assistant_full":
-            (
-                assistantEl ?? (assistantEl = bubble("assistant", ""))
-            ).querySelector(".body").textContent = m.text;
-            $transcript.scrollTop = $transcript.scrollHeight;
+            if (!assistantEl) assistantEl = bubble("assistant", "");
+            assistantRaw = m.text;
+            renderAssistant(assistantEl, assistantRaw);
             break;
         case "assistant_end":
+            if (assistantEl && assistantRaw)
+                renderAssistant(assistantEl, assistantRaw);
             assistantEl = null;
+            assistantRaw = "";
             break;
         case "bash":
             if (m.status === "start") {

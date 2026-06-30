@@ -112,6 +112,53 @@
             .msg.assistant .role {
                 color: var(--acc2);
             }
+            .msg.assistant .body {
+                white-space: normal;
+            }
+            .msg .body p {
+                margin: 6px 0;
+            }
+            .msg .body h1,
+            .msg .body h2,
+            .msg .body h3,
+            .msg .body h4 {
+                margin: 10px 0 4px;
+                line-height: 1.3;
+            }
+            .msg .body ul,
+            .msg .body ol {
+                margin: 6px 0;
+                padding-left: 20px;
+            }
+            .msg .body a {
+                color: var(--acc);
+            }
+            .msg .body code {
+                background: #0c1117;
+                border: 1px solid var(--line);
+                border-radius: 4px;
+                padding: 0 4px;
+                font-size: 12px;
+            }
+            .msg .body pre {
+                background: #0c1117;
+                border: 1px solid var(--line);
+                border-radius: 6px;
+                padding: 8px 10px;
+                overflow: auto;
+                margin: 6px 0;
+            }
+            .msg .body pre code {
+                background: none;
+                border: none;
+                padding: 0;
+            }
+            .msg .body blockquote {
+                border-left: 2px solid var(--line);
+                margin: 6px 0;
+                padding-left: 10px;
+                color: var(--dim);
+            }
             .tool {
                 color: var(--dim);
                 border-left: 2px solid var(--line);

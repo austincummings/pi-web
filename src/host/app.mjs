@@ -66,6 +66,7 @@ export function createApp({
         "/index.html": ["index.html", "text/html; charset=utf-8"],
         "/app.js": ["app.js", "text/javascript; charset=utf-8"],
         "/fuzzy.mjs": ["fuzzy.mjs", "text/javascript; charset=utf-8"],
+        "/markdown.mjs": ["markdown.mjs", "text/javascript; charset=utf-8"],
     };
 
     return http.createServer(async (req, res) => {
