@@ -6,7 +6,7 @@ Simple, line-based backlog. Check items off as they land.
 
 - [x] 1. Use TypeScript across the board; minimal build system for the front-end web code. (Bun.build bundler in `src/host/build-web.ts`; `tsconfig.json` + `typecheck`/`build` scripts; web modules are now `.ts`.)
 - [x] 2. Investigate a basic/standard request router instead of the bespoke one. (Evaluated Bun.serve / Hono / in-house; chose a dependency-free `method+exact-path` router in `src/host/router.ts` since all routes are flat. Replaced the 199-line if-chain.)
-- [ ] 3. Style the composer scrollbar; make all scrollbars match the transcript view styling.
+- [x] 3. Style the composer scrollbar; make all scrollbars match the transcript view styling. (Promoted the transcript's `::-webkit-scrollbar` + Firefox `scrollbar-*` treatment to a global `*` rule in index.html.)
 - [ ] 4. Render tool calls neatly: let extensions override rendering (like the TUI) and match pi's default tool-result behavior (truncation, ctrl+o to expand, etc.).
 - [ ] 5. Add the starting/reload context intro view (find pi's name for it) showing [Context], [Extensions], [Themes], etc.
 - [ ] 6. Stop the transcript area from scrolling horizontally; tool-call output currently overruns the right edge.

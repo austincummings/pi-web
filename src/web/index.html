@@ -133,28 +133,33 @@
                 flex: 1;
                 overflow: auto;
                 padding: 14px;
-                /* Firefox */
+            }
+            /* ---- Scrollbars: one consistent treatment everywhere ----------
+               (transcript, composer, overlays, docks, picker, ...). Firefox
+               uses scrollbar-width/-color; WebKit/Blink use the pseudo-elements
+               below. The thumb is inset with a --bg border so it reads as a
+               thin pill, and brightens to the accent on hover. */
+            * {
                 scrollbar-width: thin;
                 scrollbar-color: var(--line) transparent;
             }
-            /* WebKit/Blink (Chrome, Safari, Edge) */
-            #transcript::-webkit-scrollbar {
+            *::-webkit-scrollbar {
                 width: 10px;
+                height: 10px;
             }
-            #transcript::-webkit-scrollbar-track {
+            *::-webkit-scrollbar-track {
                 background: transparent;
             }
-            #transcript::-webkit-scrollbar-thumb {
+            *::-webkit-scrollbar-thumb {
                 background: var(--line);
                 border-radius: 8px;
-                /* inset the thumb so it reads as a thin pill */
                 border: 2px solid var(--bg);
             }
-            #transcript:hover::-webkit-scrollbar-thumb {
-                background: #2b3a4d;
-            }
-            #transcript::-webkit-scrollbar-thumb:hover {
+            *::-webkit-scrollbar-thumb:hover {
                 background: var(--acc);
+            }
+            *::-webkit-scrollbar-corner {
+                background: transparent;
             }
             /* surface cards (docks) */
             .surface {
