@@ -8,7 +8,8 @@
         "start": "bun run src/host/server.mjs",
         "dev": "bun --watch src/host/server.mjs",
         "format": "prettier --write .",
-        "format:check": "prettier --check ."
+        "format:check": "prettier --check .",
+        "test": "bun test"
     },
     "engines": {
         "bun": ">=1.3.0"

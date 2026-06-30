@@ -8,7 +8,7 @@ Status legend: ✅ done · 🚧 partial · ⬜ not started
 - ✅ `piweb` panel registry: serializable component tree + in-process action dispatch
 - ✅ Streaming transcript; prompt box; `sendUserMessage` from a panel
 - 🚧 `/reload` (best-effort; may not re-instantiate session extensions)
-- ⬜ Tests / health check (correctness = eyeballing the browser)
+- ✅ `/health` endpoint + `bun test` smoke test (Phase 0)
 - ⬜ `ExtensionUIContext` bridge (`ctx.ui.*` → web) — see `docs/ui-bridge.md`
 - ⬜ **Thread (session) switching** — the immediate next phase, detailed below
 

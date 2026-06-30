@@ -2,9 +2,10 @@
  * pi-web host: runs the pi agent in-process (createAgentSession) and serves a
  * web cockpit. Browser bus is SSE (server->client) + POST (client->server) so
  * there are zero extra dependencies.
+ *
+ * Transport (SSE/POST/static/health) lives in ./app.mjs and is agent-independent;
+ * this file owns agent bootstrap and the event -> cockpit-message translation.
  */
-import http from "node:http";
-import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -18,6 +19,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { createPiWebHost } from "./piweb-host.mjs";
+import { createBus, createApp } from "./app.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..", "..");
@@ -27,11 +29,8 @@ const HOST = process.env.HOST ?? "0.0.0.0";
 const cwd = process.cwd();
 
 // ---- browser bus (SSE) ----------------------------------------------------
-const clients = new Set();
-function broadcast(msg) {
-    const line = `data: ${JSON.stringify(msg)}\n\n`;
-    for (const res of clients) res.write(line);
-}
+const bus = createBus();
+const broadcast = bus.broadcast;
 
 // ---- piweb host (injected into extensions) --------------------------------
 const piweb = createPiWebHost({
@@ -163,96 +162,29 @@ session.subscribe((ev) => {
 });
 
 // ---- http -----------------------------------------------------------------
-async function readBody(req) {
-    const chunks = [];
-    for await (const c of req) chunks.push(c);
-    if (!chunks.length) return {};
-    try {
-        return JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    } catch {
-        return {};
-    }
-}
-
-const STATIC = {
-    "/": ["index.html", "text/html; charset=utf-8"],
-    "/index.html": ["index.html", "text/html; charset=utf-8"],
-    "/app.js": ["app.js", "text/javascript; charset=utf-8"],
-};
-
-const server = http.createServer(async (req, res) => {
-    const url = new URL(req.url, `http://localhost:${PORT}`);
-    const path = url.pathname;
-
-    // SSE event stream
-    if (path === "/events") {
-        res.writeHead(200, {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            Connection: "keep-alive",
-        });
-        res.write(": connected\n\n");
-        res.write(
-            `data: ${JSON.stringify({ kind: "panels", panels: piweb.snapshot() })}\n\n`,
-        );
-        clients.add(res);
-        req.on("close", () => clients.delete(res));
-        return;
-    }
-
-    if (req.method === "POST") {
-        const body = await readBody(req);
-        if (path === "/prompt") {
-            const text = (body.text ?? "").trim();
-            if (text) {
-                // user echo comes from the message_start(role:user) event, covering both
-                // /prompt and panel-initiated (sendUserMessage) turns uniformly.
-                session.prompt(text).catch((err) =>
-                    broadcast({
-                        kind: "error",
-                        text: String(err?.message ?? err),
-                    }),
-                );
-            }
-            res.writeHead(202).end();
-            return;
-        }
-        if (path === "/action") {
-            await piweb.dispatch(body.panelId, body.action, body.payload);
-            res.writeHead(202).end();
-            return;
-        }
-        if (path === "/reload") {
-            // best-effort self-modify hook: re-discover extensions on disk
-            piweb.clear();
-            try {
-                await resourceLoader.reload();
-                broadcast({ kind: "system", text: "reloaded extensions" });
-            } catch (err) {
-                broadcast({
-                    kind: "error",
-                    text: "reload failed: " + String(err?.message ?? err),
-                });
-            }
-            res.writeHead(202).end();
-            return;
-        }
-        res.writeHead(404).end();
-        return;
-    }
-
-    // static
-    const entry = STATIC[path];
-    if (entry) {
+const server = createApp({
+    web: WEB,
+    bus,
+    piweb,
+    onPrompt: (text) =>
+        session
+            .prompt(text)
+            .catch((err) =>
+                broadcast({ kind: "error", text: String(err?.message ?? err) }),
+            ),
+    onReload: async () => {
+        // best-effort self-modify hook: re-discover extensions on disk
+        piweb.clear();
         try {
-            const buf = await readFile(join(WEB, entry[0]));
-            res.writeHead(200, { "Content-Type": entry[1] }).end(buf);
-        } catch {
-            res.writeHead(404).end("not found");
+            await resourceLoader.reload();
+            broadcast({ kind: "system", text: "reloaded extensions" });
+        } catch (err) {
+            broadcast({
+                kind: "error",
+                text: "reload failed: " + String(err?.message ?? err),
+            });
         }
-        return;
-    }
-    res.writeHead(404).end("not found");
+    },
 });
 
 server.listen(PORT, HOST, () => {
