@@ -28,7 +28,16 @@
 import { readFile, readdir } from "node:fs/promises";
 import { readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import {
+    basename,
+    dirname,
+    isAbsolute,
+    join,
+    relative,
+    resolve,
+    sep,
+} from "node:path";
+import { homedir } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -406,6 +415,86 @@ function thinkingLevelFrame(s) {
         supported: available.length > 1,
     };
 }
+
+/**
+ * Collapse an absolute cwd to `~`-relative form for display, mirroring the pi
+ * TUI footer's `formatCwdForFooter`.
+ * @param {string} dir
+ * @param {string} home
+ * @returns {string}
+ */
+function formatCwdForFooter(dir, home) {
+    if (!home) return dir;
+    const rel = relative(resolve(home), resolve(dir));
+    const inside =
+        rel === "" ||
+        (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+    if (!inside) return dir;
+    return rel === "" ? "~" : `~${sep}${rel}`;
+}
+
+/**
+ * Build the `footer` frame: the default below-composer context bar that mirrors
+ * the pi TUI footer (FooterComponent) — a pwd/session line plus a token-stats /
+ * `<model> • thinking <level>` line. Best-effort: any missing piece degrades to
+ * a sane default rather than throwing.
+ * @param {AgentSession|null|undefined} s
+ * @param {string} [threadCwd]
+ */
+function footerFrame(s, threadCwd = "") {
+    let model = null;
+    let reasoning = false;
+    let level = "off";
+    let session = null;
+    let tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+    let cost = 0;
+    let sub = false;
+    let context = { percent: null, window: 0 };
+    let autoCompact = false;
+    let cwdStr = threadCwd || cwd;
+    try {
+        const st = s?.state;
+        model = st?.model?.id ?? null;
+        reasoning = !!st?.model?.reasoning;
+        level = s?.thinkingLevel || "off";
+        const sm = s?.sessionManager;
+        session = sm?.getSessionName?.() || null;
+        cwdStr = sm?.getCwd?.() || cwdStr;
+        const stats = s?.getSessionStats?.();
+        if (stats?.tokens) {
+            tokens = {
+                input: stats.tokens.input,
+                output: stats.tokens.output,
+                cacheRead: stats.tokens.cacheRead,
+                cacheWrite: stats.tokens.cacheWrite,
+            };
+            cost = stats.cost ?? 0;
+        }
+        if (st?.model && s?.modelRegistry?.isUsingOAuth)
+            sub = !!s.modelRegistry.isUsingOAuth(st.model);
+        const usage = s?.getContextUsage?.();
+        context = {
+            percent: usage?.percent ?? null,
+            window: usage?.contextWindow ?? st?.model?.contextWindow ?? 0,
+        };
+        autoCompact = !!s?.autoCompactionEnabled;
+    } catch {
+        /* best-effort */
+    }
+    return {
+        kind: "footer",
+        cwd: formatCwdForFooter(cwdStr, homedir()),
+        session,
+        model,
+        reasoning,
+        level,
+        tokens,
+        cost,
+        sub,
+        context,
+        autoCompact,
+    };
+}
 /**
  * @param {unknown} raw
  * @returns {string}
@@ -531,6 +620,8 @@ function subscribe(thread) {
                 thread.busy = false;
                 emit({ kind: "assistant_end" });
                 emit({ kind: "working", busy: false });
+                // refresh the context bar with the turn's updated token usage
+                emit(footerFrame(thread.session, thread.cwd));
                 // names/recency/running may have changed — refresh the list
                 broadcastThreads();
                 break;
@@ -820,6 +911,8 @@ async function handleConnect(send, threadId) {
     send({ kind: "thinking_visibility", hidden: thinkingHidden(t.session) });
     // reflect the per-session reasoning level (focused composer border color)
     send(thinkingLevelFrame(t.session));
+    // default below-composer context bar (pwd/session + tokens + model•thinking)
+    send(footerFrame(t.session, t.cwd));
     replayTranscript(t.session, send);
     send({ kind: "thread_switched", id: t.id });
     // reflect the thread's current activity (e.g. focusing a busy background
@@ -940,6 +1033,8 @@ const sessionApi = {
         if (n && s) {
             s.setSessionName(n);
             broadcastThreads();
+            // the context bar's pwd line shows the session name
+            bus.broadcastToThread(threadId, footerFrame(s));
             bus.broadcastToThread(threadId, {
                 kind: "system",
                 text: `renamed thread to “${n}”`,
@@ -960,6 +1055,8 @@ const sessionApi = {
                 kind: "system",
                 text: "context compacted",
             });
+            // compaction changes context usage — refresh the context bar
+            bus.broadcastToThread(threadId, footerFrame(s));
             broadcastThreads();
         } catch (err) {
             bus.broadcastToThread(threadId, {
@@ -1201,6 +1298,8 @@ const server = createApp({
             return;
         }
         bus.broadcastToThread(threadId, thinkingLevelFrame(s));
+        // keep the context bar's `• thinking <level>` segment in sync
+        bus.broadcastToThread(threadId, footerFrame(s));
         // mirror the pi TUI's showStatus(`Thinking level: <x>`) on cycle/set
         bus.broadcastToThread(threadId, {
             kind: "notify",

@@ -190,6 +190,41 @@
                 gap: 8px;
             }
             /* keyed status segments (bottom bar) */
+            /* default below-composer context bar (mirrors the pi TUI footer:
+               pwd/session line + token-stats / model•thinking line) */
+            .contextbar {
+                display: none;
+                flex-direction: column;
+                gap: 1px;
+                padding: 4px 14px;
+                border-top: 1px solid var(--line);
+                color: var(--dim);
+                font-size: 14px;
+                line-height: 1.4;
+            }
+            .contextbar.show {
+                display: flex;
+            }
+            .contextbar .line {
+                display: flex;
+                gap: 8px;
+                white-space: pre;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            .contextbar .line .spacer {
+                margin-left: auto;
+            }
+            .contextbar .ctx-warn {
+                color: var(--warn);
+            }
+            .contextbar .ctx-err {
+                color: var(--err);
+            }
+            /* avoid a double divider when both bars are visible */
+            .contextbar.show + .statusbar.show {
+                border-top: none;
+            }
             .statusbar {
                 display: none;
                 gap: 14px;
@@ -808,6 +843,7 @@
                 </form>
             </div>
             <div id="dock-footer" class="dock footer empty-dock"></div>
+            <div id="contextbar" class="contextbar"></div>
             <div id="statusbar" class="statusbar"></div>
         </div>
         <aside id="dock-right" class="dock side empty-dock"></aside>

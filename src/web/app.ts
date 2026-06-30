@@ -30,6 +30,7 @@ const $dockFooter = document.getElementById("dock-footer");
 const $overlayLayer = document.getElementById("overlay-layer");
 const $toastLayer = document.getElementById("toast-layer");
 const $statusbar = document.getElementById("statusbar");
+const $contextbar = document.getElementById("contextbar");
 const $status = document.getElementById("status");
 const $threadTitle = document.getElementById("threadTitle");
 const $overlay = document.getElementById("overlay");
@@ -553,6 +554,68 @@ function renderOverlays(overlays) {
         card.appendChild(body);
         $overlayLayer.appendChild(card);
     }
+}
+
+// compact token formatting, mirroring the pi TUI footer's formatTokens
+function fmtTokens(n) {
+    if (n < 1000) return String(n);
+    if (n < 10000) return (n / 1000).toFixed(1) + "k";
+    if (n < 1000000) return Math.round(n / 1000) + "k";
+    if (n < 10000000) return (n / 1000000).toFixed(1) + "M";
+    return Math.round(n / 1000000) + "M";
+}
+
+/**
+ * Render the default context bar from a `footer` frame, mirroring the pi TUI
+ * FooterComponent: a pwd/session line and a token-stats / `<model> • thinking
+ * <level>` line. @param {any} f
+ */
+function renderFooter(f) {
+    if (!$contextbar) return;
+    if (!f) {
+        $contextbar.classList.remove("show");
+        $contextbar.innerHTML = "";
+        return;
+    }
+    $contextbar.innerHTML = "";
+
+    // line 1: pwd  •  session
+    const l1 = document.createElement("div");
+    l1.className = "line";
+    l1.textContent = f.session ? `${f.cwd}  •  ${f.session}` : f.cwd || "";
+
+    // line 2: token stats (left) + context% + model•thinking (right)
+    const l2 = document.createElement("div");
+    l2.className = "line";
+    const t = f.tokens || {};
+    const stats = [];
+    if (t.input) stats.push(`↑${fmtTokens(t.input)}`);
+    if (t.output) stats.push(`↓${fmtTokens(t.output)}`);
+    if (t.cacheRead) stats.push(`R${fmtTokens(t.cacheRead)}`);
+    if (t.cacheWrite) stats.push(`W${fmtTokens(t.cacheWrite)}`);
+    if (f.cost || f.sub)
+        stats.push(`$${(f.cost || 0).toFixed(3)}${f.sub ? " (sub)" : ""}`);
+    const left = document.createElement("span");
+    left.textContent = stats.join(" ");
+
+    const pct = f.context?.percent;
+    const win = f.context?.window || 0;
+    const auto = f.autoCompact ? " (auto)" : "";
+    const ctx = document.createElement("span");
+    ctx.textContent =
+        (pct == null ? "?" : `${pct.toFixed(1)}%`) + `/${fmtTokens(win)}${auto}`;
+    if (pct != null && pct > 90) ctx.className = "ctx-err";
+    else if (pct != null && pct > 70) ctx.className = "ctx-warn";
+
+    const right = document.createElement("span");
+    right.className = "spacer";
+    let r = f.model || "no-model";
+    if (f.reasoning) r += f.level === "off" ? " • thinking off" : ` • ${f.level}`;
+    right.textContent = r;
+
+    l2.append(left, ctx, right);
+    $contextbar.append(l1, l2);
+    $contextbar.classList.add("show");
 }
 
 function renderStatus(segments) {
@@ -1481,6 +1544,10 @@ function onSseMessage(e) {
             break;
         case "notify":
             toast(m.message, m.level);
+            break;
+        case "footer":
+            // default below-composer context bar (pwd/session + tokens + model)
+            renderFooter(m);
             break;
         case "title":
             // extension-driven page (tab) title; "" restores the default
