@@ -10,7 +10,7 @@ Status legend: ✅ done · 🚧 partial · ⬜ not started
 - 🚧 `/reload` (best-effort; may not re-instantiate session extensions)
 - ✅ `/health` endpoint + `bun test` smoke test (Phase 0)
 - ⬜ `ExtensionUIContext` bridge (`ctx.ui.*` → web) — see `docs/ui-bridge.md`
-- ⬜ **Thread (session) switching** — the immediate next phase, detailed below
+- 🚧 **Thread (session) switching** — backend + UI built (Phase 1); needs live verification with a model
 
 Key limitation to fix early: the host uses `SessionManager.inMemory(cwd)`, so the
 conversation is **ephemeral and single-threaded**. Everything thread-related depends on
