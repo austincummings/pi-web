@@ -187,6 +187,18 @@ export function createPiWebHost({ broadcast, getPi }) {
         },
 
         /**
+         * Set the browser page (tab) title (mirrors pi-tui ui.setTitle, which
+         * sets the terminal title). Pass undefined/"" to restore the default.
+         * @param {string} [text]
+         */
+        setTitle(text) {
+            broadcast({
+                kind: "title",
+                text: text == null ? "" : String(text),
+            });
+        },
+
+        /**
          * Keyed bottom-bar status segment (mirrors pi-tui ui.setStatus, with an
          * optional align/tone superset). Pass undefined/"" to clear.
          * @param {string} key

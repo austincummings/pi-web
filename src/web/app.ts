@@ -770,7 +770,42 @@ function threadName(t) {
     return (t?.name || "(new thread)").replace(/\s+/g, " ").slice(0, 60);
 }
 
+// the app-title prefix for the browser tab, mirroring the pi TUI's `π` prefix
+const PAGE_TITLE_PREFIX = "π web";
+// extension-supplied override (piweb.setTitle); "" means "use the default"
+let extPageTitle = "";
+
+/**
+ * Set the browser page (tab) title from an extension's setTitle().
+ * An override takes precedence over the thread-derived default; ""/undefined
+ * clears it so the title falls back to the `π web - <session> - <cwd>` default.
+ * @param {string} [text]
+ */
+function setPageTitle(text) {
+    extPageTitle = text ? String(text) : "";
+    applyPageTitle();
+}
+
+/**
+ * Compute the browser-tab title. Mirrors the pi TUI's terminal title
+ * (`π - <session> - <cwd>`): here `π web - <thread name> - <cwd>`, dropping the
+ * session segment when the thread is unnamed and the cwd segment when unknown.
+ */
+function applyPageTitle() {
+    if (extPageTitle) {
+        document.title = extPageTitle;
+        return;
+    }
+    const active = threadItems.find((t) => t.id === activeThreadId);
+    const cwdBase = cwd ? cwd.replace(/\/+$/, "").split("/").pop() : "";
+    const parts = [PAGE_TITLE_PREFIX];
+    if (active?.name) parts.push(threadName(active));
+    if (cwdBase) parts.push(cwdBase);
+    document.title = parts.join(" - ");
+}
+
 function updateTitle() {
+    applyPageTitle();
     if (!$threadTitle) return;
     const active = threadItems.find((t) => t.id === activeThreadId);
     if (active) {
@@ -1296,7 +1331,10 @@ function onSseMessage(e) {
     switch (m.kind) {
         case "config":
             // working directory, so tool cards can show cwd-relative paths
-            if (typeof m.cwd === "string") cwd = m.cwd;
+            if (typeof m.cwd === "string") {
+                cwd = m.cwd;
+                applyPageTitle(); // surface the cwd segment in the tab title
+            }
             break;
         case "welcome":
             // startup / reload intro: version banner + loaded resources
@@ -1317,6 +1355,10 @@ function onSseMessage(e) {
             break;
         case "notify":
             toast(m.message, m.level);
+            break;
+        case "title":
+            // extension-driven page (tab) title; "" restores the default
+            setPageTitle(m.text);
             break;
         case "threads":
             threadItems = m.items || [];

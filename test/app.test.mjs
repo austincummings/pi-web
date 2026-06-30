@@ -513,6 +513,21 @@ test("piweb host: docks group by side, overlays toggle, notify broadcasts", asyn
     ).toBe(true);
 });
 
+test("piweb host: setTitle broadcasts a title frame; clearing restores default", () => {
+    const frames = [];
+    const host = createPiWebHost({
+        broadcast: (f) => frames.push(f),
+        getPi: () => ({}),
+    });
+
+    host.setTitle("My Project");
+    expect(frames.at(-1)).toEqual({ kind: "title", text: "My Project" });
+
+    // undefined / empty restores the default (client maps "" -> base title)
+    host.setTitle();
+    expect(frames.at(-1)).toEqual({ kind: "title", text: "" });
+});
+
 test("/surface forwards overlay open/close to onSurface", async () => {
     const calls = [];
     const bus = createBus();

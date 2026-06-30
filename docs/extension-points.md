@@ -54,7 +54,7 @@ Legend: ✅ implemented · 🟡 partial / proposed · ❌ missing · ➖ N/A in 
 | 7   | Custom components / `custom({ overlay })` (experimental)       | overlay render-tree + id'd `actions` map                     |   🟡   | pi-web can't ship a live `Component`; substitutes serializable `Stack/Row/Text/Button/Frame…` + actions dispatched via `host.dispatch`.                            |
 | 8   | `setFooter(factory)`                                           | —                                                            |   ❌   | No web footer-replacement hook (status segments only).                                                                                                             |
 | 9   | `setWorkingMessage / setWorkingVisible / setWorkingIndicator`  | —                                                            |   ❌   | No web streaming-indicator override.                                                                                                                               |
-| 10  | `setTitle(text)`                                               | —                                                            |   ❌   | Web page title hook is planned (TODO #8).                                                                                                                          |
+| 10  | `setTitle(text)`                                               | `piweb.setTitle(text)`                                       |   ✅   | Host emits a `title` SSE frame; client sets `document.title`. Default (no override) tracks the session as `π web - <thread name> - <cwd>` (mirrors the TUI's `π - <session> - <cwd>`, dropping segments that are absent); empty restores it. `ctx.ui` wiring tracked in #22. |
 | 11  | `setEditorText / getEditorText / pasteToEditor`                | —                                                            |   ❌   | No composer-text bridge yet.                                                                                                                                       |
 | 12  | `addAutocompleteProvider(fn)`                                  | — (web has built-in `@`/`/` completion only)                 |   ❌   | No extension-supplied autocomplete bridge.                                                                                                                         |
 | 13  | `getToolsExpanded / setToolsExpanded`                          | per-card expand (alt+o / click)                              |   🟡   | Web has the UI affordance but no programmatic extension control.                                                                                                   |
@@ -89,7 +89,7 @@ in-iframe `window.piweb.{action,notify}` (app.ts).
 
 ## 4. Gap summary
 
-- **Strong parity:** `notify`, `setStatus`, custom tool rendering, host-presence guard.
+- **Strong parity:** `notify`, `setStatus`, `setTitle`, custom tool rendering, host-presence guard.
 - **Proposed / in flight:** `setWidget` rename (TODO #20), `registerMessageRenderer` (TODO #19), blocking dialog request/response bridge, `ctx.mode === "web"`.
-- **Missing:** `setFooter`, working-message/indicator overrides, `setTitle` (TODO #8), editor-text bridge, `addAutocompleteProvider`, theme API.
+- **Missing:** `setFooter`, working-message/indicator overrides, editor-text bridge, `addAutocompleteProvider`, theme API.
 - **N/A in a browser:** `setEditorComponent` (TUI Component swap).

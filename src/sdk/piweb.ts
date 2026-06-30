@@ -19,6 +19,7 @@ const stub = {
     openOverlay: noop,
     closeOverlay: noop,
     notify: noop,
+    setTitle: noop,
     setStatus: noop,
     clear: noop,
     present: false,
