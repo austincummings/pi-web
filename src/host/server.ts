@@ -281,6 +281,31 @@ function thinkingHidden(s) {
     }
 }
 /**
+ * Build the `thinking_level` frame for a session: current reasoning level, the
+ * levels the active model supports, and whether thinking is supported at all
+ * (a model with a single level — e.g. only "off" — can't be cycled). Drives the
+ * focused composer border color in the cockpit (mirrors the pi TUI editor
+ * border via theme.getThinkingBorderColor).
+ * @param {AgentSession|null|undefined} s
+ * @returns {{kind:"thinking_level", level:string, available:string[], supported:boolean}}
+ */
+function thinkingLevelFrame(s) {
+    let level = "off";
+    let available = [];
+    try {
+        level = s?.thinkingLevel || "off";
+        available = s?.getAvailableThinkingLevels?.() ?? [];
+    } catch {
+        /* best-effort: fall back to off / no levels */
+    }
+    return {
+        kind: "thinking_level",
+        level,
+        available,
+        supported: available.length > 1,
+    };
+}
+/**
  * @param {unknown} raw
  * @returns {string}
  */
@@ -678,6 +703,8 @@ async function handleConnect(send, threadId) {
     send({ kind: "surfaces", surfaces: t.piweb.snapshot() });
     // reflect the persisted pi "hide thinking blocks" setting
     send({ kind: "thinking_visibility", hidden: thinkingHidden(t.session) });
+    // reflect the per-session reasoning level (focused composer border color)
+    send(thinkingLevelFrame(t.session));
     replayTranscript(t.session, send);
     send({ kind: "thread_switched", id: t.id });
     // reflect the thread's current activity (e.g. focusing a busy background
@@ -908,6 +935,11 @@ function loadPiTheme() {
         const vars = theme.vars ?? {};
         const colors = theme.colors ?? {};
         const pick = (t) => vars[colors[t] ?? t] ?? vars[t] ?? null;
+        // Like pick, but tolerates direct hex literals in `colors` (the thinking
+        // tokens are a mix of named refs e.g. "darkGray" and raw hex "#81a2be").
+        const resolve = (x) =>
+            typeof x === "string" && x.startsWith("#") ? x : (vars[x] ?? null);
+        const pickC = (t) => resolve(colors[t] ?? t);
         const map = {
             "--bg": pick("bg"),
             "--panel": vars.surface ?? null,
@@ -920,6 +952,14 @@ function loadPiTheme() {
             "--ok": pick("success"),
             "--warn": pick("warning"),
             "--err": pick("error"),
+            // thinking-level composer border colors (mirror the pi TUI theme)
+            "--think-off": pickC("thinkingOff"),
+            "--think-minimal": pickC("thinkingMinimal"),
+            "--think-low": pickC("thinkingLow"),
+            "--think-medium": pickC("thinkingMedium"),
+            "--think-high": pickC("thinkingHigh"),
+            "--think-xhigh": pickC("thinkingXhigh"),
+            "--bash-mode": pickC("bashMode"),
         };
         const out = {};
         for (const [k, v] of Object.entries(map)) if (v) out[k] = v;
@@ -994,6 +1034,48 @@ const server = createApp({
         broadcast({ kind: "thinking_visibility", hidden: !!hidden });
     },
     /**
+     * Cycle or set the per-session reasoning level (Shift+Tab in the cockpit).
+     * Unlike "hide thinking blocks", the level is per-session, so the new value
+     * is broadcast only to the thread's viewers.
+     * @param {"cycle"|"set"} op
+     * @param {string} [level]
+     * @param {string} [threadId]
+     */
+    onThinkingLevel: (op, level, threadId) => {
+        const s = sessionFor(threadId) ?? defaultThread?.session;
+        if (!s) return;
+        let newLevel;
+        try {
+            if (op === "set") {
+                if (level) s.setThinkingLevel?.(level);
+                newLevel = s.thinkingLevel;
+            } else {
+                newLevel = s.cycleThinkingLevel?.();
+                if (newLevel === undefined) {
+                    bus.broadcastToThread(threadId, {
+                        kind: "notify",
+                        level: "info",
+                        message: "Current model does not support thinking",
+                    });
+                    return;
+                }
+            }
+        } catch (err) {
+            bus.broadcastToThread(threadId, {
+                kind: "error",
+                text: "thinking level failed: " + String(err?.message ?? err),
+            });
+            return;
+        }
+        bus.broadcastToThread(threadId, thinkingLevelFrame(s));
+        // mirror the pi TUI's showStatus(`Thinking level: <x>`) on cycle/set
+        bus.broadcastToThread(threadId, {
+            kind: "notify",
+            level: "info",
+            message: `Thinking level: ${newLevel}`,
+        });
+    },
+    /**
      * Interrupt the agent mid-turn (Esc in the cockpit). Aborts the current
      * operation and waits for the thread to go idle.
      * @param {string} [threadId]
@@ -1044,6 +1126,9 @@ const server = createApp({
                 kind: "system",
                 text: "reloaded extensions",
             });
+            // re-assert the composer's thinking-level border after reload
+            // (mirrors the pi TUI re-running updateEditorBorderColor)
+            bus.broadcastToThread(threadId, thinkingLevelFrame(t.session));
         } catch (err) {
             bus.broadcastToThread(threadId, {
                 kind: "error",

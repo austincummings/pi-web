@@ -282,6 +282,45 @@ test("/bash delegates to onBash with the exclude flag", async () => {
     }
 });
 
+test("/thinking-level delegates to onThinkingLevel (cycle / set)", async () => {
+    const calls = [];
+    const bus = createBus();
+    const piweb = createPiWebHost({
+        broadcast: () => {},
+        getPi: () => ({}),
+    });
+    const server = createApp({
+        web: "src/web",
+        bus,
+        piweb,
+        onThinkingLevel: (op, level, threadId) =>
+            calls.push({ op, level, threadId }),
+    });
+    const base = await new Promise((r) =>
+        server.listen(0, "127.0.0.1", () =>
+            r(`http://127.0.0.1:${server.address().port}`),
+        ),
+    );
+    try {
+        await fetch(`${base}/thinking-level`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ op: "cycle", threadId: "t1" }),
+        });
+        await fetch(`${base}/thinking-level`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ op: "set", level: "high", threadId: "t1" }),
+        });
+        expect(calls).toEqual([
+            { op: "cycle", level: undefined, threadId: "t1" },
+            { op: "set", level: "high", threadId: "t1" },
+        ]);
+    } finally {
+        server.close();
+    }
+});
+
 test("thread routes: list / create / switch are wired to callbacks", async () => {
     const calls = [];
     const bus = createBus();

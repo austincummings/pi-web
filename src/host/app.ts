@@ -46,6 +46,11 @@ export interface AppOptions {
         id: string,
     ) => void;
     onThinkingVisibility?: (hidden: boolean, threadId?: string) => void;
+    onThinkingLevel?: (
+        op: "cycle" | "set",
+        level: string | undefined,
+        threadId?: string,
+    ) => void;
     onConnect?: (
         send: (msg: Frame) => void,
         ctx: { threadId?: string },
@@ -148,6 +153,7 @@ export function createApp({
     onInterrupt,
     onSurface,
     onThinkingVisibility,
+    onThinkingLevel,
     listFiles,
     bundleWeb,
 }: AppOptions): Server {
@@ -322,6 +328,15 @@ export function createApp({
     router.post("/thinking", ({ res, body }) => {
         // toggle the global "hide thinking blocks" pi setting; broadcast on SSE
         onThinkingVisibility?.(!!body.hidden, body.threadId || undefined);
+        res.writeHead(202).end();
+    });
+    router.post("/thinking-level", ({ res, body }) => {
+        // cycle/set the per-session reasoning level; broadcast to the thread
+        onThinkingLevel?.(
+            body.op === "set" ? "set" : "cycle",
+            body.level,
+            body.threadId || undefined,
+        );
         res.writeHead(202).end();
     });
 

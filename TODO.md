@@ -12,7 +12,7 @@ Simple, line-based backlog. Check items off as they land.
 - [ ] 6. Stop the transcript area from scrolling horizontally; tool-call output currently overruns the right edge.
 - [ ] 7. Clean up the code: add tests, tidy interfaces and walk through them, remove unused styles/styling.
 - [ ] 8. Set the web page title dynamically as an extension point, mirroring how the pi TUI sets the terminal title.
-- [ ] 9. Highlight the focused composer border based on the current thinking mode.
+- [x] 9. Highlight the focused composer border based on the current thinking mode. (Host emits a per-session `thinking_level` SSE frame on connect + on cycle/set; web tints the focused composer border per level via `.composer[data-think]` CSS (mirrors pi-tui `theme.getThinkingBorderColor`), with a green `data-bash` override for `!` shell input. Shift+Tab cycles the level via `POST /thinking-level`, with a "Thinking level: <x>" toast. The `context-bar` footer mirrors the TUI's `<model> • <level>` / `• thinking off` indicator (gated on model reasoning support); `--think-*`/`--bash-mode` are theme-aware via the `theme` frame; `/reload` re-asserts the border.)
 - [ ] 10. Explore what the pi TUI exposes to extensions for the transcript view (custom message/tool-output rendering) and expose similar in pi-web: custom HTML/canvas in place of a message, ideally interactive.
 - [ ] 11. Fix extensions not loading on first app load (only load after /reload).
 - [x] 12. Show a webified version of the TUI startup banner at the top of threads. Done as part of #5: the `#welcome` banner shows `pi v<version>` + a compact key-hint strip (`esc interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · alt+o more`, alt+o since ctrl+o is browser-reserved) and click-to-expand loaded resources.
@@ -94,6 +94,30 @@ Simple, line-based backlog. Check items off as they land.
           (sent by the host today but have no default if a theme omits them)
     - [ ] widen `frameThemeVars()` so sandboxed extension iframes get the full set
           (currently only 7 vars; no `--err`/`--ok`/`--warn`/`--muted`)
+
+- [ ] 24. Reach steering-message-queue parity with the pi TUI (parity cluster
+      alongside #21/#22/#23). While a turn is in flight (`thread.busy`), pi lets
+      you keep typing: each submitted message is appended to a per-thread
+      **steering queue** instead of being dropped or starting a second concurrent
+      turn. Today `runInput` in `src/web/app.ts`
+      always `POST`s `/prompt`, and the host's `onPrompt` (`src/host/server.ts`)
+      calls `s.prompt(text)` immediately regardless of `busy`, so a message sent
+      mid-turn races the in-flight one. Port the TUI's queue semantics. What the
+      pi TUI lets you do with the queue (the parity checklist):
+    - [ ] **Steer mid-turn** — inject the queued text into the running agent at
+          the next message boundary so it adjusts course without an interrupt.
+    - [ ] **Auto-flush on completion** — when no steering hook applies, deliver
+          the queued message(s) as the next turn the moment the current one ends.
+    - [ ] **Queue many** — stack multiple messages; they're delivered in order.
+    - [ ] **Show the pending queue** — render the queued messages in the UI
+          (above the composer) so you can see what's waiting.
+    - [ ] **Edit / remove before send** — pop a queued item back into the
+          composer to edit it, or delete it before it's delivered.
+    - [ ] **Esc interaction** — distinguish "interrupt the turn" from "clear the
+          queue"; mirror the TUI's precedence.
+          Needs: a per-thread queue on the host (drain on turn end / at steer points),
+          a `queue` SSE frame so viewers see pending items, and `/prompt` accepting an
+          `enqueue` flag (or the host enqueuing automatically when `busy`).
 
 ## Docs
 

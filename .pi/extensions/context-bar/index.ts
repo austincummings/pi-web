@@ -98,7 +98,15 @@ export default function (pi: any) {
             const dir = dirDisplay(ctx.cwd ?? "", home);
             const branch = gitBranch(ctx.cwd ?? "");
             const model = ctx.model?.id || "no-model";
-            const thinking = pi.getThinkingLevel?.();
+            // Match the pi TUI footer exactly: append the thinking level to the
+            // model name only when the model supports reasoning, rendering
+            // "<model> • thinking off" when off, else "<model> • <level>".
+            const thinking = pi.getThinkingLevel?.() || "off";
+            const modelText = ctx.model?.reasoning
+                ? thinking === "off"
+                    ? `${model} • thinking off`
+                    : `${model} • ${thinking}`
+                : model;
             const bar = buildBar(pct);
             const tone = contextTone(tokens, contextWindow);
             const pctStr = pct > 0 ? `${Math.round(pct)}%` : "0%";
@@ -109,12 +117,7 @@ export default function (pi: any) {
             piweb.setStatus("cb/1-branch", branch ? `(${branch})` : undefined, {
                 tone: "muted",
             });
-            piweb.setStatus("cb/2-model", model, { tone: "text" });
-            piweb.setStatus(
-                "cb/3-think",
-                thinking ? `(${thinking})` : undefined,
-                { tone: "muted" },
-            );
+            piweb.setStatus("cb/2-model", modelText, { tone: "text" });
             piweb.setStatus("cb/4-ctx", `ctx: ${bar} ${pctStr}`, { tone });
             piweb.setStatus(
                 "cb/5-win",
