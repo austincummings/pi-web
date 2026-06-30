@@ -48,6 +48,9 @@ function setWorking(on) {
 
 let assistantEl = null; // current streaming assistant bubble
 let bashEl = null; // current streaming bash output block
+let thinkingEl = null; // current streaming thinking block
+let thinkingRaw = ""; // accumulated thinking text (rendered as markdown)
+let thinkingHidden = false; // mirrors pi's "hide thinking blocks" setting
 let assistantRaw = ""; // accumulated assistant text (rendered as markdown)
 let threadItems = []; // last known thread list (from SSE)
 // The selected thread is driven by the URL (`/?thread=<id>`), so it survives
@@ -138,6 +141,47 @@ function bashBubble(command, excluded) {
 function renderAssistant(el, text) {
     el.querySelector(".body").innerHTML = renderMarkdown(text);
     $transcript.scrollTop = $transcript.scrollHeight;
+}
+
+// A collapsible thinking/reasoning trace. Clicking the header (or Ctrl+T)
+// toggles visibility, which is persisted to pi's `hideThinkingBlock` setting.
+function thinkingBubble() {
+    if ($transcript.querySelector(".empty")) $transcript.innerHTML = "";
+    const el = document.createElement("div");
+    el.className = "thinking-block";
+    el.innerHTML = '<div class="think-head">thinking</div><div class="think-body"></div>';
+    el.querySelector(".think-head").onclick = () => toggleThinking();
+    $transcript.appendChild(el);
+    $transcript.scrollTop = $transcript.scrollHeight;
+    return el;
+}
+
+function renderThinking(el, text) {
+    el.querySelector(".think-body").innerHTML = renderMarkdown(text);
+    $transcript.scrollTop = $transcript.scrollHeight;
+}
+
+// Throttle streaming thinking re-renders to one paint per animation frame.
+let thinkingRenderPending = false;
+function scheduleThinkingRender() {
+    if (thinkingRenderPending) return;
+    thinkingRenderPending = true;
+    requestAnimationFrame(() => {
+        thinkingRenderPending = false;
+        if (thinkingEl) renderThinking(thinkingEl, thinkingRaw);
+    });
+}
+
+// Apply the hidden state to the DOM (CSS collapses .think-body). When `persist`
+// is set, also write the new value back to pi's settings via the host.
+function setThinkingHidden(hidden, persist) {
+    thinkingHidden = !!hidden;
+    document.body.classList.toggle("hide-thinking", thinkingHidden);
+    if (persist) postThread("/thinking", { hidden: thinkingHidden });
+}
+
+function toggleThinking() {
+    setThinkingHidden(!thinkingHidden, true);
 }
 
 // Re-render the streaming assistant bubble as markdown, throttled to one paint
@@ -422,12 +466,21 @@ function renderStatus(segments) {
     $statusbar.innerHTML = "";
     const segs = segments || [];
     $statusbar.classList.toggle("show", segs.length > 0);
-    for (const s of segs) {
+    const left = segs.filter((s) => s.align !== "right");
+    const right = segs.filter((s) => s.align === "right");
+    const add = (s, pushRight) => {
         const el = document.createElement("span");
-        el.className = "seg";
+        el.className =
+            "seg" +
+            (s.tone ? " tone-" + s.tone : "") +
+            (pushRight ? " right" : "");
         el.textContent = s.text;
         $statusbar.appendChild(el);
-    }
+    };
+    left.forEach((s) => add(s, false));
+    // the first right-aligned segment carries margin-left:auto to push the
+    // group (e.g. model name) to the far right, like pi's footer
+    right.forEach((s, i) => add(s, i === 0));
 }
 
 function renderSurfaces(s) {
@@ -549,9 +602,63 @@ $overlayLayer?.addEventListener("click", (e) => {
     if (e.target === $overlayLayer) closeTopOverlay();
 });
 
-// ---- fuzzy command typeahead ----
+// ---- fuzzy command + @file typeahead ----
 let acItems = [];
 let acIndex = 0;
+// "command" = leading-slash command palette; "file" = `@`-mention completion.
+let acMode = "command";
+// For file mode: the [start, end) span of the `@token` being completed, so an
+// accepted suggestion is spliced in place (mid-line) instead of replacing all.
+let acAtStart = 0;
+let acAtEnd = 0;
+// Sequence guard so a slow /files fetch can't clobber a newer keystroke.
+let acReq = 0;
+// Cached project file list (fetched lazily on first `@`, refreshed on a TTL).
+let fileCache = null;
+let fileCacheAt = 0;
+const FILE_CACHE_TTL_MS = 8000;
+
+// Map the server's path list into typeahead items: `@path` is what gets
+// inserted; basename is the label, full path the muted description.
+async function ensureFiles() {
+    if (fileCache && Date.now() - fileCacheAt < FILE_CACHE_TTL_MS) {
+        return fileCache;
+    }
+    try {
+        const r = await fetch("/files");
+        const j = await r.json();
+        fileCache = (j.items || []).map((p) => ({
+            value: "@" + p,
+            label: p.slice(p.lastIndexOf("/") + 1),
+            description: p,
+            path: p,
+        }));
+        fileCacheAt = Date.now();
+    } catch {
+        fileCache = fileCache || [];
+    }
+    return fileCache;
+}
+
+// Find a `@token` ending at the caret: an `@` at start-of-text or after
+// whitespace, followed by non-whitespace (the query). Returns null otherwise.
+function atTokenBeforeCaret(text, caret) {
+    const before = text.slice(0, caret);
+    const m = before.match(/(^|\s)@([^\s@]*)$/);
+    if (!m) return null;
+    const query = m[2];
+    return { start: caret - query.length - 1, end: caret, query };
+}
+
+async function showFileAc(query) {
+    const myReq = ++acReq;
+    const files = await ensureFiles();
+    if (myReq !== acReq) return; // a newer keystroke superseded this one
+    const ranked = query ? fuzzyFilter(files, query, (f) => f.path) : files;
+    acItems = ranked.slice(0, 20);
+    acIndex = 0;
+    renderAc();
+}
 
 function renderAc() {
     if (!acItems.length) {
@@ -587,19 +694,50 @@ function closeAc() {
 
 function updateAc() {
     const v = $prompt.value;
-    // only suggest while typing the command token itself (no args yet)
-    if (!v.startsWith("/") || /\s/.test(v)) {
-        closeAc();
+    const caret = $prompt.selectionStart ?? v.length;
+
+    // command palette: a leading-slash token with no args yet (start of input)
+    if (v.startsWith("/") && !/\s/.test(v)) {
+        acMode = "command";
+        acItems = fuzzyFilter(COMMANDS, v, (c) => c.label);
+        acIndex = 0;
+        renderAc();
         return;
     }
-    acItems = fuzzyFilter(COMMANDS, v, (c) => c.label);
-    acIndex = 0;
-    renderAc();
+
+    // `@file` mention: complete the token under the caret (mid-line is fine)
+    const tok = atTokenBeforeCaret(v, caret);
+    if (tok) {
+        acMode = "file";
+        acAtStart = tok.start;
+        acAtEnd = tok.end;
+        showFileAc(tok.query); // async; guarded by acReq
+        return;
+    }
+
+    closeAc();
 }
 
 function acceptAc(run) {
     const it = acItems[acIndex];
     if (!it) return;
+
+    // File mentions splice into the `@token` span and keep editing — never
+    // submit — so you can attach several files in one message.
+    if (acMode === "file") {
+        const v = $prompt.value;
+        const before = v.slice(0, acAtStart);
+        const after = v.slice(acAtEnd);
+        const insert = it.value + " ";
+        $prompt.value = before + insert + after;
+        const pos = before.length + insert.length;
+        closeAc();
+        $prompt.focus();
+        $prompt.setSelectionRange(pos, pos);
+        autoGrow();
+        return;
+    }
+
     closeAc();
     if (run) {
         $prompt.value = "";
@@ -608,6 +746,7 @@ function acceptAc(run) {
         $prompt.value = it.value;
         $prompt.focus();
     }
+    autoGrow();
 }
 
 function notice(text) {
@@ -757,6 +896,7 @@ function showHotkeys() {
         ["↑ / ↓", "move through command suggestions"],
         ["Tab", "complete selected command"],
         ["Esc", "dismiss menu / overlay · interrupt the working agent"],
+        ["Alt+T", "show / hide thinking blocks"],
         ["/resume", "switch threads"],
         ["/new", "new thread"],
     ];
@@ -769,32 +909,62 @@ function showHotkeys() {
     showOverlay("Keyboard shortcuts", wrap);
 }
 
-$prompt.addEventListener("input", updateAc);
+// Auto-grow the textarea to fit its content, up to a sensible cap (after which
+// it scrolls internally).
+function autoGrow() {
+    if (!$prompt) return;
+    $prompt.style.height = "auto";
+    $prompt.style.height = Math.min($prompt.scrollHeight, 200) + "px";
+}
+
+$prompt.addEventListener("input", () => {
+    autoGrow();
+    updateAc();
+});
 $prompt.addEventListener("keydown", (e) => {
-    if (!$ac.classList.contains("show")) return;
-    switch (e.key) {
-        case "ArrowDown":
-            e.preventDefault();
-            acIndex = (acIndex + 1) % acItems.length;
-            renderAc();
-            break;
-        case "ArrowUp":
-            e.preventDefault();
-            acIndex = (acIndex - 1 + acItems.length) % acItems.length;
-            renderAc();
-            break;
-        case "Tab":
-            e.preventDefault();
-            acceptAc(false);
-            break;
-        case "Enter":
-            e.preventDefault();
-            acceptAc(true);
-            break;
-        case "Escape":
-            e.preventDefault();
-            closeAc();
-            break;
+    if ($ac.classList.contains("show")) {
+        switch (e.key) {
+            case "ArrowDown":
+                e.preventDefault();
+                acIndex = (acIndex + 1) % acItems.length;
+                renderAc();
+                break;
+            case "ArrowUp":
+                e.preventDefault();
+                acIndex = (acIndex - 1 + acItems.length) % acItems.length;
+                renderAc();
+                break;
+            case "Tab":
+                e.preventDefault();
+                acceptAc(false);
+                break;
+            case "Enter":
+                // In file mode, Enter accepts the suggestion (and keeps
+                // editing); in command mode it accepts + runs.
+                e.preventDefault();
+                acceptAc(acMode !== "file");
+                break;
+            case "Escape":
+                e.preventDefault();
+                closeAc();
+                break;
+        }
+        return;
+    }
+    // No typeahead open: Enter sends, Shift+Enter inserts a newline.
+    if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        if ($ask.requestSubmit) $ask.requestSubmit();
+        else $ask.dispatchEvent(new Event("submit", { cancelable: true }));
+    }
+});
+
+// Alt+T toggles thinking-block visibility (persisted to pi's settings). Alt+T
+// is not browser-reserved (unlike Ctrl+T), so preventDefault reliably works.
+document.addEventListener("keydown", (e) => {
+    if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === "t" || e.key === "T")) {
+        e.preventDefault();
+        toggleThinking();
     }
 });
 
@@ -821,6 +991,7 @@ $ask.addEventListener("submit", (e) => {
     e.preventDefault();
     const text = $prompt.value;
     $prompt.value = "";
+    autoGrow();
     closeAc();
     runInput(text);
 });
@@ -855,6 +1026,12 @@ function reopenStream() {
 function onSseMessage(e) {
     const m = JSON.parse(e.data);
     switch (m.kind) {
+        case "theme":
+            // apply the active pi theme palette to the cockpit CSS variables
+            if (m.vars)
+                for (const [k, v] of Object.entries(m.vars))
+                    document.documentElement.style.setProperty(k, v);
+            break;
         case "surfaces":
             renderSurfaces(m.surfaces);
             break;
@@ -885,11 +1062,16 @@ function onSseMessage(e) {
         case "transcript_reset":
             $transcript.innerHTML = '<div class="empty">new thread</div>';
             assistantEl = null;
+            thinkingEl = null;
             setWorking(false);
+            break;
+        case "thinking_visibility":
+            setThinkingHidden(!!m.hidden, false);
             break;
         case "user":
             bubble("user", m.text);
             assistantEl = null;
+            thinkingEl = null;
             break;
         case "delta":
             if (!assistantEl) {
@@ -899,6 +1081,28 @@ function onSseMessage(e) {
             assistantRaw += m.text;
             // render markdown incrementally as tokens stream in
             scheduleAssistantRender();
+            break;
+        case "thinking":
+            if (m.status === "full") {
+                // non-streamed (replay / cached): render in one shot
+                const el = thinkingBubble();
+                renderThinking(el, m.text || "");
+                thinkingEl = null;
+            } else if (m.status === "start") {
+                thinkingEl = thinkingBubble();
+                thinkingRaw = "";
+            } else if (m.status === "delta") {
+                if (!thinkingEl) {
+                    thinkingEl = thinkingBubble();
+                    thinkingRaw = "";
+                }
+                thinkingRaw += m.text;
+                scheduleThinkingRender();
+            } else if (m.status === "end") {
+                if (thinkingEl) renderThinking(thinkingEl, thinkingRaw);
+                thinkingEl = null;
+                thinkingRaw = "";
+            }
             break;
         case "assistant_full":
             if (!assistantEl) assistantEl = bubble("assistant", "");
@@ -954,4 +1158,23 @@ window.addEventListener("popstate", () => {
     updateTitle();
 });
 
-reopenStream();
+// On first load: if the URL names a thread, open it; otherwise start a *fresh*
+// thread (don't resume the most recent session) and canonicalize the URL.
+if (activeThreadId) {
+    reopenStream();
+} else {
+    post("/threads", {})
+        .then((r) => r.json())
+        .then((d) => {
+            if (d?.id) {
+                activeThreadId = d.id;
+                history.replaceState(
+                    { thread: d.id },
+                    "",
+                    "?thread=" + encodeURIComponent(d.id),
+                );
+            }
+        })
+        .catch(() => {})
+        .finally(() => reopenStream());
+}

@@ -161,6 +161,38 @@ test("thread routes delegate to injected callbacks", async () => {
     }
 });
 
+test("/files returns the project file list for the @ mention typeahead", async () => {
+    const bus = createBus();
+    const piweb = createPiWebHost({
+        broadcast: () => {},
+        getPi: () => ({}),
+    });
+    let called = 0;
+    const server = createApp({
+        web: "src/web",
+        bus,
+        piweb,
+        listFiles: async () => {
+            called++;
+            return ["src/web/app.js", "README.md"];
+        },
+    });
+    const base = await new Promise((r) =>
+        server.listen(0, "127.0.0.1", () =>
+            r(`http://127.0.0.1:${server.address().port}`),
+        ),
+    );
+    try {
+        const res = await fetch(`${base}/files`);
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(body.items).toEqual(["src/web/app.js", "README.md"]);
+        expect(called).toBe(1);
+    } finally {
+        server.close();
+    }
+});
+
 test("session command routes delegate to sessionApi", async () => {
     const calls = [];
     const bus = createBus();

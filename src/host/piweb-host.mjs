@@ -42,7 +42,7 @@
  * @typedef {object} SurfacesSnapshot
  * @property {{left:SurfaceCard[], right:SurfaceCard[], bottom:SurfaceCard[], footer:SurfaceCard[]}} docks
  * @property {SurfaceCard[]} overlays
- * @property {{key:string, text:string}[]} status
+ * @property {{key:string, text:string, align?:"right", tone?:"warning"|"error"}[]} status
  */
 
 /**
@@ -53,7 +53,7 @@
 export function createPiWebHost({ broadcast, getPi }) {
     /** @type {Map<string, Surface>} */
     const surfaces = new Map();
-    /** @type {Map<string, string>} keyed status segments */
+    /** @type {Map<string, {text:string, align?:string, tone?:string}>} keyed status segments */
     const statuses = new Map();
     let orderSeq = 0;
 
@@ -89,10 +89,14 @@ export function createPiWebHost({ broadcast, getPi }) {
                 (docks[s.side] ?? docks.bottom).push(renderCard(s));
             }
         }
-        const status = [...statuses.entries()].map(([key, text]) => ({
-            key,
-            text,
-        }));
+        const status = [...statuses.entries()]
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([key, v]) => ({
+                key,
+                text: v.text,
+                align: v.align,
+                tone: v.tone,
+            }));
         return { docks, overlays, status };
     };
 
@@ -183,14 +187,20 @@ export function createPiWebHost({ broadcast, getPi }) {
         },
 
         /**
-         * Keyed bottom-bar status segment (mirrors pi-tui ui.setStatus).
-         * Pass undefined/"" to clear.
+         * Keyed bottom-bar status segment (mirrors pi-tui ui.setStatus, with an
+         * optional align/tone superset). Pass undefined/"" to clear.
          * @param {string} key
          * @param {string} [text]
+         * @param {{align?:"right", tone?:"warning"|"error"}} [opts]
          */
-        setStatus(key, text) {
+        setStatus(key, text, opts) {
             if (text == null || text === "") statuses.delete(key);
-            else statuses.set(key, String(text));
+            else
+                statuses.set(key, {
+                    text: String(text),
+                    align: opts?.align,
+                    tone: opts?.tone,
+                });
             push();
         },
 

@@ -6,13 +6,19 @@
         <title>pi-web cockpit</title>
         <style>
             :root {
+                /* defaults; overridden at runtime by the active pi theme
+                   (settings.json -> themes/<name>.json) via a "theme" frame */
                 --bg: #0b0f14;
                 --panel: #121821;
                 --line: #1f2a37;
                 --txt: #d7e0ea;
+                --muted: #9fb0c0;
                 --dim: #7d8aa0;
                 --acc: #6aa0ff;
                 --acc2: #8b5cf6;
+                --ok: #4ec9a3;
+                --warn: #d9a441;
+                --err: #e0556a;
             }
             * {
                 box-sizing: border-box;
@@ -169,6 +175,30 @@
             .statusbar.show {
                 display: flex;
             }
+            .statusbar .seg.right {
+                margin-left: auto;
+            }
+            .statusbar .tone-accent {
+                color: var(--acc);
+            }
+            .statusbar .tone-text {
+                color: var(--txt);
+            }
+            .statusbar .tone-muted {
+                color: var(--muted);
+            }
+            .statusbar .tone-dim {
+                color: var(--dim);
+            }
+            .statusbar .tone-success {
+                color: var(--ok);
+            }
+            .statusbar .tone-warning {
+                color: var(--warn);
+            }
+            .statusbar .tone-error {
+                color: var(--err);
+            }
             /* extension overlays (modal surfaces) */
             #overlay-layer {
                 position: fixed;
@@ -229,10 +259,10 @@
                 border-left-color: var(--acc);
             }
             .toast.warning {
-                border-left-color: #d9a441;
+                border-left-color: var(--warn);
             }
             .toast.error {
-                border-left-color: #e0556a;
+                border-left-color: var(--err);
             }
             .msg {
                 margin: 0 0 12px;
@@ -304,6 +334,46 @@
                 padding-left: 8px;
                 margin: 6px 0;
                 font-size: 12px;
+            }
+            .thinking-block {
+                border-left: 2px solid var(--acc2);
+                padding-left: 10px;
+                margin: 8px 0;
+                color: var(--dim);
+                font-size: 12px;
+            }
+            .thinking-block .think-head {
+                color: var(--acc2);
+                font-size: 11px;
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+                opacity: 0.85;
+                cursor: pointer;
+                user-select: none;
+            }
+            .thinking-block .think-head::before {
+                content: "\25BE ";
+            }
+            .thinking-block .think-body {
+                margin-top: 4px;
+                font-style: italic;
+            }
+            .thinking-block .think-body p {
+                margin: 4px 0;
+            }
+            /* Ctrl+T (or clicking the header) collapses the trace, keeping
+               just the label visible. Mirrors pi's hidden-thinking behavior. */
+            body.hide-thinking .thinking-block .think-body {
+                display: none;
+            }
+            body.hide-thinking .thinking-block .think-head::before {
+                content: "\25B8 ";
+            }
+            body.hide-thinking .thinking-block .think-head::after {
+                content: " (hidden)";
+                opacity: 0.6;
+                text-transform: none;
+                letter-spacing: 0;
             }
             .bash {
                 margin: 8px 0;
@@ -387,9 +457,20 @@
                 gap: 8px;
                 padding: 12px 14px;
                 border-top: 1px solid var(--line);
+                align-items: flex-end;
             }
-            form#ask input {
+            form#ask #prompt {
                 flex: 1;
+                font: inherit;
+                background: #0c1117;
+                border: 1px solid var(--line);
+                color: var(--txt);
+                border-radius: 6px;
+                padding: 6px 8px;
+                resize: none;
+                overflow-y: auto;
+                max-height: 200px;
+                line-height: 1.4;
             }
             .empty {
                 color: var(--dim);
@@ -521,13 +602,14 @@
                     ><span class="label">Working…</span>
                 </div>
                 <form id="ask">
-                    <input
+                    <textarea
                         id="prompt"
-                        type="text"
-                        placeholder="message pi…  (/ commands · ! shell)"
+                        rows="1"
+                        placeholder="message pi…  (/ commands · ! shell · @ files)"
                         autocomplete="off"
                         autofocus
-                    /><button class="primary">send</button>
+                    ></textarea
+                    ><button class="primary">send</button>
                 </form>
             </div>
             <div id="dock-footer" class="dock footer empty-dock"></div>

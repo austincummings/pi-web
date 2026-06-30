@@ -90,6 +90,7 @@ function sendJson(res, code, obj) {
  */
 export function createApp({
     web,
+    theme,
     bus,
     piweb,
     onPrompt,
@@ -100,6 +101,8 @@ export function createApp({
     onConnect,
     onInterrupt,
     onSurface,
+    onThinkingVisibility,
+    listFiles,
 }) {
     const STATIC = {
         "/": ["index.html", "text/html; charset=utf-8"],
@@ -139,6 +142,8 @@ export function createApp({
             // the thread this client is viewing (URL-driven selection)
             const wanted = url.searchParams.get("thread") || undefined;
             res.__threadId = wanted;
+            // push the active pi theme first so CSS vars apply before render
+            if (theme) send({ kind: "theme", vars: theme });
             send({ kind: "surfaces", surfaces: piweb.snapshot() });
             if (threads) {
                 try {
@@ -185,6 +190,14 @@ export function createApp({
                 200,
                 (await sessionApi?.changelog?.()) ?? { text: "" },
             );
+            return;
+        }
+
+        // project file list for the `@` mention typeahead (read-only). The
+        // client caches this and fuzzy-filters locally as the user types.
+        if (req.method === "GET" && path === "/files") {
+            const items = listFiles ? await listFiles() : [];
+            sendJson(res, 200, { items });
             return;
         }
 
@@ -255,6 +268,13 @@ export function createApp({
             }
             if (path === "/interrupt") {
                 onInterrupt?.(threadId); // async; result streamed over SSE
+                res.writeHead(202).end();
+                return;
+            }
+            if (path === "/thinking") {
+                // toggle the global "hide thinking blocks" pi setting; the new
+                // value is broadcast to all clients over SSE
+                onThinkingVisibility?.(!!body.hidden, threadId);
                 res.writeHead(202).end();
                 return;
             }

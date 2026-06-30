@@ -25,9 +25,14 @@
  * request (`/prompt`, `/bash`, `/action`, `/session/*`, `/reload`) carries the
  * thread id it targets.
  */
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileP = promisify(execFile);
 
 import {
     createAgentSession,
@@ -65,11 +70,72 @@ import { createBus, createApp } from "./app.mjs";
 /** A serializable server->client cockpit frame. @typedef {{kind:string,[k:string]:any}} CockpitMessage */
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(__dirname, "..", "..");
 const WEB = join(__dirname, "..", "web");
 const PORT = Number(process.env.PORT ?? 4321);
 const HOST = process.env.HOST ?? "0.0.0.0";
 const cwd = process.cwd();
+
+// ---- project file list (for the `@` mention typeahead) --------------------
+// Prefer `git ls-files` (fast, respects .gitignore); fall back to a bounded
+// filesystem walk for non-git working dirs. Results are cached briefly so a
+// burst of keystrokes doesn't re-shell on every request, while newly created
+// files still surface within a few seconds.
+const FILE_CACHE_TTL_MS = 4000;
+const FILE_LIST_CAP = 10000;
+const WALK_SKIP = new Set([
+    ".git",
+    "node_modules",
+    ".cache",
+    "dist",
+    "build",
+    "coverage",
+    ".next",
+]);
+/** @type {{ at: number, items: string[] } | null} */
+let fileCache = null;
+
+async function walkFiles(dir, base, out) {
+    if (out.length >= FILE_LIST_CAP) return;
+    let entries;
+    try {
+        entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+        return;
+    }
+    for (const ent of entries) {
+        if (out.length >= FILE_LIST_CAP) return;
+        if (ent.name.startsWith(".") && ent.name !== ".") {
+            if (WALK_SKIP.has(ent.name)) continue;
+        }
+        if (WALK_SKIP.has(ent.name)) continue;
+        const abs = join(dir, ent.name);
+        if (ent.isDirectory()) {
+            await walkFiles(abs, base, out);
+        } else if (ent.isFile()) {
+            out.push(relative(base, abs).split(sep).join("/"));
+        }
+    }
+}
+
+async function listProjectFiles() {
+    if (fileCache && Date.now() - fileCache.at < FILE_CACHE_TTL_MS) {
+        return fileCache.items;
+    }
+    let items;
+    try {
+        const { stdout } = await execFileP(
+            "git",
+            ["ls-files", "--cached", "--others", "--exclude-standard"],
+            { cwd, maxBuffer: 64 * 1024 * 1024 },
+        );
+        items = stdout.split("\n").filter(Boolean).slice(0, FILE_LIST_CAP);
+    } catch {
+        items = [];
+        await walkFiles(cwd, cwd, items);
+    }
+    fileCache = { at: Date.now(), items };
+    return items;
+}
 
 // ---- browser bus (SSE) ----------------------------------------------------
 const bus = createBus();
@@ -84,6 +150,9 @@ let defaultThread = null;
 let bindingThread = null;
 /** Thread currently handling a panel action dispatch. @type {ThreadRuntime|null} */
 let dispatchingThread = null;
+/** Thread whose extension code is executing now (event handlers route surface
+ * updates here). @type {ThreadRuntime|null} */
+let currentThread = null;
 
 /** @param {string|undefined|null} id */
 const sessionFor = (id) =>
@@ -115,7 +184,8 @@ const nullRegistry = {
     async dispatch() {},
 };
 const activeRegistry = () =>
-    (bindingThread ?? dispatchingThread)?.piweb ?? nullRegistry;
+    (bindingThread ?? dispatchingThread ?? currentThread)?.piweb ??
+    nullRegistry;
 const piweb = {
     present: true,
     dock: (...a) => activeRegistry().dock(...a),
@@ -173,6 +243,31 @@ function textOf(content) {
         .join("");
 }
 /**
+ * Pull thinking/reasoning text out of a message's content (block[] only).
+ * Thinking lives as `{ type:"thinking", thinking, redacted? }` content blocks.
+ * @param {unknown} content
+ * @returns {string}
+ */
+function thinkingOf(content) {
+    if (!Array.isArray(content)) return "";
+    return content
+        .filter((b) => b?.type === "thinking" && !b.redacted)
+        .map((b) => b.thinking ?? "")
+        .join("");
+}
+/**
+ * Current persisted "hide thinking blocks" pi setting for a session.
+ * @param {AgentSession|null|undefined} s
+ * @returns {boolean}
+ */
+function thinkingHidden(s) {
+    try {
+        return !!s?.settingsManager?.getHideThinkingBlock?.();
+    } catch {
+        return false;
+    }
+}
+/**
  * @param {unknown} raw
  * @returns {string}
  */
@@ -201,26 +296,6 @@ async function pinModel(s) {
     }
 }
 
-// Maintain a host-managed "ctx" status segment (model + context usage) so the
-// bottom context bar behaves like pi's footer out of the box. Extensions can
-// add their own segments alongside it via piweb.setStatus().
-/** @param {ThreadRuntime} thread */
-function updateContextStatus(thread) {
-    const s = thread.session;
-    if (!thread.piweb || !s) return;
-    let text = "";
-    try {
-        const model = s.state?.model;
-        const u = s.getContextUsage?.();
-        const parts = [];
-        if (model) parts.push(`${model.provider}/${model.id}`);
-        if (u?.percent != null) parts.push(`ctx ${Math.round(u.percent)}%`);
-        else if (u?.tokens != null) parts.push(`ctx ${u.tokens} tok`);
-        text = parts.join("  ·  ");
-    } catch {}
-    thread.piweb.setStatus("ctx", text || undefined);
-}
-
 // ---- per-thread event translation -----------------------------------------
 // Translate one thread's agent events -> cockpit frames, routed to the clients
 // viewing this thread. Background threads (no current viewers) still run; their
@@ -231,15 +306,20 @@ function updateContextStatus(thread) {
  */
 function subscribe(thread) {
     let streamed = false;
+    let streamedThinking = false;
     /** @param {CockpitMessage} msg */
     const emit = (msg) => bus.broadcastToThread(thread.id, msg);
     return thread.session.subscribe((ev) => {
+        // route surface updates from this thread's extension event handlers
+        // (setStatus, dock, notify, …) to its own registry
+        currentThread = thread;
         switch (ev.type) {
             case "message_start":
                 if (ev.message?.role === "user") {
                     emit({ kind: "user", text: textOf(ev.message.content) });
                 } else if (ev.message?.role === "assistant") {
                     streamed = false;
+                    streamedThinking = false;
                     if (!thread.busy) {
                         thread.busy = true;
                         // drive the cockpit "Working" spinner (pi-tui style)
@@ -252,6 +332,13 @@ function subscribe(thread) {
                 if (e?.type === "text_delta") {
                     streamed = true;
                     emit({ kind: "delta", text: e.delta });
+                } else if (e?.type === "thinking_start") {
+                    emit({ kind: "thinking", status: "start" });
+                } else if (e?.type === "thinking_delta") {
+                    streamedThinking = true;
+                    emit({ kind: "thinking", status: "delta", text: e.delta });
+                } else if (e?.type === "thinking_end") {
+                    emit({ kind: "thinking", status: "end" });
                 }
                 break;
             }
@@ -263,9 +350,21 @@ function subscribe(thread) {
                         kind: "error",
                         text: describeError(m.errorMessage),
                     });
-                else if (!streamed) {
-                    const text = textOf(m.content);
-                    if (text) emit({ kind: "assistant_full", text });
+                else {
+                    // emit thinking before text (mirrors how it streams)
+                    if (!streamedThinking) {
+                        const think = thinkingOf(m.content);
+                        if (think)
+                            emit({
+                                kind: "thinking",
+                                status: "full",
+                                text: think,
+                            });
+                    }
+                    if (!streamed) {
+                        const text = textOf(m.content);
+                        if (text) emit({ kind: "assistant_full", text });
+                    }
                 }
                 emit({ kind: "assistant_end" });
                 break;
@@ -292,7 +391,6 @@ function subscribe(thread) {
                 thread.busy = false;
                 emit({ kind: "assistant_end" });
                 emit({ kind: "working", busy: false });
-                updateContextStatus(thread); // refresh the context bar
                 // names/recency/running may have changed — refresh the list
                 broadcastThreads();
                 break;
@@ -343,8 +441,12 @@ function createThread(sm) {
         const resourceLoader = new DefaultResourceLoader({
             cwd,
             agentDir: getAgentDir(),
+            // Project extensions live in .pi/extensions. They're loaded
+            // explicitly (rather than via project-trust discovery) so the
+            // headless web host doesn't need a trust prompt. The loader dedupes
+            // by path if the project is also trusted.
             additionalExtensionPaths: [
-                join(ROOT, "extensions", "hello-panel.ts"),
+                join(cwd, ".pi", "extensions", "context-bar", "index.ts"),
             ],
             // Inline factory captures this thread's live ExtensionAPI so panel
             // actions call back into *this* thread (pi.sendUserMessage, etc).
@@ -374,7 +476,6 @@ function createThread(sm) {
         await pinModel(thread.session);
         thread.unsubscribe = subscribe(thread);
         threadRuntimes.set(thread.id, thread);
-        updateContextStatus(thread);
         return thread;
     });
     createChain = run.then(
@@ -423,6 +524,9 @@ function replayTranscript(s, send) {
                 send({ kind: "user", text: textOf(m.content) });
                 break;
             case "assistant": {
+                const think = thinkingOf(m.content);
+                if (think)
+                    send({ kind: "thinking", status: "full", text: think });
                 const text = textOf(m.content);
                 if (text) send({ kind: "assistant_full", text });
                 send({ kind: "assistant_end" });
@@ -491,8 +595,9 @@ async function handleConnect(send, threadId) {
     }
     if (!t) t = defaultThread;
     if (!t?.session || !t.piweb) return undefined;
-    updateContextStatus(t);
     send({ kind: "surfaces", surfaces: t.piweb.snapshot() });
+    // reflect the persisted pi "hide thinking blocks" setting
+    send({ kind: "thinking_visibility", hidden: thinkingHidden(t.session) });
     replayTranscript(t.session, send);
     send({ kind: "thread_switched", id: t.id });
     // reflect the thread's current activity (e.g. focusing a busy background
@@ -702,13 +807,55 @@ async function runBash(command, excludeFromContext, threadId) {
 // default thread for clients that connect without a `?thread`.
 defaultThread = await createThread(SessionManager.continueRecent(cwd));
 
+// Mirror the active pi theme into the cockpit: read settings.json ->
+// themes/<name>.json under the agent dir and resolve to cockpit CSS variables.
+// Missing tokens fall back to the client's :root defaults.
+function loadPiTheme() {
+    try {
+        const dir = getAgentDir();
+        const settings = JSON.parse(
+            readFileSync(join(dir, "settings.json"), "utf8"),
+        );
+        const name = settings.theme;
+        if (!name) return {};
+        const theme = JSON.parse(
+            readFileSync(join(dir, "themes", `${name}.json`), "utf8"),
+        );
+        const vars = theme.vars ?? {};
+        const colors = theme.colors ?? {};
+        const pick = (t) => vars[colors[t] ?? t] ?? vars[t] ?? null;
+        const map = {
+            "--bg": pick("bg"),
+            "--panel": vars.surface ?? null,
+            "--line": pick("border"),
+            "--txt": pick("text"),
+            "--muted": pick("muted"),
+            "--dim": pick("dim"),
+            "--acc": pick("accent"),
+            "--acc2": vars.magenta ?? pick("accent"),
+            "--ok": pick("success"),
+            "--warn": pick("warning"),
+            "--err": pick("error"),
+        };
+        const out = {};
+        for (const [k, v] of Object.entries(map)) if (v) out[k] = v;
+        return out;
+    } catch {
+        return {};
+    }
+}
+const piTheme = loadPiTheme();
+
 // ---- http -----------------------------------------------------------------
 const server = createApp({
     web: WEB,
+    theme: piTheme,
     bus,
     piweb,
     threads,
     sessionApi,
+    // Project file list for the browser's `@` mention typeahead.
+    listFiles: () => listProjectFiles(),
     // On SSE (re)connect, resolve + replay the thread this client is viewing
     // (from `?thread`), returning the resolved id so the connection is tagged.
     onConnect: (send, ctx) => handleConnect(send, ctx?.threadId),
@@ -743,6 +890,22 @@ const server = createApp({
                 text: String(err?.message ?? err),
             }),
         );
+    },
+    /**
+     * Toggle the persisted pi "hide thinking blocks" setting (Ctrl+T in the
+     * cockpit). The setting is global, so the new value is broadcast to every
+     * connected client.
+     * @param {boolean} hidden
+     * @param {string} [threadId]
+     */
+    onThinkingVisibility: (hidden, threadId) => {
+        const s = sessionFor(threadId) ?? defaultThread?.session;
+        try {
+            s?.settingsManager?.setHideThinkingBlock?.(!!hidden);
+        } catch {
+            /* best-effort persistence */
+        }
+        broadcast({ kind: "thinking_visibility", hidden: !!hidden });
     },
     /**
      * Interrupt the agent mid-turn (Esc in the cockpit). Aborts the current

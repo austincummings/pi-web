@@ -27,13 +27,13 @@ browser cockpit  ──SSE/POST──►  host (Bun)
 
 ## Files
 
-| Path                        | Role                                                             |
-| --------------------------- | ---------------------------------------------------------------- |
-| `src/host/server.mjs`       | HTTP host: in-process agent + SSE/POST bus                       |
-| `src/host/piweb-host.mjs`   | `piweb` registry: panels, state, action dispatch                 |
-| `src/sdk/piweb.mjs`         | `@pi-web/sdk` shim extensions import (resolves to host or no-op) |
-| `src/web/`                  | Browser cockpit: transcript + component-tree renderer            |
-| `extensions/hello-panel.ts` | Example extension that self-registers a web panel                |
+| Path                      | Role                                                                |
+| ------------------------- | ------------------------------------------------------------------- |
+| `src/host/server.mjs`     | HTTP host: in-process agent + SSE/POST bus                          |
+| `src/host/piweb-host.mjs` | `piweb` registry: docks/overlays, state, action dispatch            |
+| `src/sdk/piweb.mjs`       | `@pi-web/sdk` shim extensions import (resolves to host or no-op)    |
+| `src/web/`                | Browser cockpit: transcript + component-tree renderer               |
+| `.pi/extensions/`         | Project extensions (e.g. `context-bar/` — the glass-cockpit footer) |
 
 ## Run
 
@@ -45,16 +45,16 @@ bun start            # → http://localhost:4321
 
 Open the cockpit:
 
-- **Left:** chat with pi (streaming transcript, tool calls).
-- **Right:** the `hello` panel, registered by `extensions/hello-panel.ts`.
-    - `+1/-1` and the name input round-trip local panel state through the host.
-    - **"Ask pi to summarize this repo"** calls `pi.sendUserMessage(...)` in-process —
-      a UI control driving the agent; the answer streams into the transcript.
+- **Chat** with pi in the center (streaming transcript, tool calls).
+- **Docks** (left/right rails, bottom tray) + the below-prompt **context bar**
+  are registered by extensions in `.pi/extensions/` — e.g. `context-bar`, which
+  mirrors the pi-tui glass-cockpit footer (dir, branch, model, context-window
+  usage bar, session cost).
 
 > The app defaults to the **`meridian` provider** (`meridian/claude-opus-4-8`),
 > pinned after startup via `session.setModel` once the pi-meridian extension has
 > registered the provider. Override with `PI_PROVIDER` / `PI_MODEL` env vars.
-> Panels and state work regardless of provider.
+> Surfaces work regardless of provider.
 
 ## The self-modifiable loop
 
