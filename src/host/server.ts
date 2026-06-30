@@ -301,7 +301,7 @@ const piweb = {
     snapshot: () => activeRegistry().snapshot(),
     /**
      * Resolve a thread's concrete surface registry by its session id (== thread
-     * id). Lets event-driven extensions (e.g. context-bar) write to *their own*
+     * id). Lets event-driven extensions write to *their own*
      * thread's surface without relying on the global `currentThread` pointer —
      * which is set by the server listener that runs *after* extension handlers,
      * so it is stale/cross-thread when an extension's `pi.on(...)` fires.
@@ -588,13 +588,6 @@ function createThread(sm) {
         const resourceLoader = new DefaultResourceLoader({
             cwd: threadCwd,
             agentDir: getAgentDir(),
-            // Project extensions live in .pi/extensions. They're loaded
-            // explicitly (rather than via project-trust discovery) so the
-            // headless web host doesn't need a trust prompt. The loader dedupes
-            // by path if the project is also trusted.
-            additionalExtensionPaths: [
-                join(threadCwd, ".pi", "extensions", "context-bar", "index.ts"),
-            ],
             // Inline factory captures this thread's live ExtensionAPI so panel
             // actions call back into *this* thread (pi.sendUserMessage, etc).
             extensionFactories: [

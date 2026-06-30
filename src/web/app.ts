@@ -805,7 +805,9 @@ let extPageTitle = "";
  */
 function setPageTitle(text) {
     extPageTitle = text ? String(text) : "";
-    applyPageTitle();
+    // Refresh both the browser tab and the in-page thread title bar, which now
+    // mirrors the same override.
+    updateTitle();
 }
 
 /**
@@ -813,17 +815,18 @@ function setPageTitle(text) {
  * (`π - <session> - <cwd>`): here `π web - <thread name> - <cwd>`, dropping the
  * session segment when the thread is unnamed and the cwd segment when unknown.
  */
-function applyPageTitle() {
-    if (extPageTitle) {
-        document.title = extPageTitle;
-        return;
-    }
+function computePageTitle() {
+    if (extPageTitle) return extPageTitle;
     const active = threadItems.find((t) => t.id === activeThreadId);
     const cwdBase = cwd ? cwd.replace(/\/+$/, "").split("/").pop() : "";
     const parts = [PAGE_TITLE_PREFIX];
     if (active?.name) parts.push(threadName(active));
     if (cwdBase) parts.push(cwdBase);
-    document.title = parts.join(" - ");
+    return parts.join(" - ");
+}
+
+function applyPageTitle() {
+    document.title = computePageTitle();
 }
 
 function updateTitle() {
@@ -834,10 +837,10 @@ function updateTitle() {
         const others = threadItems.filter(
             (t) => t.id !== active.id && t.running,
         ).length;
-        const base = dirBase(active.cwd || cwd);
+        // Show the same title as the browser tab (`π web - <name> - <cwd>`, or
+        // an extension override), plus a hint when other threads run in back.
         $threadTitle.textContent =
-            threadName(active) +
-            (base ? `  ·  ${base}` : "") +
+            computePageTitle() +
             (others ? `  (${others} running in background)` : "");
         $threadTitle.title = active.cwd || cwd || "";
     } else {
