@@ -47,6 +47,11 @@ Simple, line-based backlog. Check items off as they land.
       `dock` as a thin deprecated alias for one release. See `docs/widget.md` for the
       full spec.
 
+- [ ] 21. Reach slash-command parity with the pi TUI. The web cockpit (`src/web/app.ts`
+      `COMMANDS`) currently ships 10 of the TUI's 22 commands. Shared today:
+      `/resume`, `/new`, `/name`, `/session`, `/compact`, `/copy`, `/export`,
+      `/reload`, `/hotkeys`, `/changelog`. Missing in web (port or decide N/A): - [ ] `/login`, `/logout` — manage OAuth or API-key credentials - [ ] `/model` — switch models (see #15) - [ ] `/scoped-models` — enable/disable models for Ctrl+P cycling - [ ] `/settings` — thinking level, theme, message delivery, transport - [ ] `/tree` — jump to any point in the session and continue - [ ] `/trust` — save project trust decision - [ ] `/fork` — new session from a previous user message - [ ] `/clone` — duplicate the current active branch into a new session - [ ] `/import <file>` — import and resume a session from a JSONL file - [ ] `/share` — upload as private GitHub gist with shareable HTML link - [ ] `/quit` — quit pi (likely N/A in a browser tab)
+
 ## Docs
 
 - [ ] Re-add documentation (the previous `docs/roadmap.md` and `docs/ui-bridge.md` were removed). Document the architecture, the bus protocol, and the ExtensionUIContext web bridge.
