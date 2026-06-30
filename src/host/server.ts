@@ -1,10 +1,10 @@
 /**
  * pi-web host: runs the pi agent in-process (createAgentSession) and serves a
- * web cockpit. Browser bus is SSE (server->client) + POST (client->server) so
+ * web UI. Browser bus is SSE (server->client) + POST (client->server) so
  * there are zero extra dependencies.
  *
  * Transport (SSE/POST/static/health/threads) lives in ./app.mjs and is
- * agent-independent; this file owns agent bootstrap, the event -> cockpit
+ * agent-independent; this file owns agent bootstrap, the event -> server message
  * translation, and the thread (session) lifecycle.
  *
  * Multi-thread model
@@ -26,9 +26,9 @@
  * thread id it targets.
  */
 import { readFile, readdir } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join, relative, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -71,6 +71,7 @@ const PI_VERSION = (() => {
  *
  * @typedef {object} ThreadRuntime
  * @property {string} id                       session id (stable registry key)
+ * @property {string} cwd                      this thread's working directory
  * @property {SessionManager} sm               this thread's session manager
  * @property {AgentSession|null} session       the in-process agent session
  * @property {ExtensionAPI|null} pi            this thread's live ExtensionAPI
@@ -80,13 +81,47 @@ const PI_VERSION = (() => {
  * @property {boolean} busy                    a turn is currently in flight
  */
 
-/** A serializable server->client cockpit frame. @typedef {{kind:string,[k:string]:any}} CockpitMessage */
+/** A serializable server->client message frame. @typedef {{kind:string,[k:string]:any}} ServerMessage */
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WEB = join(__dirname, "..", "web");
 const PORT = Number(process.env.PORT ?? 4321);
 const HOST = process.env.HOST ?? "0.0.0.0";
+// The process working directory: the default/root for new threads and the
+// fallback for sessions whose stored cwd is unknown. Per-thread cwd lives on
+// each ThreadRuntime (sourced from its SessionManager header); pi binds cwd at
+// session creation, so "changing directory" means starting a thread elsewhere.
 const cwd = process.cwd();
+// Directories pi-web has live/known threads in, so the thread list can span
+// multiple working dirs (on-disk sessions are partitioned per-cwd). Seeded with
+// the root; grows as threads are created in other directories this run.
+/** @type {Set<string>} */
+const knownCwds = new Set([cwd]);
+
+/**
+ * Resolve a user-supplied directory for a new thread. Relative paths resolve
+ * against the root cwd, `~` expands to $HOME, and the target must be an existing
+ * directory — otherwise we throw so the client can surface a clear error rather
+ * than booting a session in a bogus place.
+ * @param {string} [dir]
+ * @returns {string}
+ */
+function resolveThreadCwd(dir) {
+    const raw = (dir ?? "").trim();
+    if (!raw) return cwd;
+    const expanded = raw.startsWith("~")
+        ? join(process.env.HOME ?? "", raw.slice(1))
+        : raw;
+    const abs = resolve(cwd, expanded);
+    let st;
+    try {
+        st = statSync(abs);
+    } catch {
+        throw new Error(`no such directory: ${abs}`);
+    }
+    if (!st.isDirectory()) throw new Error(`not a directory: ${abs}`);
+    return abs;
+}
 
 // ---- project file list (for the `@` mention typeahead) --------------------
 // Prefer `git ls-files` (fast, respects .gitignore); fall back to a bounded
@@ -104,8 +139,8 @@ const WALK_SKIP = new Set([
     "coverage",
     ".next",
 ]);
-/** @type {{ at: number, items: string[] } | null} */
-let fileCache = null;
+/** Per-directory file-list cache (the `@` typeahead is scoped to a thread's cwd). @type {Map<string, { at: number, items: string[] }>} */
+const fileCacheByDir = new Map();
 
 async function walkFiles(dir, base, out) {
     if (out.length >= FILE_LIST_CAP) return;
@@ -130,24 +165,76 @@ async function walkFiles(dir, base, out) {
     }
 }
 
-async function listProjectFiles() {
-    if (fileCache && Date.now() - fileCache.at < FILE_CACHE_TTL_MS) {
-        return fileCache.items;
+/**
+ * List project files for the `@` mention typeahead, scoped to a thread's cwd.
+ * @param {string} [dir]
+ */
+async function listProjectFiles(dir) {
+    const base = dir || cwd;
+    const cached = fileCacheByDir.get(base);
+    if (cached && Date.now() - cached.at < FILE_CACHE_TTL_MS) {
+        return cached.items;
     }
     let items;
     try {
         const { stdout } = await execFileP(
             "git",
             ["ls-files", "--cached", "--others", "--exclude-standard"],
-            { cwd, maxBuffer: 64 * 1024 * 1024 },
+            { cwd: base, maxBuffer: 64 * 1024 * 1024 },
         );
         items = stdout.split("\n").filter(Boolean).slice(0, FILE_LIST_CAP);
     } catch {
         items = [];
-        await walkFiles(cwd, cwd, items);
+        await walkFiles(base, base, items);
     }
-    fileCache = { at: Date.now(), items };
+    fileCacheByDir.set(base, { at: Date.now(), items });
     return items;
+}
+
+/**
+ * Directory suggestions for the `/new <dir>` typeahead. Resolves the partial
+ * `q` against the viewing thread's cwd (or the root), expands `~`, and lists
+ * matching subdirectories as absolute paths the client can splice in and drill.
+ * @param {string} q
+ * @param {string} [threadId]
+ */
+async function listProjectDirs(q, threadId) {
+    const baseCwd = threadRuntimes.get(threadId)?.cwd || cwd;
+    const raw = (q ?? "").trim();
+    const expand = (p) =>
+        p.startsWith("~") ? join(process.env.HOME ?? "", p.slice(1)) : p;
+    let listDir;
+    let prefix;
+    if (!raw) {
+        listDir = baseCwd;
+        prefix = "";
+    } else {
+        const abs = resolve(baseCwd, expand(raw));
+        if (raw.endsWith("/")) {
+            listDir = abs;
+            prefix = "";
+        } else {
+            listDir = dirname(abs);
+            prefix = basename(abs).toLowerCase();
+        }
+    }
+    let ents;
+    try {
+        ents = await readdir(listDir, { withFileTypes: true });
+    } catch {
+        return [];
+    }
+    const items = [];
+    for (const e of ents) {
+        if (!e.isDirectory()) continue;
+        // hide dotdirs unless the user is explicitly typing one
+        if (e.name.startsWith(".") && !prefix.startsWith(".")) continue;
+        if (prefix && !e.name.toLowerCase().startsWith(prefix)) continue;
+        const abs = join(listDir, e.name);
+        items.push({ value: abs, label: e.name, description: abs });
+    }
+    items.sort((a, b) => a.label.localeCompare(b.label));
+    return items.slice(0, 50);
 }
 
 // ---- browser bus (SSE) ----------------------------------------------------
@@ -216,7 +303,7 @@ const piweb = {
      * Resolve a thread's concrete surface registry by its session id (== thread
      * id). Lets event-driven extensions (e.g. context-bar) write to *their own*
      * thread's surface without relying on the global `currentThread` pointer —
-     * which is set by the cockpit listener that runs *after* extension handlers,
+     * which is set by the server listener that runs *after* extension handlers,
      * so it is stale/cross-thread when an extension's `pi.on(...)` fires.
      * Returns null when the thread isn't registered yet (e.g. during
      * session_start, before threadRuntimes is populated) so callers fall back to
@@ -298,7 +385,7 @@ function thinkingHidden(s) {
  * Build the `thinking_level` frame for a session: current reasoning level, the
  * levels the active model supports, and whether thinking is supported at all
  * (a model with a single level — e.g. only "off" — can't be cycled). Drives the
- * focused composer border color in the cockpit (mirrors the pi TUI editor
+ * focused composer border color in the web UI (mirrors the pi TUI editor
  * border via theme.getThinkingBorderColor).
  * @param {AgentSession|null|undefined} s
  * @returns {{kind:"thinking_level", level:string, available:string[], supported:boolean}}
@@ -349,7 +436,7 @@ async function pinModel(s) {
 }
 
 // ---- per-thread event translation -----------------------------------------
-// Translate one thread's agent events -> cockpit frames, routed to the clients
+// Translate one thread's agent events -> server messages, routed to the clients
 // viewing this thread. Background threads (no current viewers) still run; their
 // frames simply reach nobody and are restored via replay on the next view.
 /**
@@ -359,7 +446,7 @@ async function pinModel(s) {
 function subscribe(thread) {
     let streamed = false;
     let streamedThinking = false;
-    /** @param {CockpitMessage} msg */
+    /** @param {ServerMessage} msg */
     const emit = (msg) => bus.broadcastToThread(thread.id, msg);
     return thread.session.subscribe((ev) => {
         // route surface updates from this thread's extension event handlers
@@ -374,7 +461,7 @@ function subscribe(thread) {
                     streamedThinking = false;
                     if (!thread.busy) {
                         thread.busy = true;
-                        // drive the cockpit "Working" spinner (pi-tui style)
+                        // drive the web UI "Working" spinner (pi-tui style)
                         emit({ kind: "working", busy: true });
                     }
                 }
@@ -463,9 +550,15 @@ let createChain = Promise.resolve();
  * @returns {ThreadRuntime}
  */
 function makeThread(sm) {
+    // The SessionManager header is the source of truth for a thread's cwd (pi
+    // binds it at creation). Fall back to the process root for legacy/in-memory
+    // sessions that don't carry one.
+    const threadCwd = sm.getCwd() || cwd;
+    knownCwds.add(threadCwd);
     /** @type {ThreadRuntime} */
     const thread = {
         id: sm.getSessionId(),
+        cwd: threadCwd,
         sm,
         session: null,
         pi: null,
@@ -491,15 +584,16 @@ function makeThread(sm) {
 function createThread(sm) {
     const run = createChain.then(async () => {
         const thread = makeThread(sm);
+        const threadCwd = thread.cwd;
         const resourceLoader = new DefaultResourceLoader({
-            cwd,
+            cwd: threadCwd,
             agentDir: getAgentDir(),
             // Project extensions live in .pi/extensions. They're loaded
             // explicitly (rather than via project-trust discovery) so the
             // headless web host doesn't need a trust prompt. The loader dedupes
             // by path if the project is also trusted.
             additionalExtensionPaths: [
-                join(cwd, ".pi", "extensions", "context-bar", "index.ts"),
+                join(threadCwd, ".pi", "extensions", "context-bar", "index.ts"),
             ],
             // Inline factory captures this thread's live ExtensionAPI so panel
             // actions call back into *this* thread (pi.sendUserMessage, etc).
@@ -515,7 +609,7 @@ function createThread(sm) {
         bindingThread = thread; // route panel registration to this thread
         try {
             const created = await createAgentSession({
-                cwd,
+                cwd: threadCwd,
                 resourceLoader,
                 sessionManager: sm,
                 authStorage,
@@ -547,10 +641,21 @@ async function ensureLoaded(id) {
     if (!id) return null;
     const existing = threadRuntimes.get(id);
     if (existing) return existing;
-    const infos = await SessionManager.list(cwd);
-    const info = infos.find((i) => i.id === id);
-    if (!info) return null;
-    return createThread(SessionManager.open(info.path));
+    // Sessions are stored per-cwd, so search every directory we know threads in.
+    for (const dir of knownCwds) {
+        const infos = await SessionManager.list(dir);
+        const info = infos.find((i) => i.id === id);
+        if (info) return createThread(SessionManager.open(info.path));
+    }
+    // Fallback (e.g. a deep-linked ?thread in a dir we haven't listed yet):
+    // scan all projects, then seed knownCwds so later lookups stay fast.
+    const all = await SessionManager.listAll().catch(() => []);
+    const hit = all.find((i) => i.id === id);
+    if (hit) {
+        if (hit.cwd) knownCwds.add(hit.cwd);
+        return createThread(SessionManager.open(hit.path));
+    }
+    return null;
 }
 
 // Replay a thread's history into the transcript.
@@ -560,7 +665,7 @@ async function ensureLoaded(id) {
 // first assistant message) — so a refresh restores a brand-new thread too.
 /**
  * @param {AgentSession} s
- * @param {(msg: CockpitMessage) => void} send
+ * @param {(msg: ServerMessage) => void} send
  */
 function replayTranscript(s, send) {
     send({ kind: "transcript_reset" });
@@ -636,7 +741,7 @@ function replayTranscript(s, send) {
  * Resolve + replay the thread a freshly-connected client is viewing. Sends that
  * client its panels and transcript, and returns the resolved id so the SSE
  * connection can be tagged (and the browser can canonicalize its URL).
- * @param {(msg: CockpitMessage) => void} send
+ * @param {(msg: ServerMessage) => void} send
  * @param {string|undefined} threadId
  * @returns {Promise<string|undefined>}
  */
@@ -709,9 +814,10 @@ async function handleConnect(send, threadId) {
     }
     if (!t) t = defaultThread;
     if (!t?.session || !t.piweb) return undefined;
-    // Tell the client the working directory so it can show cwd-relative tool
-    // paths (read/write/edit/ls), matching the pi TUI.
-    send({ kind: "config", cwd });
+    // Tell the client this thread's working directory so it can show cwd-relative
+    // tool paths (read/write/edit/ls) and surface the dir in the UI, matching
+    // the pi TUI. Each thread can live in a different directory.
+    send({ kind: "config", cwd: t.cwd || cwd });
     // startup/reload intro: version banner + loaded resources (#5/#12)
     send({ kind: "welcome", ...buildWelcome(t.resourceLoader) });
     send({ kind: "surfaces", surfaces: t.piweb.snapshot() });
@@ -738,7 +844,12 @@ function broadcastThreads() {
 const threads = {
     /** @returns {Promise<Array<object>>} */
     async list() {
-        const infos = await SessionManager.list(cwd);
+        // List sessions across every project directory (each session carries the
+        // cwd it was started in) so threads persist across host restarts and the
+        // client can group them by directory. Seed knownCwds so resume-by-id and
+        // the @-file typeahead can resolve any listed thread's working dir.
+        const infos = await SessionManager.listAll().catch(() => []);
+        for (const i of infos) if (i.cwd) knownCwds.add(i.cwd);
         const items = infos
             .slice()
             .sort(
@@ -751,6 +862,7 @@ const threads = {
                 return {
                     id: i.id,
                     name: i.name || i.firstMessage || "(new thread)",
+                    cwd: i.cwd,
                     messageCount: i.messageCount,
                     modified: i.modified,
                     running: rt?.busy ?? false, // turn in flight (any viewer or none)
@@ -776,6 +888,7 @@ const threads = {
             items.unshift({
                 id,
                 name: sm?.getSessionName?.() || firstMessage || "(new thread)",
+                cwd: rt.cwd,
                 messageCount,
                 modified: new Date(),
                 running: rt.busy ?? false,
@@ -784,10 +897,17 @@ const threads = {
         }
         return items;
     },
-    /** Create a fresh thread and return its id (the client navigates to it). */
-    async create() {
-        const t = await createThread(SessionManager.create(cwd));
-        return { id: t.id };
+    /**
+     * Create a fresh thread and return its id (the client navigates to it).
+     * An optional `dir` starts the thread in another working directory — the
+     * web analogue of `cd`, since pi binds cwd at session creation and a new
+     * thread is the honest way to "change directory".
+     * @param {string} [dir]
+     */
+    async create(dir) {
+        const target = resolveThreadCwd(dir);
+        const t = await createThread(SessionManager.create(target));
+        return { id: t.id, cwd: t.cwd };
     },
     /**
      * Resume a thread into the registry (clients view it by reopening the SSE
@@ -891,7 +1011,7 @@ async function runBash(command, excludeFromContext, threadId) {
     const cmd = (command ?? "").trim();
     const s = sessionFor(threadId);
     if (!s || !cmd) return;
-    /** @param {CockpitMessage} msg */
+    /** @param {ServerMessage} msg */
     const emit = (msg) => bus.broadcastToThread(threadId, msg);
     emit({
         kind: "bash",
@@ -932,8 +1052,8 @@ async function runBash(command, excludeFromContext, threadId) {
 // default thread for clients that connect without a `?thread`.
 defaultThread = await createThread(SessionManager.continueRecent(cwd));
 
-// Mirror the active pi theme into the cockpit: read settings.json ->
-// themes/<name>.json under the agent dir and resolve to cockpit CSS variables.
+// Mirror the active pi theme into the web UI: read settings.json ->
+// themes/<name>.json under the agent dir and resolve to web UI CSS variables.
 // Missing tokens fall back to the client's :root defaults.
 function loadPiTheme() {
     try {
@@ -994,8 +1114,12 @@ const server = createApp({
     bundleWeb: makeWebBundler(WEB, process.env.PI_WEB_DEV === "1"),
     threads,
     sessionApi,
-    // Project file list for the browser's `@` mention typeahead.
-    listFiles: () => listProjectFiles(),
+    // Project file list for the browser's `@` mention typeahead, scoped to the
+    // viewing thread's working directory.
+    listFiles: (threadId) =>
+        listProjectFiles(threadRuntimes.get(threadId)?.cwd),
+    // Directory suggestions for the `/new <dir>` typeahead.
+    listDirs: (q, threadId) => listProjectDirs(q, threadId),
     // On SSE (re)connect, resolve + replay the thread this client is viewing
     // (from `?thread`), returning the resolved id so the connection is tagged.
     onConnect: (send, ctx) => handleConnect(send, ctx?.threadId),
@@ -1033,7 +1157,7 @@ const server = createApp({
     },
     /**
      * Toggle the persisted pi "hide thinking blocks" setting (Ctrl+T in the
-     * cockpit). The setting is global, so the new value is broadcast to every
+     * web UI). The setting is global, so the new value is broadcast to every
      * connected client.
      * @param {boolean} hidden
      * @param {string} [threadId]
@@ -1048,7 +1172,7 @@ const server = createApp({
         broadcast({ kind: "thinking_visibility", hidden: !!hidden });
     },
     /**
-     * Cycle or set the per-session reasoning level (Shift+Tab in the cockpit).
+     * Cycle or set the per-session reasoning level (Shift+Tab in the web UI).
      * Unlike "hide thinking blocks", the level is per-session, so the new value
      * is broadcast only to the thread's viewers.
      * @param {"cycle"|"set"} op
@@ -1090,7 +1214,7 @@ const server = createApp({
         });
     },
     /**
-     * Interrupt the agent mid-turn (Esc in the cockpit). Aborts the current
+     * Interrupt the agent mid-turn (Esc in the web UI). Aborts the current
      * operation and waits for the thread to go idle.
      * @param {string} [threadId]
      */
@@ -1156,7 +1280,7 @@ const server = createApp({
 
 server.listen(PORT, HOST, () => {
     console.log(
-        `\n  pi-web cockpit  →  http://${HOST}:${PORT}  (bound on all interfaces)\n  cwd: ${cwd}\n`,
+        `\n  pi-web  →  http://${HOST}:${PORT}  (bound on all interfaces)\n  cwd: ${cwd}\n`,
     );
 });
 

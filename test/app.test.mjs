@@ -193,6 +193,42 @@ test("/files returns the project file list for the @ mention typeahead", async (
     }
 });
 
+test("/dirs returns directory suggestions for the /new typeahead", async () => {
+    const bus = createBus();
+    const piweb = createPiWebHost({
+        broadcast: () => {},
+        getPi: () => ({}),
+    });
+    const calls = [];
+    const server = createApp({
+        web: "src/web",
+        bus,
+        piweb,
+        listDirs: async (q, threadId) => {
+            calls.push({ q, threadId });
+            return [
+                { value: "/tmp/foo", label: "foo", description: "/tmp/foo" },
+            ];
+        },
+    });
+    const base = await new Promise((r) =>
+        server.listen(0, "127.0.0.1", () =>
+            r(`http://127.0.0.1:${server.address().port}`),
+        ),
+    );
+    try {
+        const res = await fetch(`${base}/dirs?q=fo&thread=t1`);
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(body.items).toEqual([
+            { value: "/tmp/foo", label: "foo", description: "/tmp/foo" },
+        ]);
+        expect(calls).toEqual([{ q: "fo", threadId: "t1" }]);
+    } finally {
+        server.close();
+    }
+});
+
 test("session command routes delegate to sessionApi", async () => {
     const calls = [];
     const bus = createBus();

@@ -4,7 +4,7 @@
  *
  * This layer is intentionally **agent-independent** — it knows nothing about
  * createAgentSession/models/auth. Agent-coupled behavior is injected via
- * callbacks (onPrompt/onReload/threads), which keeps the core cockpit plumbing
+ * callbacks (onPrompt/onReload/threads), which keeps the core web UI plumbing
  * (dock/overlay -> snapshot -> dispatch -> setState -> broadcast, plus thread
  * listing/switching) testable with zero credentials.
  */
@@ -55,10 +55,16 @@ export interface AppOptions {
         send: (msg: Frame) => void,
         ctx: { threadId?: string },
     ) => (string | undefined) | Promise<string | undefined>;
-    listFiles?: () => string[] | Promise<string[]>;
+    listFiles?: (threadId?: string) => string[] | Promise<string[]>;
+    listDirs?: (
+        q: string,
+        threadId?: string,
+    ) =>
+        | Array<{ value: string; label: string; description: string }>
+        | Promise<Array<{ value: string; label: string; description: string }>>;
     threads?: {
         list: () => Promise<any[]>;
-        create?: () => Promise<any>;
+        create?: (dir?: string) => Promise<any>;
         switch?: (id: string) => Promise<void>;
     };
     sessionApi?: Record<string, (...args: any[]) => any>;
@@ -155,6 +161,7 @@ export function createApp({
     onThinkingVisibility,
     onThinkingLevel,
     listFiles,
+    listDirs,
     bundleWeb,
 }: AppOptions): Server {
     // `/app.js` is produced by the TS bundler (see build-web.ts); the rest are
@@ -236,8 +243,17 @@ export function createApp({
 
     // project file list for the `@` mention typeahead (read-only). The client
     // caches this and fuzzy-filters locally as the user types.
-    router.get("/files", async ({ res }) => {
-        const items = listFiles ? await listFiles() : [];
+    router.get("/files", async ({ res, url }) => {
+        const threadId = url.searchParams.get("thread") || undefined;
+        const items = listFiles ? await listFiles(threadId) : [];
+        sendJson(res, 200, { items });
+    });
+
+    // directory suggestions for the `/new <dir>` typeahead (read-only)
+    router.get("/dirs", async ({ res, url }) => {
+        const q = url.searchParams.get("q") || "";
+        const threadId = url.searchParams.get("thread") || undefined;
+        const items = listDirs ? await listDirs(q, threadId) : [];
         sendJson(res, 200, { items });
     });
 
@@ -305,9 +321,13 @@ export function createApp({
         );
         res.writeHead(202).end();
     });
-    router.post("/threads", async ({ res }) => {
-        const result = (await threads?.create?.()) ?? {};
-        sendJson(res, 200, result);
+    router.post("/threads", async ({ res, body }) => {
+        try {
+            const result = (await threads?.create?.(body.cwd)) ?? {};
+            sendJson(res, 200, result);
+        } catch (err) {
+            sendJson(res, 400, { error: String(err?.message ?? err) });
+        }
     });
     router.post("/threads/switch", async ({ res, body }) => {
         try {

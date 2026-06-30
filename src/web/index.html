@@ -3,7 +3,7 @@
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>pi-web cockpit</title>
+        <title>pi-web</title>
         <style>
             :root {
                 /* defaults; overridden at runtime by the active pi theme
@@ -750,6 +750,16 @@
             }
             .picker .item.new {
                 color: var(--acc2);
+            }
+            /* per-directory section header when threads span multiple cwds */
+            .picker .dir-head {
+                padding: 8px 14px 4px;
+                font-size: 12px;
+                color: var(--dim);
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+                background: #0c1117;
+                border-bottom: 1px solid var(--line);
             }
         </style>
     </head>

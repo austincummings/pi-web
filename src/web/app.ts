@@ -1,4 +1,4 @@
-// pi-web cockpit client: transcript stream, extension panels, thread switching,
+// pi-web web client: transcript stream, extension panels, thread switching,
 // and a fuzzy command typeahead (ported from pi-tui's fuzzy matcher).
 import { fuzzyFilter } from "./fuzzy.ts";
 import { renderMarkdown } from "./markdown.ts";
@@ -82,14 +82,19 @@ function urlThread() {
 }
 let activeThreadId = urlThread();
 
-// client-side slash commands (cockpit-handled, like pi's /resume, /new)
+// client-side slash commands (client-handled, like pi's /resume, /new)
 const COMMANDS = [
     {
         value: "/resume",
         label: "/resume",
         description: "Switch to another thread",
     },
-    { value: "/new", label: "/new", description: "Start a new thread" },
+    {
+        value: "/new",
+        label: "/new",
+        description:
+            "Start a new thread — /new [dir] (prompts for a directory)",
+    },
     {
         value: "/reload",
         label: "/reload",
@@ -464,6 +469,7 @@ function postThread(path, body = {}) {
 function gotoThread(id) {
     if (!id || id === activeThreadId) return;
     activeThreadId = id;
+    fileCacheAt = 0; // the new thread may have a different cwd → refetch @-files
     history.pushState({ thread: id }, "", "?thread=" + encodeURIComponent(id));
     reopenStream();
     updateTitle();
@@ -473,7 +479,7 @@ function gotoThread(id) {
 // ---- sandboxed custom HTML (Frame node) ----
 // Extensions can return { type:"Frame", html, height? }. The html runs in a
 // sandboxed iframe (allow-scripts, NO allow-same-origin) so arbitrary
-// HTML/CSS/JS is isolated from the cockpit's DOM, cookies, and JS. A tiny
+// HTML/CSS/JS is isolated from the web UI's DOM, cookies, and JS. A tiny
 // bridge lets the frame dispatch surface actions and report its height.
 // Inside the frame: window.piweb.action(name, payload),
 // window.piweb.notify(msg, level), or any [data-action] element.
@@ -508,7 +514,7 @@ function installFrameBridge() {
     });
 }
 
-// copy the cockpit theme vars into the frame so it matches the active theme
+// copy the web UI theme vars into the frame so it matches the active theme
 function frameThemeVars() {
     const cs = getComputedStyle(document.documentElement);
     return ["--bg", "--panel", "--line", "--txt", "--dim", "--acc", "--acc2"]
@@ -525,7 +531,7 @@ function wrapFrameDoc(html) {
         `:root{${frameThemeVars()}}html,body{margin:0}` +
         `body{font:14px/1.5 ui-monospace,Menlo,monospace;color:var(--txt);background:transparent}` +
         `a{color:var(--acc)}` +
-        // baseline control styling so frame buttons/inputs match the cockpit
+        // baseline control styling so frame buttons/inputs match the web UI
         // (extensions can override with their own <style>)
         `button{font:inherit;background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer}` +
         `button:hover{border-color:var(--acc)}` +
@@ -770,6 +776,22 @@ function threadName(t) {
     return (t?.name || "(new thread)").replace(/\s+/g, " ").slice(0, 60);
 }
 
+// Short label for a working directory: the basename (full path kept for the
+// `title` tooltip). Threads can live in different dirs, so the picker/header
+// surface where each one runs.
+function dirBase(p) {
+    if (!p) return "";
+    return p.replace(/\/+$/, "").split("/").pop() || p;
+}
+
+// A compact directory label: the last two path segments (e.g. `projects/pi-web`),
+// enough to disambiguate same-named project folders without the full path.
+function dirShort(p) {
+    if (!p) return "";
+    const parts = p.replace(/\/+$/, "").split("/").filter(Boolean);
+    return parts.slice(-2).join("/") || p;
+}
+
 // the app-title prefix for the browser tab, mirroring the pi TUI's `π` prefix
 const PAGE_TITLE_PREFIX = "π web";
 // extension-supplied override (piweb.setTitle); "" means "use the default"
@@ -812,9 +834,12 @@ function updateTitle() {
         const others = threadItems.filter(
             (t) => t.id !== active.id && t.running,
         ).length;
+        const base = dirBase(active.cwd || cwd);
         $threadTitle.textContent =
             threadName(active) +
+            (base ? `  ·  ${base}` : "") +
             (others ? `  (${others} running in background)` : "");
+        $threadTitle.title = active.cwd || cwd || "";
     } else {
         $threadTitle.innerHTML = '<span class="hint">(no thread)</span>';
     }
@@ -838,22 +863,45 @@ function openPicker() {
         return item;
     };
 
+    // New thread in the current directory (quick path). To start one elsewhere,
+    // use `/new <dir>` in the prompt — it offers a directory typeahead.
     $picker.appendChild(
-        mk("new", "＋ New thread", "/new", () => {
+        mk("new", "＋ New thread", "here · or /new <dir>", () => {
             closePicker();
-            newThread();
+            newThread(cwd);
         }),
     );
 
+    // Group threads by working directory (sessions are partitioned per-cwd), so
+    // it's clear where each thread runs. The active thread's group sorts first.
+    const groups = new Map();
     for (const t of threadItems) {
-        const flags = [t.running ? "● running" : t.loaded ? "live" : null]
-            .filter(Boolean)
-            .join(" ");
-        const meta =
-            `${t.messageCount ?? 0} msgs · ${relTime(t.modified)}` +
-            (flags ? ` · ${flags}` : "");
-        $picker.appendChild(
-            mk(
+        const key = t.cwd || cwd || "";
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(t);
+    }
+    const activeCwd =
+        threadItems.find((t) => t.id === activeThreadId)?.cwd || cwd || "";
+    const keys = [...groups.keys()].sort((a, b) =>
+        a === activeCwd ? -1 : b === activeCwd ? 1 : 0,
+    );
+    const multiDir = keys.length > 1;
+    for (const key of keys) {
+        if (multiDir) {
+            const head = document.createElement("div");
+            head.className = "dir-head";
+            head.textContent = dirShort(key) || key;
+            head.title = key;
+            $picker.appendChild(head);
+        }
+        for (const t of groups.get(key)) {
+            const flags = [t.running ? "● running" : t.loaded ? "live" : null]
+                .filter(Boolean)
+                .join(" ");
+            const meta =
+                `${t.messageCount ?? 0} msgs · ${relTime(t.modified)}` +
+                (flags ? ` · ${flags}` : "");
+            const item = mk(
                 t.active || t.id === activeThreadId ? "active" : "",
                 threadName(t),
                 meta,
@@ -861,8 +909,10 @@ function openPicker() {
                     closePicker();
                     gotoThread(t.id);
                 },
-            ),
-        );
+            );
+            item.title = t.cwd || "";
+            $picker.appendChild(item);
+        }
     }
     $overlay.classList.add("show");
 }
@@ -978,7 +1028,12 @@ async function ensureFiles() {
         return fileCache;
     }
     try {
-        const r = await fetch("/files");
+        const r = await fetch(
+            "/files" +
+                (activeThreadId
+                    ? "?thread=" + encodeURIComponent(activeThreadId)
+                    : ""),
+        );
         const j = await r.json();
         fileCache = (j.items || []).map((p) => ({
             value: "@" + p,
@@ -1009,6 +1064,27 @@ async function showFileAc(query) {
     if (myReq !== acReq) return; // a newer keystroke superseded this one
     const ranked = query ? fuzzyFilter(files, query, (f) => f.path) : files;
     acItems = ranked.slice(0, 20);
+    acIndex = 0;
+    renderAc();
+}
+
+// Directory suggestions for `/new <dir>`: the host resolves the partial against
+// the active thread's cwd and returns matching subdirs as absolute paths.
+async function showDirAc(query) {
+    const myReq = ++acReq;
+    let items = [];
+    try {
+        const r = await fetch(
+            "/dirs?q=" +
+                encodeURIComponent(query) +
+                (activeThreadId
+                    ? "&thread=" + encodeURIComponent(activeThreadId)
+                    : ""),
+        );
+        items = (await r.json()).items || [];
+    } catch {}
+    if (myReq !== acReq) return; // a newer keystroke superseded this one
+    acItems = items;
     acIndex = 0;
     renderAc();
 }
@@ -1058,6 +1134,17 @@ function updateAc() {
         return;
     }
 
+    // `/new <dir>`: directory typeahead for choosing a thread's working dir.
+    // The arg is the last token, so complete from just after "/new " to caret.
+    const dm = v.match(/^(\/new\s+)(.*)$/s);
+    if (dm) {
+        acMode = "dir";
+        acAtStart = dm[1].length;
+        acAtEnd = v.length;
+        showDirAc(dm[2]); // async; guarded by acReq
+        return;
+    }
+
     // `@file` mention: complete the token under the caret (mid-line is fine)
     const tok = atTokenBeforeCaret(v, caret);
     if (tok) {
@@ -1088,6 +1175,28 @@ function acceptAc(run) {
         $prompt.focus();
         $prompt.setSelectionRange(pos, pos);
         autoGrow();
+        return;
+    }
+
+    // Directory completion for `/new <dir>`: Enter creates a thread in the
+    // selected dir; Tab drills into it (appends `/`) so you can keep navigating.
+    if (acMode === "dir") {
+        const v = $prompt.value;
+        const before = v.slice(0, acAtStart); // "/new "
+        if (run) {
+            closeAc();
+            $prompt.value = "";
+            runInput(before + it.value);
+            return;
+        }
+        const insert = it.value + "/";
+        $prompt.value = before + insert;
+        const pos = before.length + insert.length;
+        closeAc();
+        $prompt.focus();
+        $prompt.setSelectionRange(pos, pos);
+        autoGrow();
+        updateAc(); // re-trigger to list the children of the drilled dir
         return;
     }
 
@@ -1145,24 +1254,30 @@ function runInput(text) {
     postThread("/prompt", { text });
 }
 
-// Create a fresh thread, then navigate to it (URL + SSE re-point).
-function newThread() {
-    post("/threads", {})
+// Create a fresh thread, then navigate to it (URL + SSE re-point). An optional
+// `dir` starts the thread in another working directory — the web UI analogue
+// of `cd` (pi binds cwd at session creation, so a new thread is the honest way
+// to change directory).
+function newThread(dir = "") {
+    post("/threads", dir ? { cwd: dir } : {})
         .then((r) => r.json())
         .then((d) => {
             if (d?.id) gotoThread(d.id);
+            else notice(d?.error || "could not create thread");
         })
         .catch(() => notice("could not create thread"));
 }
 
-// returns true if handled as a cockpit command
+// returns true if handled as a client command
 function runCommand(cmd, arg) {
     switch (cmd) {
         case "/resume":
             openPicker();
             return true;
         case "/new":
-            newThread();
+            // /new <dir> starts a thread there (the prompt offers a directory
+            // typeahead as you type); bare /new starts one in the current cwd.
+            newThread(arg || cwd);
             return true;
         case "/reload":
             postThread("/reload", {});
@@ -1253,7 +1368,7 @@ function showHotkeys() {
         ["Alt+T", "show / hide thinking blocks"],
         ["Shift+Tab", "cycle thinking level"],
         ["/resume", "switch threads"],
-        ["/new", "new thread"],
+        ["/new", "new thread — /new [dir] (prompts for a directory)"],
     ];
     wrap.innerHTML = keys
         .map(
@@ -1422,7 +1537,7 @@ function onSseMessage(e) {
             // working directory, so tool cards can show cwd-relative paths
             if (typeof m.cwd === "string") {
                 cwd = m.cwd;
-                applyPageTitle(); // surface the cwd segment in the tab title
+                updateTitle(); // surface the cwd in the tab + header titles
             }
             break;
         case "welcome":
@@ -1434,7 +1549,7 @@ function onSseMessage(e) {
             renderWelcome();
             break;
         case "theme":
-            // apply the active pi theme palette to the cockpit CSS variables
+            // apply the active pi theme palette to the web UI CSS variables
             if (m.vars)
                 for (const [k, v] of Object.entries(m.vars))
                     document.documentElement.style.setProperty(k, String(v));
