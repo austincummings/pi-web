@@ -44,8 +44,8 @@ import {
     ModelRegistry,
 } from "@earendil-works/pi-coding-agent";
 
-import { createPiWebHost } from "./piweb-host.mjs";
-import { createBus, createApp } from "./app.mjs";
+import { createPiWebHost } from "./piweb-host.ts";
+import { createBus, createApp } from "./app.ts";
 
 /**
  * @typedef {import("@earendil-works/pi-coding-agent").AgentSession} AgentSession

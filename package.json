@@ -5,8 +5,8 @@
     "type": "module",
     "description": "Self-modifiable web cockpit for the pi coding agent",
     "scripts": {
-        "start": "bun run src/host/server.mjs",
-        "dev": "bun --watch src/host/server.mjs",
+        "start": "bun run src/host/server.ts",
+        "dev": "bun --watch src/host/server.ts",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
         "test": "bun test"

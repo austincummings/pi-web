@@ -8,7 +8,7 @@
  * (dock/overlay -> snapshot -> dispatch -> setState -> broadcast, plus thread
  * listing/switching) testable with zero credentials.
  */
-import http from "node:http";
+import http, { Server } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -103,7 +103,7 @@ export function createApp({
     onSurface,
     onThinkingVisibility,
     listFiles,
-}) {
+}: { web: string; bus: object; piweb: PiWeb; }): Server {
     const STATIC = {
         "/": ["index.html", "text/html; charset=utf-8"],
         "/index.html": ["index.html", "text/html; charset=utf-8"],
