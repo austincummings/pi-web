@@ -72,6 +72,18 @@
                 border: none;
                 color: #fff;
             }
+            select {
+                font: inherit;
+                background: var(--panel);
+                color: var(--txt);
+                border: 1px solid var(--line);
+                border-radius: 6px;
+                padding: 5px 8px;
+                max-width: 240px;
+            }
+            select:hover {
+                border-color: var(--acc);
+            }
             #transcript {
                 flex: 1;
                 overflow: auto;
@@ -163,8 +175,11 @@
     <body>
         <div id="left" class="col">
             <header>
-                <b>pi-web</b><span>cockpit</span><span class="sp"></span
-                ><span id="status" class="empty">connecting…</span>
+                <b>pi-web</b>
+                <select id="threads" title="conversation threads"></select>
+                <button id="newThread" title="new thread">＋ new</button>
+                <span class="sp"></span>
+                <span id="status" class="empty">connecting…</span>
             </header>
             <div id="transcript">
                 <div class="empty">

@@ -3,6 +3,8 @@
 const $transcript = document.getElementById("transcript");
 const $panels = document.getElementById("panels");
 const $status = document.getElementById("status");
+const $threads = document.getElementById("threads");
+const $newThread = document.getElementById("newThread");
 
 let assistantEl = null; // current streaming assistant bubble
 
@@ -115,6 +117,41 @@ function renderPanels(panels) {
     }
 }
 
+// ---- threads (conversation sessions) ----
+function relTime(d) {
+    const s = Math.max(0, (Date.now() - new Date(d).getTime()) / 1000);
+    if (s < 60) return "just now";
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+    return `${Math.floor(s / 86400)}d ago`;
+}
+
+function renderThreads(items) {
+    if (!$threads) return;
+    $threads.innerHTML = "";
+    if (!items || !items.length) {
+        const o = document.createElement("option");
+        o.textContent = "(no threads)";
+        $threads.appendChild(o);
+        return;
+    }
+    for (const t of items) {
+        const o = document.createElement("option");
+        o.value = t.id;
+        const label = (t.name || "(new thread)")
+            .replace(/\s+/g, " ")
+            .slice(0, 40);
+        o.textContent = `${label} · ${relTime(t.modified)}`;
+        if (t.active) o.selected = true;
+        $threads.appendChild(o);
+    }
+}
+
+$threads?.addEventListener("change", () =>
+    post("/threads/switch", { id: $threads.value }),
+);
+$newThread?.addEventListener("click", () => post("/threads", {}));
+
 // ---- SSE stream ----
 const es = new EventSource("/events");
 es.onopen = () => {
@@ -129,6 +166,16 @@ es.onmessage = (e) => {
     switch (m.kind) {
         case "panels":
             renderPanels(m.panels);
+            break;
+        case "threads":
+            renderThreads(m.items);
+            break;
+        case "thread_switched":
+            if ($threads) $threads.value = m.id;
+            break;
+        case "transcript_reset":
+            $transcript.innerHTML = '<div class="empty">new thread</div>';
+            assistantEl = null;
             break;
         case "user":
             bubble("user", m.text);

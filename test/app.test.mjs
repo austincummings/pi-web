@@ -106,3 +106,109 @@ test("MVP-0: health + SSE snapshot + action round-trip (no model)", async () => 
         server.close();
     }
 });
+
+test("thread routes delegate to injected callbacks", async () => {
+    const calls = [];
+    const bus = createBus();
+    const piweb = createPiWebHost({
+        broadcastPanels: () => {},
+        getPi: () => ({}),
+    });
+    const server = createApp({
+        web: "src/web",
+        bus,
+        piweb,
+        threads: {
+            list: async () => [
+                { id: "a", name: "A", active: true },
+                { id: "b", name: "B", active: false },
+            ],
+            create: async () => {
+                calls.push("create");
+                return { id: "new" };
+            },
+            switch: async (id) => {
+                calls.push(`switch:${id}`);
+            },
+        },
+    });
+    const base = await new Promise((r) =>
+        server.listen(0, "127.0.0.1", () =>
+            r(`http://127.0.0.1:${server.address().port}`),
+        ),
+    );
+    try {
+        const list = await (await fetch(`${base}/threads`)).json();
+        expect(list.items.length).toBe(2);
+        expect(list.items[0].id).toBe("a");
+
+        const created = await (
+            await fetch(`${base}/threads`, { method: "POST" })
+        ).json();
+        expect(created.id).toBe("new");
+
+        await fetch(`${base}/threads/switch`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: "b" }),
+        });
+
+        expect(calls).toContain("create");
+        expect(calls).toContain("switch:b");
+    } finally {
+        server.close();
+    }
+});
+
+test("thread routes: list / create / switch are wired to callbacks", async () => {
+    const calls = [];
+    const bus = createBus();
+    const piweb = createPiWebHost({
+        broadcastPanels: () => {},
+        getPi: () => ({}),
+    });
+    const server = createApp({
+        web: "src/web",
+        bus,
+        piweb,
+        threads: {
+            list: async () => [
+                { id: "a", name: "A", active: true },
+                { id: "b", name: "B", active: false },
+            ],
+            create: async () => {
+                calls.push("create");
+                return { id: "new" };
+            },
+            switch: async (id) => {
+                calls.push(`switch:${id}`);
+            },
+        },
+    });
+    const base = await new Promise((r) =>
+        server.listen(0, "127.0.0.1", () =>
+            r(`http://127.0.0.1:${server.address().port}`),
+        ),
+    );
+    try {
+        const list = await (await fetch(`${base}/threads`)).json();
+        expect(list.items.length).toBe(2);
+        expect(list.items[0].id).toBe("a");
+
+        const created = await (
+            await fetch(`${base}/threads`, { method: "POST" })
+        ).json();
+        expect(created.id).toBe("new");
+
+        await fetch(`${base}/threads/switch`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: "b" }),
+        });
+
+        expect(calls).toContain("create");
+        expect(calls).toContain("switch:b");
+    } finally {
+        server.close();
+    }
+});

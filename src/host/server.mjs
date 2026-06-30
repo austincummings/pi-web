@@ -3,8 +3,9 @@
  * web cockpit. Browser bus is SSE (server->client) + POST (client->server) so
  * there are zero extra dependencies.
  *
- * Transport (SSE/POST/static/health) lives in ./app.mjs and is agent-independent;
- * this file owns agent bootstrap and the event -> cockpit-message translation.
+ * Transport (SSE/POST/static/health/threads) lives in ./app.mjs and is
+ * agent-independent; this file owns agent bootstrap, the event -> cockpit
+ * translation, and the thread (session) lifecycle.
  */
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -63,28 +64,7 @@ const MODEL_ID = process.env.PI_MODEL ?? "claude-opus-4-8";
 const authStorage = AuthStorage.create();
 const modelRegistry = ModelRegistry.create(authStorage);
 
-const { session } = await createAgentSession({
-    cwd,
-    resourceLoader,
-    sessionManager: SessionManager.inMemory(cwd),
-    authStorage,
-    modelRegistry,
-});
-
-// Extensions are loaded now — the meridian provider is registered. Pin it.
-const model = modelRegistry.find(PROVIDER, MODEL_ID);
-if (model) {
-    await session.setModel(model);
-    console.log(
-        `  model:  ${model.provider}/${model.id} (${model.name ?? ""})`,
-    );
-} else {
-    const cur = session.state?.model;
-    console.warn(
-        `  model:  ${PROVIDER}/${MODEL_ID} not found — using ${cur?.provider}/${cur?.id}`,
-    );
-}
-
+// ---- text helpers ---------------------------------------------------------
 // pull plain text out of a message's content (string | block[])
 function textOf(content) {
     if (typeof content === "string") return content;
@@ -103,69 +83,198 @@ function describeError(raw) {
     }
 }
 
+// ---- session lifecycle ----------------------------------------------------
+// The agent has no in-place "load another session", so switching threads means
+// recreating the AgentSession bound to a different SessionManager. The same
+// resourceLoader is reused; panels are keyed by id so re-registration is
+// idempotent.
+let session = null;
+let unsubscribe = null;
+let busy = false; // a turn is running — block thread switches while true
+
+async function pinModel(s) {
+    const model = modelRegistry.find(PROVIDER, MODEL_ID);
+    if (model) {
+        await s.setModel(model);
+        console.log(
+            `  model:  ${model.provider}/${model.id} (${model.name ?? ""})`,
+        );
+    } else {
+        const cur = s.state?.model;
+        console.warn(
+            `  model:  ${PROVIDER}/${MODEL_ID} not found — using ${cur?.provider}/${cur?.id}`,
+        );
+    }
+}
+
 // translate agent events -> cockpit messages.
 // This provider/model emits message_start/message_end (no text_delta stream),
 // so render the final message content; use deltas only when they exist.
-let streamed = false;
-session.subscribe((ev) => {
-    switch (ev.type) {
-        case "message_start":
-            if (ev.message?.role === "user")
-                broadcast({ kind: "user", text: textOf(ev.message.content) });
-            else if (ev.message?.role === "assistant") streamed = false;
-            break;
-        case "message_update": {
-            const e = ev.assistantMessageEvent;
-            if (e?.type === "text_delta") {
-                streamed = true;
-                broadcast({ kind: "delta", text: e.delta });
+function subscribe(s) {
+    let streamed = false;
+    return s.subscribe((ev) => {
+        switch (ev.type) {
+            case "message_start":
+                if (ev.message?.role === "user")
+                    broadcast({
+                        kind: "user",
+                        text: textOf(ev.message.content),
+                    });
+                else if (ev.message?.role === "assistant") {
+                    streamed = false;
+                    busy = true;
+                }
+                break;
+            case "message_update": {
+                const e = ev.assistantMessageEvent;
+                if (e?.type === "text_delta") {
+                    streamed = true;
+                    broadcast({ kind: "delta", text: e.delta });
+                }
+                break;
             }
-            break;
-        }
-        case "message_end": {
-            const m = ev.message;
-            if (m?.role !== "assistant") break;
-            if (m.stopReason === "error" || m.errorMessage)
+            case "message_end": {
+                const m = ev.message;
+                if (m?.role !== "assistant") break;
+                if (m.stopReason === "error" || m.errorMessage)
+                    broadcast({
+                        kind: "error",
+                        text: describeError(m.errorMessage),
+                    });
+                else if (!streamed) {
+                    const text = textOf(m.content);
+                    if (text) broadcast({ kind: "assistant_full", text });
+                }
+                broadcast({ kind: "assistant_end" });
+                break;
+            }
+            case "tool_execution_start":
                 broadcast({
-                    kind: "error",
-                    text: describeError(m.errorMessage),
+                    kind: "tool",
+                    id: ev.toolCallId,
+                    name: ev.toolName,
+                    status: "start",
+                    args: ev.args,
                 });
-            else if (!streamed) {
-                const text = textOf(m.content);
-                if (text) broadcast({ kind: "assistant_full", text });
-            }
-            broadcast({ kind: "assistant_end" });
-            break;
+                break;
+            case "tool_execution_end":
+                broadcast({
+                    kind: "tool",
+                    id: ev.toolCallId,
+                    name: ev.toolName,
+                    status: "end",
+                    isError: ev.isError,
+                });
+                break;
+            case "agent_end":
+                busy = false;
+                broadcast({ kind: "assistant_end" });
+                break;
         }
-        case "tool_execution_start":
-            broadcast({
-                kind: "tool",
-                id: ev.toolCallId,
-                name: ev.toolName,
-                status: "start",
-                args: ev.args,
-            });
-            break;
-        case "tool_execution_end":
-            broadcast({
-                kind: "tool",
-                id: ev.toolCallId,
-                name: ev.toolName,
-                status: "end",
-                isError: ev.isError,
-            });
-            break;
-        case "agent_end":
-            broadcast({ kind: "assistant_end" });
-            break;
+    });
+}
+
+async function bootSession(sessionManager) {
+    const created = await createAgentSession({
+        cwd,
+        resourceLoader,
+        sessionManager,
+        authStorage,
+        modelRegistry,
+    });
+    session = created.session;
+    await pinModel(session);
+    unsubscribe = subscribe(session);
+    return session;
+}
+
+// Replay a thread's history into the transcript after a reset.
+function replayTranscript(s) {
+    broadcast({ kind: "transcript_reset" });
+    let messages = [];
+    try {
+        const ctx = s.sessionManager.buildSessionContext?.();
+        messages = Array.isArray(ctx?.messages) ? ctx.messages : [];
+    } catch {
+        messages = [];
     }
-});
+    for (const m of messages) {
+        if (m?.role === "user") {
+            broadcast({ kind: "user", text: textOf(m.content) });
+        } else if (m?.role === "assistant") {
+            const text = textOf(m.content);
+            if (text) broadcast({ kind: "assistant_full", text });
+            broadcast({ kind: "assistant_end" });
+        }
+    }
+}
+
+async function switchTo(sessionManager) {
+    if (busy) throw new Error("cannot switch threads while a turn is running");
+    if (unsubscribe) {
+        unsubscribe();
+        unsubscribe = null;
+    }
+    if (session) session.dispose();
+    piweb.clear();
+    // re-instantiate extensions (re-registers panels) for the new session
+    await resourceLoader.reload();
+    await bootSession(sessionManager);
+    replayTranscript(session);
+    broadcast({
+        kind: "thread_switched",
+        id: session.sessionManager.getSessionId(),
+    });
+    broadcastThreads();
+}
+
+// ---- threads (sessions) ---------------------------------------------------
+function broadcastThreads() {
+    threads
+        .list()
+        .then((items) => broadcast({ kind: "threads", items }))
+        .catch(() => {});
+}
+
+const threads = {
+    async list() {
+        const infos = await SessionManager.list(cwd);
+        const activeId = session?.sessionManager.getSessionId();
+        return infos
+            .slice()
+            .sort((a, b) => new Date(b.modified) - new Date(a.modified))
+            .map((i) => ({
+                id: i.id,
+                name: i.name || i.firstMessage || "(new thread)",
+                messageCount: i.messageCount,
+                modified: i.modified,
+                active: i.id === activeId,
+            }));
+    },
+    async create() {
+        await switchTo(SessionManager.create(cwd));
+        return { id: session.sessionManager.getSessionId() };
+    },
+    async switch(id) {
+        if (!id) return;
+        if (id === session?.sessionManager.getSessionId()) return;
+        const infos = await SessionManager.list(cwd);
+        const info = infos.find((i) => i.id === id);
+        if (!info) throw new Error(`unknown thread: ${id}`);
+        await switchTo(SessionManager.open(info.path));
+    },
+};
+
+// ---- boot -----------------------------------------------------------------
+// Persist sessions so threads survive restarts; resume the most recent.
+await bootSession(SessionManager.continueRecent(cwd));
 
 // ---- http -----------------------------------------------------------------
 const server = createApp({
     web: WEB,
     bus,
     piweb,
+    threads,
     onPrompt: (text) =>
         session
             .prompt(text)
@@ -195,7 +304,7 @@ server.listen(PORT, HOST, () => {
 
 process.on("SIGINT", () => {
     try {
-        session.dispose();
+        session?.dispose();
     } finally {
         process.exit(0);
     }

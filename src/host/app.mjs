@@ -1,10 +1,12 @@
 /**
- * pi-web HTTP app: the browser bus (SSE + POST), static serving, and /health.
+ * pi-web HTTP app: the browser bus (SSE + POST), static serving, /health, and
+ * thread (session) routes.
  *
  * This layer is intentionally **agent-independent** — it knows nothing about
- * createAgentSession/models/auth. That makes the core cockpit plumbing
- * (registerPanel -> snapshot -> dispatch -> setState -> broadcast) testable
- * with zero credentials. Agent bootstrap + event translation live in server.mjs.
+ * createAgentSession/models/auth. Agent-coupled behavior is injected via
+ * callbacks (onPrompt/onReload/threads), which keeps the core cockpit plumbing
+ * (registerPanel -> snapshot -> dispatch -> setState -> broadcast, plus thread
+ * listing/switching) testable with zero credentials.
  */
 import http from "node:http";
 import { readFile } from "node:fs/promises";
@@ -31,6 +33,12 @@ async function readBody(req) {
     }
 }
 
+function sendJson(res, code, obj) {
+    res.writeHead(code, { "Content-Type": "application/json" }).end(
+        JSON.stringify(obj),
+    );
+}
+
 /**
  * Build the HTTP server (pure transport; no agent dependency).
  *
@@ -40,9 +48,10 @@ async function readBody(req) {
  * @param {object}   o.piweb     piweb host registry (snapshot/dispatch)
  * @param {(text:string)=>void} [o.onPrompt]   user prompt handler
  * @param {()=>Promise<void>}   [o.onReload]   reload handler
+ * @param {{ list:()=>Promise<any[]>, create:()=>Promise<any>, switch:(id:string)=>Promise<void> }} [o.threads]
  * @returns {import("node:http").Server}
  */
-export function createApp({ web, bus, piweb, onPrompt, onReload }) {
+export function createApp({ web, bus, piweb, onPrompt, onReload, threads }) {
     const STATIC = {
         "/": ["index.html", "text/html; charset=utf-8"],
         "/index.html": ["index.html", "text/html; charset=utf-8"],
@@ -55,9 +64,7 @@ export function createApp({ web, bus, piweb, onPrompt, onReload }) {
 
         // liveness: up regardless of model/auth
         if (path === "/health") {
-            res.writeHead(200, { "Content-Type": "application/json" }).end(
-                JSON.stringify({ ok: true, panels: piweb.snapshot().length }),
-            );
+            sendJson(res, 200, { ok: true, panels: piweb.snapshot().length });
             return;
         }
 
@@ -72,8 +79,25 @@ export function createApp({ web, bus, piweb, onPrompt, onReload }) {
             res.write(
                 `data: ${JSON.stringify({ kind: "panels", panels: piweb.snapshot() })}\n\n`,
             );
+            if (threads) {
+                try {
+                    const items = await threads.list();
+                    res.write(
+                        `data: ${JSON.stringify({ kind: "threads", items })}\n\n`,
+                    );
+                } catch {
+                    /* listing is best-effort on connect */
+                }
+            }
             bus.clients.add(res);
             req.on("close", () => bus.clients.delete(res));
+            return;
+        }
+
+        // list threads
+        if (req.method === "GET" && path === "/threads") {
+            const items = threads ? await threads.list() : [];
+            sendJson(res, 200, { items });
             return;
         }
 
@@ -88,6 +112,20 @@ export function createApp({ web, bus, piweb, onPrompt, onReload }) {
             if (path === "/action") {
                 await piweb.dispatch(body.panelId, body.action, body.payload);
                 res.writeHead(202).end();
+                return;
+            }
+            if (path === "/threads") {
+                const result = (await threads?.create?.()) ?? {};
+                sendJson(res, 200, result);
+                return;
+            }
+            if (path === "/threads/switch") {
+                try {
+                    await threads?.switch?.(body.id);
+                    res.writeHead(202).end();
+                } catch (err) {
+                    sendJson(res, 409, { error: String(err?.message ?? err) });
+                }
                 return;
             }
             if (path === "/reload") {
