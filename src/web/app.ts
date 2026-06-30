@@ -1505,7 +1505,7 @@ function reopenStream() {
     if (es) es.close();
     es = new EventSource(streamUrl());
     es.onopen = () => {
-        $status.textContent = "● live";
+        $status.textContent = "● connected";
         $status.className = "";
     };
     es.onerror = () => {
