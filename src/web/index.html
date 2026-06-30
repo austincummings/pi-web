@@ -156,6 +156,9 @@
                 padding: 6px 8px;
                 width: 100%;
             }
+            .composer {
+                position: relative;
+            }
             form#ask {
                 display: flex;
                 gap: 8px;
@@ -167,6 +170,44 @@
             }
             .empty {
                 color: var(--dim);
+            }
+            /* fuzzy command typeahead (above the prompt) */
+            .ac {
+                position: absolute;
+                left: 14px;
+                right: 14px;
+                bottom: 100%;
+                margin-bottom: 6px;
+                background: var(--panel);
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                overflow: hidden;
+                display: none;
+                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            }
+            .ac.show {
+                display: block;
+            }
+            .ac .opt {
+                padding: 7px 12px;
+                display: flex;
+                gap: 12px;
+                align-items: baseline;
+                cursor: pointer;
+            }
+            .ac .opt.sel {
+                background: #0c1117;
+            }
+            .ac .opt .cmd {
+                color: var(--acc);
+            }
+            .ac .opt .desc {
+                color: var(--dim);
+                font-size: 12px;
+                flex: 1;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
             }
             /* /resume thread picker overlay */
             #overlay {
@@ -243,19 +284,22 @@
             <div id="transcript">
                 <div class="empty">
                     Ask pi something, or use the self-registered panel →
-                    <br />Type <b>/resume</b> to switch threads, <b>/new</b> for
-                    a fresh one.
+                    <br />Type <b>/</b> for commands — <b>/resume</b> to switch
+                    threads, <b>/new</b> for a fresh one.
                 </div>
             </div>
-            <form id="ask">
-                <input
-                    id="prompt"
-                    type="text"
-                    placeholder="message pi…  (/resume, /new)"
-                    autocomplete="off"
-                    autofocus
-                /><button class="primary">send</button>
-            </form>
+            <div class="composer">
+                <div id="ac" class="ac"></div>
+                <form id="ask">
+                    <input
+                        id="prompt"
+                        type="text"
+                        placeholder="message pi…  (type / for commands)"
+                        autocomplete="off"
+                        autofocus
+                    /><button class="primary">send</button>
+                </form>
+            </div>
         </div>
         <div id="right" class="col">
             <header>
@@ -266,6 +310,6 @@
             <div id="panels"><div class="empty">no panels yet</div></div>
         </div>
         <div id="overlay"><div class="picker" id="picker"></div></div>
-        <script src="/app.js"></script>
+        <script type="module" src="/app.js"></script>
     </body>
 </html>

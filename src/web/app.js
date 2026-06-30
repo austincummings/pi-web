@@ -1,4 +1,6 @@
-// pi-web cockpit client: renders the transcript stream + extension-defined panels.
+// pi-web cockpit client: transcript stream, extension panels, thread switching,
+// and a fuzzy command typeahead (ported from pi-tui's fuzzy matcher).
+import { fuzzyFilter } from "/fuzzy.mjs";
 
 const $transcript = document.getElementById("transcript");
 const $panels = document.getElementById("panels");
@@ -6,10 +8,23 @@ const $status = document.getElementById("status");
 const $threadTitle = document.getElementById("threadTitle");
 const $overlay = document.getElementById("overlay");
 const $picker = document.getElementById("picker");
+const $prompt = document.getElementById("prompt");
+const $ask = document.getElementById("ask");
+const $ac = document.getElementById("ac");
 
 let assistantEl = null; // current streaming assistant bubble
 let threadItems = []; // last known thread list (from SSE)
 let activeThreadId = null;
+
+// client-side slash commands (cockpit-handled, like pi's /resume, /new)
+const COMMANDS = [
+    {
+        value: "/resume",
+        label: "/resume",
+        description: "Switch to another thread",
+    },
+    { value: "/new", label: "/new", description: "Start a new thread" },
+];
 
 function bubble(role, text = "") {
     if ($transcript.querySelector(".empty")) $transcript.innerHTML = "";
@@ -22,7 +37,6 @@ function bubble(role, text = "") {
     return el;
 }
 
-// ---- component-tree renderer (serializable UI from extensions) ----
 function post(path, body) {
     return fetch(path, {
         method: "POST",
@@ -31,6 +45,7 @@ function post(path, body) {
     });
 }
 
+// ---- component-tree renderer (serializable UI from extensions) ----
 function renderNode(node, panelId) {
     if (!node || typeof node !== "object")
         return document.createTextNode(String(node ?? ""));
@@ -138,9 +153,10 @@ function updateTitle() {
     const active =
         threadItems.find((t) => t.id === activeThreadId) ||
         threadItems.find((t) => t.active);
-    if (active) activeThreadId = active.id;
-    $threadTitle.textContent = active ? threadName(active) : "";
-    if (!active) {
+    if (active) {
+        activeThreadId = active.id;
+        $threadTitle.textContent = threadName(active);
+    } else {
         $threadTitle.innerHTML = '<span class="hint">(no thread)</span>';
     }
 }
@@ -194,9 +210,125 @@ function closePicker() {
 $overlay?.addEventListener("click", (e) => {
     if (e.target === $overlay) closePicker();
 });
+
+// ---- fuzzy command typeahead ----
+let acItems = [];
+let acIndex = 0;
+
+function renderAc() {
+    if (!acItems.length) {
+        closeAc();
+        return;
+    }
+    $ac.innerHTML = "";
+    acItems.forEach((it, i) => {
+        const o = document.createElement("div");
+        o.className = "opt" + (i === acIndex ? " sel" : "");
+        const cmd = document.createElement("span");
+        cmd.className = "cmd";
+        cmd.textContent = it.label;
+        const desc = document.createElement("span");
+        desc.className = "desc";
+        desc.textContent = it.description || "";
+        o.append(cmd, desc);
+        // mousedown (not click) so it fires before the input blurs
+        o.onmousedown = (e) => {
+            e.preventDefault();
+            acIndex = i;
+            acceptAc(true);
+        };
+        $ac.appendChild(o);
+    });
+    $ac.classList.add("show");
+}
+
+function closeAc() {
+    acItems = [];
+    $ac.classList.remove("show");
+}
+
+function updateAc() {
+    const v = $prompt.value;
+    if (!v.startsWith("/")) {
+        closeAc();
+        return;
+    }
+    acItems = fuzzyFilter(COMMANDS, v, (c) => c.label);
+    acIndex = 0;
+    renderAc();
+}
+
+function acceptAc(run) {
+    const it = acItems[acIndex];
+    if (!it) return;
+    closeAc();
+    if (run) {
+        $prompt.value = "";
+        runInput(it.value);
+    } else {
+        $prompt.value = it.value;
+        $prompt.focus();
+    }
+}
+
+function runInput(text) {
+    text = (text ?? "").trim();
+    if (!text) return;
+    if (text === "/resume") {
+        openPicker();
+        return;
+    }
+    if (text === "/new") {
+        post("/threads", {});
+        return;
+    }
+    post("/prompt", { text });
+}
+
+$prompt.addEventListener("input", updateAc);
+$prompt.addEventListener("keydown", (e) => {
+    if (!$ac.classList.contains("show")) return;
+    switch (e.key) {
+        case "ArrowDown":
+            e.preventDefault();
+            acIndex = (acIndex + 1) % acItems.length;
+            renderAc();
+            break;
+        case "ArrowUp":
+            e.preventDefault();
+            acIndex = (acIndex - 1 + acItems.length) % acItems.length;
+            renderAc();
+            break;
+        case "Tab":
+            e.preventDefault();
+            acceptAc(false);
+            break;
+        case "Enter":
+            e.preventDefault();
+            acceptAc(true);
+            break;
+        case "Escape":
+            e.preventDefault();
+            closeAc();
+            break;
+    }
+});
+
 document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closePicker();
 });
+
+$ask.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = $prompt.value;
+    $prompt.value = "";
+    closeAc();
+    runInput(text);
+});
+
+document
+    .getElementById("reload")
+    .addEventListener("click", () => post("/reload", {}));
 
 // ---- SSE stream ----
 const es = new EventSource("/events");
@@ -262,30 +394,3 @@ es.onmessage = (e) => {
             break;
     }
 };
-
-// ---- prompt box (with /resume and /new commands) ----
-document.getElementById("ask").addEventListener("submit", (e) => {
-    e.preventDefault();
-    const input = document.getElementById("prompt");
-    const text = input.value.trim();
-    if (!text) return;
-
-    // client-side slash commands (like pi's /resume, /new)
-    if (text === "/resume") {
-        input.value = "";
-        openPicker();
-        return;
-    }
-    if (text === "/new") {
-        input.value = "";
-        post("/threads", {});
-        return;
-    }
-
-    input.value = "";
-    post("/prompt", { text });
-});
-
-document
-    .getElementById("reload")
-    .addEventListener("click", () => post("/reload", {}));
