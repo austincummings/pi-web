@@ -173,9 +173,9 @@ function renderToolCard(entry) {
 
     const head = document.createElement("div");
     head.className = "tool-head";
-    const mark = info.pending ? "\u23F5" : info.isError ? "\u2717" : "\u2713";
+    const mark = info.pending ? "\u23F5" : "";
     head.innerHTML =
-        '<span class="tool-mark"></span> <span class="tool-name"></span> ' +
+        '<span class="tool-mark"></span><span class="tool-name"></span> ' +
         '<span class="tool-args"></span>';
     head.querySelector(".tool-mark").textContent = mark;
     head.querySelector(".tool-name").textContent = info.name;

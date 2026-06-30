@@ -355,6 +355,11 @@
             .tool.error {
                 border-left-color: var(--err);
             }
+            /* The TUI conveys success/error by tinting the result body (toolSuccessBg /
+               toolErrorBg) rather than using a glyph, so we do the same. */
+            .tool.error .tool-body {
+                background: color-mix(in srgb, var(--err) 14%, #0c1117);
+            }
             .tool-head {
                 display: flex;
                 gap: 6px;
@@ -374,7 +379,7 @@
                 font-weight: 600;
             }
             .tool-args {
-                color: var(--dim);
+                color: var(--acc);
                 overflow: hidden;
                 text-overflow: ellipsis;
                 white-space: nowrap;
