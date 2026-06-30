@@ -1,0 +1,149 @@
+// <pi-tool> — one tool-call card in the transcript.
+//
+// Mirrors pi-tui's default tool-result view: a header (pending marker + bold
+// name + accented primary arg + muted context) and a result body collapsed to
+// MAX_TOOL_LINES until expanded (click the "more" affordance, or alt+o on the
+// last card). The TUI conveys status by tinting the whole block rather than a
+// glyph, so the element carries the `.tool` / `.tool.pending` / `.tool.error`
+// classes and the shared stylesheet does the rest (light DOM, no Shadow DOM).
+//
+// The element owns its own `info` state, expand/collapse, and rendering. The
+// host feeds it SSE `tool` frames via apply() and toggles the last card via
+// toggleExpanded(); scrolling stays with the host (it owns the transcript).
+
+import {
+    toolTitle,
+    truncateResult,
+    getToolRenderer,
+    type ToolInfo,
+} from "./tools.ts";
+
+// The shape of an SSE `tool` frame (start = name+args; end = result+isError).
+export interface ToolFrame {
+    id: string;
+    name?: string;
+    args?: unknown;
+    status?: "start" | "end" | string;
+    result?: unknown;
+    isError?: boolean;
+}
+
+export class PiTool extends HTMLElement {
+    /** The tool call id (also reflected to the `call-id` attribute). */
+    callId = "";
+    /** cwd for relativizing tool paths in the header (from the config frame). */
+    cwd = "";
+
+    readonly info: ToolInfo = {
+        name: "",
+        args: undefined,
+        result: "",
+        isError: false,
+        pending: true,
+        expanded: false,
+    };
+
+    private built = false;
+
+    connectedCallback(): void {
+        if (!this.built) {
+            this.built = true;
+            this.render();
+        }
+    }
+
+    /** Apply one SSE `tool` frame and re-render (no scrolling — host's job). */
+    apply(m: ToolFrame, cwd: string): void {
+        this.cwd = cwd;
+        if (m.name != null) this.info.name = m.name;
+        if (m.status === "start") {
+            this.info.args = m.args;
+            this.info.pending = true;
+        } else {
+            this.info.pending = false;
+            this.info.isError = !!m.isError;
+            if (m.result != null) this.info.result = String(m.result);
+        }
+        this.render();
+    }
+
+    /** Flip the result expand/collapse state (alt+o / click). */
+    toggleExpanded(): void {
+        this.info.expanded = !this.info.expanded;
+        this.render();
+    }
+
+    private render(): void {
+        const info = this.info;
+        this.className =
+            "tool" +
+            (info.isError ? " error" : "") +
+            (info.pending ? " pending" : "");
+        this.innerHTML = "";
+
+        const head = document.createElement("div");
+        head.className = "tool-head";
+        head.innerHTML =
+            '<span class="tool-mark"></span><span class="tool-name"></span> ' +
+            '<span class="tool-args"></span><span class="tool-dim"></span>';
+        (head.querySelector(".tool-mark") as HTMLElement).textContent =
+            info.pending ? "\u23F5" : "";
+        const title = toolTitle(info.name, info.args, this.cwd);
+        (head.querySelector(".tool-name") as HTMLElement).textContent =
+            title.name;
+        (head.querySelector(".tool-args") as HTMLElement).textContent =
+            title.args;
+        (head.querySelector(".tool-dim") as HTMLElement).textContent =
+            title.dim;
+        this.appendChild(head);
+
+        // Extension override: a registered renderer may replace the body.
+        const custom = getToolRenderer(info.name);
+        if (custom) {
+            try {
+                const node = custom({ ...info });
+                if (node) {
+                    this.appendChild(node);
+                    return;
+                }
+            } catch {
+                /* fall through to the default rendering */
+            }
+        }
+
+        if (!info.result) return;
+
+        const { shown, hidden } = truncateResult(info.result, !!info.expanded);
+        const makeMore = (label: string) => {
+            const more = document.createElement("div");
+            more.className = "tool-more";
+            more.textContent = label;
+            more.onclick = () => this.toggleExpanded();
+            return more;
+        };
+        // Collapsed: the preview is the tail, so the "N earlier lines" hint goes
+        // ABOVE it (matching pi-tui). Expanded: a "collapse" affordance below.
+        if (hidden > 0) {
+            this.appendChild(
+                makeMore(
+                    `… ${hidden} earlier line${hidden === 1 ? "" : "s"} (alt+o)`,
+                ),
+            );
+        }
+        const body = document.createElement("pre");
+        body.className = "tool-body";
+        body.textContent = shown;
+        this.appendChild(body);
+        if (info.expanded) this.appendChild(makeMore("collapse (alt+o)"));
+    }
+}
+
+if (!customElements.get("pi-tool")) {
+    customElements.define("pi-tool", PiTool);
+}
+
+declare global {
+    interface HTMLElementTagNameMap {
+        "pi-tool": PiTool;
+    }
+}

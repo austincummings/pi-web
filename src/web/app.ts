@@ -2,12 +2,7 @@
 // and a fuzzy command typeahead (ported from pi-tui's fuzzy matcher).
 import { fuzzyFilter } from "./fuzzy.ts";
 import { renderMarkdown } from "./markdown.ts";
-import {
-    toolTitle,
-    truncateResult,
-    getToolRenderer,
-    registerToolRenderer,
-} from "./tools.ts";
+import { registerToolRenderer } from "./tools.ts";
 import {
     keyHintsLine,
     sectionSummary,
@@ -19,6 +14,7 @@ import {
     type PiFrameActionDetail,
     type PiFrameNotifyDetail,
 } from "./pi-frame.ts";
+import { PiTool } from "./pi-tool.ts";
 
 // Expose the tool-renderer registry so client-side extensions can override how
 // a tool's result is displayed (web counterpart to pi-tui's renderResult).
@@ -174,13 +170,19 @@ function renderAssistant(el, text) {
 }
 
 // ---- Tool calls ----------------------------------------------------------
-// One card per tool call (keyed by toolCallId), built from a mutable `info`
-// record. The card shows a header (marker + name + arg summary) and a result
-// body that is collapsed to MAX_TOOL_LINES until expanded (click or alt+o),
-// matching pi-tui's default tool-result view. `lastToolEntry` is the target of
-// the global alt+o toggle.
-let toolEls = {};
-let lastToolEntry = null;
+// One <pi-tool> card per tool call (keyed by the `call-id` attribute). The
+// element owns its own state, expand/collapse, and rendering (see ./pi-tool.ts);
+// here we just create/look up the card and feed it SSE frames. The global alt+o
+// toggle targets the last <pi-tool> in the transcript.
+function toolCard(id: string): PiTool | null {
+    return $transcript.querySelector(
+        `pi-tool[call-id="${CSS.escape(id)}"]`,
+    ) as PiTool | null;
+}
+function lastToolCard(): PiTool | null {
+    const all = $transcript.querySelectorAll("pi-tool");
+    return (all[all.length - 1] as PiTool) ?? null;
+}
 // The agent's working directory (from the `config` frame); used to show
 // cwd-relative tool paths like the TUI.
 let cwd = "";
@@ -278,106 +280,21 @@ function nearBottom(pad = 40) {
     );
 }
 
-// `scroll` is only honored when new agent output arrives; user-initiated
-// expand/collapse re-renders pass `false` so the view stays put.
-function renderToolCard(entry, scroll = false) {
-    const info = entry.info;
-    const el = entry.el;
-    el.innerHTML = "";
-    el.classList.toggle("error", !!info.isError);
-    el.classList.toggle("pending", !!info.pending);
-
-    const head = document.createElement("div");
-    head.className = "tool-head";
-    const mark = info.pending ? "\u23F5" : "";
-    head.innerHTML =
-        '<span class="tool-mark"></span><span class="tool-name"></span> ' +
-        '<span class="tool-args"></span><span class="tool-dim"></span>';
-    head.querySelector(".tool-mark").textContent = mark;
-    const title = toolTitle(info.name, info.args, cwd);
-    head.querySelector(".tool-name").textContent = title.name;
-    head.querySelector(".tool-args").textContent = title.args;
-    head.querySelector(".tool-dim").textContent = title.dim;
-    el.appendChild(head);
-
-    // Extension override: a registered renderer may replace the default body.
-    const custom = getToolRenderer(info.name);
-    if (custom) {
-        try {
-            const node = custom({ ...info });
-            if (node) {
-                el.appendChild(node);
-                if (scroll) $transcript.scrollTop = $transcript.scrollHeight;
-                return;
-            }
-        } catch {
-            /* fall through to the default rendering */
-        }
-    }
-
-    if (info.result) {
-        const { shown, hidden } = truncateResult(info.result, !!info.expanded);
-        const makeMore = (label) => {
-            const more = document.createElement("div");
-            more.className = "tool-more";
-            more.textContent = label;
-            more.onclick = () => {
-                info.expanded = !info.expanded;
-                renderToolCard(entry, false);
-            };
-            return more;
-        };
-        // Collapsed: the preview is the tail, so the "N earlier lines" hint goes
-        // ABOVE it (matching pi-tui). Expanded: a "collapse" affordance below.
-        if (hidden > 0) {
-            el.appendChild(
-                makeMore(
-                    `… ${hidden} earlier line${hidden === 1 ? "" : "s"} (alt+o)`,
-                ),
-            );
-        }
-        const body = document.createElement("pre");
-        body.className = "tool-body";
-        body.textContent = shown;
-        el.appendChild(body);
-        if (info.expanded) {
-            el.appendChild(makeMore("collapse (alt+o)"));
-        }
-    }
-    if (scroll) $transcript.scrollTop = $transcript.scrollHeight;
-}
-
-// Apply a `tool` SSE frame: create or update the card for this call id.
+// Apply a `tool` SSE frame: create or look up the <pi-tool> card for this call
+// id, feed it the frame, and auto-follow only if we were near the bottom (so we
+// don't yank the view while the user reads back).
 function applyToolFrame(m) {
-    let entry = toolEls[m.id];
-    if (!entry) {
+    let el = toolCard(m.id);
+    const follow = nearBottom();
+    if (!el) {
         clearEmpty();
-        const el = document.createElement("div");
-        el.className = "tool";
+        el = document.createElement("pi-tool") as PiTool;
+        el.callId = m.id;
+        el.setAttribute("call-id", m.id);
         $transcript.appendChild(el);
-        entry = toolEls[m.id] = {
-            el,
-            info: {
-                name: m.name,
-                args: undefined,
-                result: "",
-                isError: false,
-                pending: true,
-                expanded: false,
-            },
-        };
     }
-    if (m.status === "start") {
-        entry.info.name = m.name;
-        entry.info.args = m.args;
-        entry.info.pending = true;
-    } else {
-        entry.info.pending = false;
-        entry.info.isError = !!m.isError;
-        if (m.result != null) entry.info.result = String(m.result);
-    }
-    lastToolEntry = entry;
-    renderToolCard(entry, nearBottom());
+    el.apply(m, cwd);
+    if (follow) $transcript.scrollTop = $transcript.scrollHeight;
 }
 
 // A collapsible thinking/reasoning trace. Clicking the header (or Ctrl+T)
@@ -1439,10 +1356,10 @@ document.addEventListener("keydown", (e) => {
 document.addEventListener("keydown", (e) => {
     // e.code so Option/Alt remaps (macOS Alt+O -> "ø") don't break the match.
     if (e.code === "KeyO" && e.altKey && !e.ctrlKey && !e.metaKey) {
-        if (!lastToolEntry) return;
+        const el = lastToolCard();
+        if (!el) return;
         e.preventDefault();
-        lastToolEntry.info.expanded = !lastToolEntry.info.expanded;
-        renderToolCard(lastToolEntry, false);
+        el.toggleExpanded();
     }
 });
 
@@ -1598,8 +1515,6 @@ function onSseMessage(e) {
             renderWelcome(); // re-pin the banner as the first transcript entry
             assistantEl = null;
             thinkingEl = null;
-            toolEls = {};
-            lastToolEntry = null;
             setWorking(false);
             break;
         case "thinking_level":
