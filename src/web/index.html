@@ -345,24 +345,25 @@
                 padding-left: 10px;
                 color: var(--dim);
             }
+            /* The TUI conveys status by tinting the whole tool block (toolPendingBg /
+               toolSuccessBg / toolErrorBg) rather than using a glyph, so we wash the
+               entire card and match the left border to it. Default = success. */
             .tool {
                 color: var(--dim);
-                border-left: 2px solid var(--line);
-                padding-left: 8px;
+                border-left: 2px solid var(--ok);
+                background: color-mix(in srgb, var(--ok) 7%, #0c1117);
+                padding: 5px 8px;
                 margin: 6px 0;
                 font-size: 13px;
+                border-radius: 0 4px 4px 0;
+            }
+            .tool.pending {
+                border-left-color: var(--acc);
+                background: color-mix(in srgb, var(--acc) 10%, #0c1117);
             }
             .tool.error {
                 border-left-color: var(--err);
-            }
-            /* The TUI conveys status by tinting the result body (toolPendingBg /
-               toolSuccessBg / toolErrorBg) rather than using a glyph, so we mirror
-               all three states with a subtle wash over the body base color. */
-            .tool.error .tool-body {
                 background: color-mix(in srgb, var(--err) 14%, #0c1117);
-            }
-            .tool.pending .tool-body {
-                background: color-mix(in srgb, var(--acc) 10%, #0c1117);
             }
             .tool-head {
                 display: flex;
@@ -388,12 +389,11 @@
                 text-overflow: ellipsis;
                 white-space: nowrap;
             }
-            /* Default (success) body carries a faint --ok wash, like toolSuccessBg. */
+            /* The card itself carries the status wash, so the body is transparent. */
             .tool-body {
                 margin: 4px 0 0;
-                padding: 6px 8px;
-                background: color-mix(in srgb, var(--ok) 7%, #0c1117);
-                border-radius: 4px;
+                padding: 0;
+                background: none;
                 color: var(--txt);
                 font-size: 12px;
                 white-space: pre-wrap;
