@@ -880,6 +880,81 @@ $overlayLayer?.addEventListener("click", (e) => {
     if (e.target === $overlayLayer) closeTopOverlay();
 });
 
+// ---- prompt input history (Up/Down browse, mirrors the pi TUI editor) ----
+// Per-thread, oldest -> newest. Seeded from `case "user"` SSE frames so it
+// covers both live sends and replay; cleared on `transcript_reset`.
+let promptHistory: string[] = [];
+// Browse cursor: null = editing the live draft; otherwise an index into
+// promptHistory. Up walks toward 0; Down walks past the end back to the draft.
+let histIndex: number | null = null;
+// The in-progress draft stashed on entering history; restored on the way down.
+let histDraft = "";
+
+// Record a submitted/replayed prompt, skipping consecutive duplicates.
+function pushHistory(text: string) {
+    const t = (text ?? "").replace(/\s+$/, "");
+    if (!t) return;
+    if (promptHistory[promptHistory.length - 1] === t) return;
+    promptHistory.push(t);
+}
+
+// True when the caret sits on the first logical line of the textarea.
+function caretOnFirstLine() {
+    const c = $prompt.selectionStart ?? 0;
+    return $prompt.value.lastIndexOf("\n", c - 1) === -1;
+}
+
+// True when the caret sits on the last logical line of the textarea.
+function caretOnLastLine() {
+    const c = $prompt.selectionStart ?? 0;
+    return $prompt.value.indexOf("\n", c) === -1;
+}
+
+// Show a recalled history entry, placing the caret at `pos`.
+function showHistory(idx: number, pos: number) {
+    histIndex = idx;
+    $prompt.value = promptHistory[idx];
+    autoGrow();
+    const at = pos < 0 ? $prompt.value.length : pos;
+    $prompt.setSelectionRange(at, at);
+}
+
+// Up arrow with the typeahead closed. Returns true when it consumed the key.
+function tryHistoryUp() {
+    if (!caretOnFirstLine()) return false; // let the caret move up a line
+    // Edge nudge (pi #5789): a non-empty draft jumps to the start of the line
+    // on the first Up; history browsing begins on the next press.
+    if (histIndex === null && ($prompt.selectionStart ?? 0) > 0) {
+        $prompt.setSelectionRange(0, 0);
+        return true;
+    }
+    if (!promptHistory.length) return false;
+    if (histIndex === null) {
+        histDraft = $prompt.value;
+        showHistory(promptHistory.length - 1, 0);
+    } else if (histIndex > 0) {
+        showHistory(histIndex - 1, 0); // caret at start when browsing up (#5454)
+    }
+    return true;
+}
+
+// Down arrow with the typeahead closed. Returns true when it consumed the key.
+function tryHistoryDown() {
+    if (histIndex === null) return false; // not browsing: default behavior
+    if (!caretOnLastLine()) return false; // let the caret move down a line
+    if (histIndex < promptHistory.length - 1) {
+        showHistory(histIndex + 1, -1); // caret at end when browsing down (#5454)
+    } else {
+        // Stepped past the newest entry: restore the stashed draft (#5494).
+        histIndex = null;
+        $prompt.value = histDraft;
+        autoGrow();
+        const at = $prompt.value.length;
+        $prompt.setSelectionRange(at, at);
+    }
+    return true;
+}
+
 // ---- fuzzy command + @file typeahead ----
 let acItems = [];
 let acIndex = 0;
@@ -1172,6 +1247,7 @@ function showHotkeys() {
         ["Enter", "send message / run selected command"],
         ["/", "open command typeahead"],
         ["↑ / ↓", "move through command suggestions"],
+        ["↑ / ↓", "browse prompt history (at the draft's top / bottom line)"],
         ["Tab", "complete selected command"],
         ["Esc", "dismiss menu / overlay · interrupt the working agent"],
         ["Alt+T", "show / hide thinking blocks"],
@@ -1197,6 +1273,7 @@ function autoGrow() {
 }
 
 $prompt.addEventListener("input", () => {
+    histIndex = null; // typing over a recalled entry makes it the new draft
     autoGrow();
     updateAc();
     applyThinkingBorder(); // live `!` bash-mode border toggle
@@ -1236,6 +1313,16 @@ $prompt.addEventListener("keydown", (e) => {
                 closeAc();
                 break;
         }
+        return;
+    }
+    // No typeahead open: Up/Down browse input history (mirrors the pi TUI),
+    // falling through to normal caret movement when not at a draft boundary.
+    if (e.key === "ArrowUp" && tryHistoryUp()) {
+        e.preventDefault();
+        return;
+    }
+    if (e.key === "ArrowDown" && tryHistoryDown()) {
+        e.preventDefault();
         return;
     }
     // No typeahead open: Enter sends, Shift+Enter inserts a newline.
@@ -1293,6 +1380,8 @@ $ask.addEventListener("submit", (e) => {
     e.preventDefault();
     const text = $prompt.value;
     $prompt.value = "";
+    histIndex = null; // leave history-browse on send
+    histDraft = "";
     autoGrow();
     applyThinkingBorder(); // clear any `!` bash-mode border
     closeAc();
@@ -1383,6 +1472,9 @@ function onSseMessage(e) {
             break;
         case "transcript_reset":
             $transcript.innerHTML = '<div class="empty">new thread</div>';
+            promptHistory = []; // input history is per-thread
+            histIndex = null;
+            histDraft = "";
             renderWelcome(); // re-pin the banner as the first transcript entry
             assistantEl = null;
             thinkingEl = null;
@@ -1400,6 +1492,8 @@ function onSseMessage(e) {
             break;
         case "user":
             bubble("user", m.text);
+            pushHistory(m.text); // seed/extend per-thread input history
+            histIndex = null;
             assistantEl = null;
             thinkingEl = null;
             break;
