@@ -2,6 +2,18 @@
 // and a fuzzy command typeahead (ported from pi-tui's fuzzy matcher).
 import { fuzzyFilter } from "./fuzzy.ts";
 import { renderMarkdown } from "./markdown.ts";
+import {
+    summarizeArgs,
+    truncateResult,
+    getToolRenderer,
+    registerToolRenderer,
+} from "./tools.ts";
+
+// Expose the tool-renderer registry so client-side extensions can override how
+// a tool's result is displayed (web counterpart to pi-tui's renderResult).
+(window as any).piweb = Object.assign((window as any).piweb || {}, {
+    registerToolRenderer,
+});
 
 const $transcript = document.getElementById("transcript");
 const $dockLeft = document.getElementById("dock-left");
@@ -141,6 +153,103 @@ function bashBubble(command, excluded) {
 function renderAssistant(el, text) {
     el.querySelector(".body").innerHTML = renderMarkdown(text);
     $transcript.scrollTop = $transcript.scrollHeight;
+}
+
+// ---- Tool calls ----------------------------------------------------------
+// One card per tool call (keyed by toolCallId), built from a mutable `info`
+// record. The card shows a header (marker + name + arg summary) and a result
+// body that is collapsed to MAX_TOOL_LINES until expanded (click or alt+o),
+// matching pi-tui's default tool-result view. `lastToolEntry` is the target of
+// the global alt+o toggle.
+let toolEls = {};
+let lastToolEntry = null;
+
+function renderToolCard(entry) {
+    const info = entry.info;
+    const el = entry.el;
+    el.innerHTML = "";
+    el.classList.toggle("error", !!info.isError);
+    el.classList.toggle("pending", !!info.pending);
+
+    const head = document.createElement("div");
+    head.className = "tool-head";
+    const mark = info.pending ? "\u23F5" : info.isError ? "\u2717" : "\u2713";
+    head.innerHTML =
+        '<span class="tool-mark"></span> <span class="tool-name"></span> ' +
+        '<span class="tool-args"></span>';
+    head.querySelector(".tool-mark").textContent = mark;
+    head.querySelector(".tool-name").textContent = info.name;
+    head.querySelector(".tool-args").textContent = summarizeArgs(info.args);
+    el.appendChild(head);
+
+    // Extension override: a registered renderer may replace the default body.
+    const custom = getToolRenderer(info.name);
+    if (custom) {
+        try {
+            const node = custom({ ...info });
+            if (node) {
+                el.appendChild(node);
+                $transcript.scrollTop = $transcript.scrollHeight;
+                return;
+            }
+        } catch {
+            /* fall through to the default rendering */
+        }
+    }
+
+    if (info.result) {
+        const { shown, hidden } = truncateResult(info.result, !!info.expanded);
+        const body = document.createElement("pre");
+        body.className = "tool-body";
+        body.textContent = shown;
+        el.appendChild(body);
+        if (hidden > 0 || info.expanded) {
+            const more = document.createElement("div");
+            more.className = "tool-more";
+            more.textContent = info.expanded
+                ? "collapse (alt+o)"
+                : `+${hidden} more line${hidden === 1 ? "" : "s"} (alt+o)`;
+            more.onclick = () => {
+                info.expanded = !info.expanded;
+                renderToolCard(entry);
+            };
+            el.appendChild(more);
+        }
+    }
+    $transcript.scrollTop = $transcript.scrollHeight;
+}
+
+// Apply a `tool` SSE frame: create or update the card for this call id.
+function applyToolFrame(m) {
+    let entry = toolEls[m.id];
+    if (!entry) {
+        if ($transcript.querySelector(".empty")) $transcript.innerHTML = "";
+        const el = document.createElement("div");
+        el.className = "tool";
+        $transcript.appendChild(el);
+        entry = toolEls[m.id] = {
+            el,
+            info: {
+                name: m.name,
+                args: undefined,
+                result: "",
+                isError: false,
+                pending: true,
+                expanded: false,
+            },
+        };
+    }
+    if (m.status === "start") {
+        entry.info.name = m.name;
+        entry.info.args = m.args;
+        entry.info.pending = true;
+    } else {
+        entry.info.pending = false;
+        entry.info.isError = !!m.isError;
+        if (m.result != null) entry.info.result = String(m.result);
+    }
+    lastToolEntry = entry;
+    renderToolCard(entry);
 }
 
 // A collapsible thinking/reasoning trace. Clicking the header (or Ctrl+T)
@@ -975,6 +1084,23 @@ document.addEventListener("keydown", (e) => {
     }
 });
 
+// Alt+O expands/collapses the most recent tool result (the web analogue of
+// pi-tui's "ctrl+o more"; Ctrl+O is reserved by the browser for "open file",
+// so Alt+O is used, mirroring the Alt+T thinking toggle).
+document.addEventListener("keydown", (e) => {
+    if (
+        (e.key === "o" || e.key === "O") &&
+        e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey
+    ) {
+        if (!lastToolEntry) return;
+        e.preventDefault();
+        lastToolEntry.info.expanded = !lastToolEntry.info.expanded;
+        renderToolCard(lastToolEntry);
+    }
+});
+
 // Escape precedence: close the command typeahead, else close an open overlay,
 // else interrupt the working agent on the focused thread.
 document.addEventListener("keydown", (e) => {
@@ -1070,6 +1196,8 @@ function onSseMessage(e) {
             $transcript.innerHTML = '<div class="empty">new thread</div>';
             assistantEl = null;
             thinkingEl = null;
+            toolEls = {};
+            lastToolEntry = null;
             setWorking(false);
             break;
         case "thinking_visibility":
@@ -1139,16 +1267,9 @@ function onSseMessage(e) {
                 bashEl = null;
             }
             break;
-        case "tool": {
-            const el = document.createElement("div");
-            el.className = "tool";
-            el.textContent =
-                m.status === "start"
-                    ? `⏵ ${m.name}(${JSON.stringify(m.args ?? {})})`
-                    : `⏹ ${m.name}${m.isError ? " (error)" : ""}`;
-            $transcript.appendChild(el);
+        case "tool":
+            applyToolFrame(m);
             break;
-        }
         case "system":
             bubble("system", m.text);
             break;

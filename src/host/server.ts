@@ -386,6 +386,7 @@ function subscribe(thread) {
                     name: ev.toolName,
                     status: "end",
                     isError: ev.isError,
+                    result: textOf(ev.result?.content),
                 });
                 break;
             case "agent_end":
@@ -555,6 +556,7 @@ function replayTranscript(s, send) {
                     name: m.toolName,
                     status: "end",
                     isError: !!m.isError,
+                    result: textOf(m.content),
                 });
                 break;
             case "bashExecution":
