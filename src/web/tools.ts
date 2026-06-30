@@ -33,14 +33,27 @@ export function summarizeArgs(args: any): string {
 }
 
 /**
+ * Make an absolute path cwd-relative for display (read/write/edit/ls), matching
+ * how the pi TUI relativizes tool paths. Paths outside cwd are left as-is.
+ */
+export function relativizePath(p: string, cwd?: string): string {
+    if (!cwd) return p;
+    if (p === cwd) return ".";
+    const base = cwd.endsWith("/") ? cwd : cwd + "/";
+    return p.startsWith(base) ? p.slice(base.length) : p;
+}
+
+/**
  * The header label + arg summary for a tool call, mirroring how the pi TUI
  * titles each tool. Most tools render as `<name> <primary-arg>`, but bash is
  * special-cased to `$ <command>` (no "bash" word), matching pi-tui's
- * `formatBashCall`. The returned `name` is what goes in the bold title slot.
+ * `formatBashCall`. Path-like args are relativized against `cwd`. The returned
+ * `name` is what goes in the bold title slot.
  */
 export function toolTitle(
     name: string,
     args: any,
+    cwd?: string,
 ): { name: string; args: string } {
     if (name === "bash" || name === "shell") {
         const cmd =
@@ -49,13 +62,21 @@ export function toolTitle(
                 : "";
         return { name: "$", args: typeof cmd === "string" ? cmd : "" };
     }
+    if (args && typeof args === "object") {
+        const p = args.path ?? args.file_path ?? args.filePath;
+        if (typeof p === "string" && p) {
+            return { name, args: relativizePath(p, cwd) };
+        }
+    }
     return { name, args: summarizeArgs(args) };
 }
 
 /**
  * Split result text into the visible portion plus the count of hidden lines.
  * When `expanded`, everything is shown. Trailing whitespace is trimmed so the
- * line count is accurate.
+ * line count is accurate. The preview keeps the **last** `max` lines (the tail),
+ * matching pi-tui, since the end of command output is usually the relevant part;
+ * `hidden` counts the earlier lines elided above the preview.
  */
 export function truncateResult(
     text: string,
@@ -67,7 +88,7 @@ export function truncateResult(
     const lines = norm.split("\n");
     if (lines.length <= max) return { shown: norm, hidden: 0 };
     return {
-        shown: lines.slice(0, max).join("\n"),
+        shown: lines.slice(lines.length - max).join("\n"),
         hidden: lines.length - max,
     };
 }

@@ -598,6 +598,9 @@ async function handleConnect(send, threadId) {
     }
     if (!t) t = defaultThread;
     if (!t?.session || !t.piweb) return undefined;
+    // Tell the client the working directory so it can show cwd-relative tool
+    // paths (read/write/edit/ls), matching the pi TUI.
+    send({ kind: "config", cwd });
     send({ kind: "surfaces", surfaces: t.piweb.snapshot() });
     // reflect the persisted pi "hide thinking blocks" setting
     send({ kind: "thinking_visibility", hidden: thinkingHidden(t.session) });

@@ -163,6 +163,9 @@ function renderAssistant(el, text) {
 // the global alt+o toggle.
 let toolEls = {};
 let lastToolEntry = null;
+// The agent's working directory (from the `config` frame); used to show
+// cwd-relative tool paths like the TUI.
+let cwd = "";
 
 // True when the transcript is scrolled (near) to the bottom, so we only
 // auto-follow new output when the user hasn't scrolled up to read history.
@@ -191,7 +194,7 @@ function renderToolCard(entry, scroll = false) {
         '<span class="tool-mark"></span><span class="tool-name"></span> ' +
         '<span class="tool-args"></span>';
     head.querySelector(".tool-mark").textContent = mark;
-    const title = toolTitle(info.name, info.args);
+    const title = toolTitle(info.name, info.args, cwd);
     head.querySelector(".tool-name").textContent = title.name;
     head.querySelector(".tool-args").textContent = title.args;
     el.appendChild(head);
@@ -213,21 +216,31 @@ function renderToolCard(entry, scroll = false) {
 
     if (info.result) {
         const { shown, hidden } = truncateResult(info.result, !!info.expanded);
-        const body = document.createElement("pre");
-        body.className = "tool-body";
-        body.textContent = shown;
-        el.appendChild(body);
-        if (hidden > 0 || info.expanded) {
+        const makeMore = (label) => {
             const more = document.createElement("div");
             more.className = "tool-more";
-            more.textContent = info.expanded
-                ? "collapse (alt+o)"
-                : `+${hidden} more line${hidden === 1 ? "" : "s"} (alt+o)`;
+            more.textContent = label;
             more.onclick = () => {
                 info.expanded = !info.expanded;
                 renderToolCard(entry, false);
             };
-            el.appendChild(more);
+            return more;
+        };
+        // Collapsed: the preview is the tail, so the "N earlier lines" hint goes
+        // ABOVE it (matching pi-tui). Expanded: a "collapse" affordance below.
+        if (hidden > 0) {
+            el.appendChild(
+                makeMore(
+                    `… ${hidden} earlier line${hidden === 1 ? "" : "s"} (alt+o)`,
+                ),
+            );
+        }
+        const body = document.createElement("pre");
+        body.className = "tool-body";
+        body.textContent = shown;
+        el.appendChild(body);
+        if (info.expanded) {
+            el.appendChild(makeMore("collapse (alt+o)"));
         }
     }
     if (scroll) $transcript.scrollTop = $transcript.scrollHeight;
@@ -1173,6 +1186,10 @@ function reopenStream() {
 function onSseMessage(e) {
     const m = JSON.parse(e.data);
     switch (m.kind) {
+        case "config":
+            // working directory, so tool cards can show cwd-relative paths
+            if (typeof m.cwd === "string") cwd = m.cwd;
+            break;
         case "theme":
             // apply the active pi theme palette to the cockpit CSS variables
             if (m.vars)

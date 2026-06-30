@@ -20,7 +20,7 @@ Simple, line-based backlog. Check items off as they land.
 - [ ] 13. Render markdown tables in the transcript view.
 - [ ] 14. Add an "open project" modal overlay (à la Zed's folder picker) so daemon-hosted agents can be cd'd into a chosen working directory.
 - [ ] 15. Add the /model model picker that the TUI has.
-- [ ] 16. Create a matrix of TUI extension points vs. our web UI counterparts, noting gaps; add as `docs/extension-points.md`.
+- [x] 16. Create a matrix of TUI extension points vs. our web UI counterparts, noting gaps; add as `docs/extension-points.md`. (Done — see `docs/extension-points.md`; the gaps it surfaces are tracked in #22.)
 - [ ] 17. Research whether to switch to HTMX for rendering the dynamic UI.
 - [ ] 18. Research rendering markdown in the composer text box.
 - [ ] 19. Add a web equivalent of pi's `registerMessageRenderer(customType, renderer)` so
@@ -62,6 +62,14 @@ Simple, line-based backlog. Check items off as they land.
     - [ ] `/import <file>` — import and resume a session from a JSONL file
     - [ ] `/share` — upload as private GitHub gist with shareable HTML link
     - [ ] `/quit` — quit pi (likely N/A in a browser tab)
+
+- [ ] 22. Reach `ctx.ui` extension-point parity with the pi TUI (gaps from
+      `docs/extension-points.md`). Extensions inherit pi's event/tool/session/model
+      layers unchanged; only the UI layer needs a web bridge. Already at parity:
+      `notify`, `setStatus`, custom tool rendering (`registerToolRenderer`), and the
+      host-presence/no-op guard. To build: - [ ] `setWidget` rename + widened placement (folds in #20) — replaces `dock` - [ ] blocking dialog request/response so `select`/`confirm`/`input`/`editor`
+      can `await` (`POST /ui-response` + `ui_request` SSE; see carried-over bridge) - [ ] `registerMessageRenderer` (folds in #19) - [ ] `setTitle` web page-title hook (folds in #8) - [ ] `setFooter` — footer replacement hook - [ ] `setWorkingMessage` / `setWorkingVisible` / `setWorkingIndicator` - [ ] `setEditorText` / `getEditorText` / `pasteToEditor` composer bridge - [ ] `addAutocompleteProvider` — extension-supplied completion - [ ] `getToolsExpanded` / `setToolsExpanded` programmatic control - [ ] theme API: `getAllThemes` / `getTheme` / `setTheme` / `theme.fg(...)` - [ ] `ctx.mode === "web"` so portable extensions can branch on the medium - [ ] N/A in a browser: `setEditorComponent` / `getEditorComponent` (TUI
+      Component swap) — document as out of scope rather than implement
 
 ## Docs
 

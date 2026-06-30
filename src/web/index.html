@@ -355,10 +355,14 @@
             .tool.error {
                 border-left-color: var(--err);
             }
-            /* The TUI conveys success/error by tinting the result body (toolSuccessBg /
-               toolErrorBg) rather than using a glyph, so we do the same. */
+            /* The TUI conveys status by tinting the result body (toolPendingBg /
+               toolSuccessBg / toolErrorBg) rather than using a glyph, so we mirror
+               all three states with a subtle wash over the body base color. */
             .tool.error .tool-body {
                 background: color-mix(in srgb, var(--err) 14%, #0c1117);
+            }
+            .tool.pending .tool-body {
+                background: color-mix(in srgb, var(--acc) 10%, #0c1117);
             }
             .tool-head {
                 display: flex;
@@ -384,10 +388,11 @@
                 text-overflow: ellipsis;
                 white-space: nowrap;
             }
+            /* Default (success) body carries a faint --ok wash, like toolSuccessBg. */
             .tool-body {
                 margin: 4px 0 0;
                 padding: 6px 8px;
-                background: #0c1117;
+                background: color-mix(in srgb, var(--ok) 7%, #0c1117);
                 border-radius: 4px;
                 color: var(--txt);
                 font-size: 12px;

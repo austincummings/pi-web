@@ -6,6 +6,7 @@ import { test, expect } from "bun:test";
 import {
     summarizeArgs,
     toolTitle,
+    relativizePath,
     truncateResult,
     registerToolRenderer,
     getToolRenderer,
@@ -36,6 +37,16 @@ test("summarizeArgs handles null / non-object", () => {
 test("truncateResult keeps short output intact", () => {
     const text = "line1\nline2\nline3";
     expect(truncateResult(text, false)).toEqual({ shown: text, hidden: 0 });
+});
+
+test("truncateResult keeps the tail (last lines), like the TUI", () => {
+    const lines = Array.from({ length: 20 }, (_, i) => `L${i}`);
+    const { shown, hidden } = truncateResult(lines.join("\n"), false);
+    const shownLines = shown.split("\n");
+    expect(shownLines).toHaveLength(MAX_TOOL_LINES);
+    expect(shownLines[shownLines.length - 1]).toBe("L19");
+    expect(shownLines[0]).toBe(`L${20 - MAX_TOOL_LINES}`);
+    expect(hidden).toBe(20 - MAX_TOOL_LINES);
 });
 
 test("truncateResult collapses to MAX_TOOL_LINES with a hidden count", () => {
@@ -77,6 +88,21 @@ test("toolTitle keeps the tool name + primary arg for non-bash tools", () => {
         name: "grep",
         args: "foo",
     });
+});
+
+test("relativizePath strips the cwd prefix, leaving outside paths alone", () => {
+    expect(relativizePath("/home/u/proj/src/x.ts", "/home/u/proj")).toBe(
+        "src/x.ts",
+    );
+    expect(relativizePath("/home/u/proj", "/home/u/proj")).toBe(".");
+    expect(relativizePath("/etc/hosts", "/home/u/proj")).toBe("/etc/hosts");
+    expect(relativizePath("/home/u/proj/x", undefined)).toBe("/home/u/proj/x");
+});
+
+test("toolTitle relativizes path args against cwd", () => {
+    expect(
+        toolTitle("edit", { path: "/home/u/proj/src/x.ts" }, "/home/u/proj"),
+    ).toEqual({ name: "edit", args: "src/x.ts" });
 });
 
 test("renderer registry stores and retrieves by tool name", () => {
