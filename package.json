@@ -1,13 +1,22 @@
 {
-  "name": "pi-web",
-  "version": "0.0.1",
-  "private": true,
-  "type": "module",
-  "description": "Self-modifiable web cockpit for the pi coding agent",
-  "scripts": {
-    "start": "node src/host/server.mjs"
-  },
-  "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.80.2"
-  }
+    "name": "pi-web",
+    "version": "0.0.1",
+    "private": true,
+    "type": "module",
+    "description": "Self-modifiable web cockpit for the pi coding agent",
+    "scripts": {
+        "start": "bun run src/host/server.mjs",
+        "dev": "bun --watch src/host/server.mjs",
+        "format": "prettier --write .",
+        "format:check": "prettier --check ."
+    },
+    "engines": {
+        "bun": ">=1.3.0"
+    },
+    "dependencies": {
+        "@earendil-works/pi-coding-agent": "0.80.2"
+    },
+    "devDependencies": {
+        "prettier": "^3.9.4"
+    }
 }

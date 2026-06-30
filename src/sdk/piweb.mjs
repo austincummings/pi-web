@@ -11,22 +11,22 @@
  */
 const noop = () => {};
 const stub = {
-  registerPanel: noop,
-  unregisterPanel: noop,
-  clear: noop,
-  present: false,
+    registerPanel: noop,
+    unregisterPanel: noop,
+    clear: noop,
+    present: false,
 };
 
 export function getPiWeb() {
-  return globalThis.__PIWEB__ ?? stub;
+    return globalThis.__PIWEB__ ?? stub;
 }
 
 export const piweb = new Proxy(
-  {},
-  {
-    get(_t, prop) {
-      const host = globalThis.__PIWEB__ ?? stub;
-      return host[prop];
+    {},
+    {
+        get(_t, prop) {
+            const host = globalThis.__PIWEB__ ?? stub;
+            return host[prop];
+        },
     },
-  },
 );

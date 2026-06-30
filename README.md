@@ -9,7 +9,7 @@ superset of pi's `ExtensionUIContext`. The agent can author its own panels.
 ## Architecture
 
 ```
-browser cockpit  ──SSE/POST──►  host (Node)
+browser cockpit  ──SSE/POST──►  host (Bun)
   transcript                      createAgentSession()  ← pi runs in-process
   panels (component trees)        DefaultResourceLoader  ← loads extensions
                                   piweb host registry    ← injected as globalThis.__PIWEB__
@@ -27,27 +27,29 @@ browser cockpit  ──SSE/POST──►  host (Node)
 
 ## Files
 
-| Path | Role |
-|------|------|
-| `src/host/server.mjs` | HTTP host: in-process agent + SSE/POST bus |
-| `src/host/piweb-host.mjs` | `piweb` registry: panels, state, action dispatch |
-| `src/sdk/piweb.mjs` | `@pi-web/sdk` shim extensions import (resolves to host or no-op) |
-| `src/web/` | Browser cockpit: transcript + component-tree renderer |
-| `extensions/hello-panel.ts` | Example extension that self-registers a web panel |
+| Path                        | Role                                                             |
+| --------------------------- | ---------------------------------------------------------------- |
+| `src/host/server.mjs`       | HTTP host: in-process agent + SSE/POST bus                       |
+| `src/host/piweb-host.mjs`   | `piweb` registry: panels, state, action dispatch                 |
+| `src/sdk/piweb.mjs`         | `@pi-web/sdk` shim extensions import (resolves to host or no-op) |
+| `src/web/`                  | Browser cockpit: transcript + component-tree renderer            |
+| `extensions/hello-panel.ts` | Example extension that self-registers a web panel                |
 
 ## Run
 
 ```bash
-npm install
-npm start            # → http://localhost:4321
+bun install
+bun start            # → http://localhost:4321
+# or: bun dev        # watch mode (restarts on file changes)
 ```
 
 Open the cockpit:
+
 - **Left:** chat with pi (streaming transcript, tool calls).
 - **Right:** the `hello` panel, registered by `extensions/hello-panel.ts`.
-  - `+1/-1` and the name input round-trip local panel state through the host.
-  - **"Ask pi to summarize this repo"** calls `pi.sendUserMessage(...)` in-process —
-    a UI control driving the agent; the answer streams into the transcript.
+    - `+1/-1` and the name input round-trip local panel state through the host.
+    - **"Ask pi to summarize this repo"** calls `pi.sendUserMessage(...)` in-process —
+      a UI control driving the agent; the answer streams into the transcript.
 
 > The app defaults to the **`meridian` provider** (`meridian/claude-opus-4-8`),
 > pinned after startup via `session.setModel` once the pi-meridian extension has
