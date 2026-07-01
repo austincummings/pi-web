@@ -381,7 +381,10 @@ function bubble(role, text = "", images = []) {
     clearEmpty();
     const el = document.createElement("div");
     el.className = `msg ${role}`;
-    el.innerHTML = `<div class="role">${role}</div><div class="body"></div>`;
+    // No role label for user/assistant turns — matches the TUI, which sets user
+    // turns apart with the userMessageBg wash and renders assistant turns as
+    // plain markdown. (custom messages render their own label elsewhere.)
+    el.innerHTML = `<div class="body"></div>`;
     el.querySelector(".body").textContent = text;
     if (images && images.length) {
         const wrap = document.createElement("div");
