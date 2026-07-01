@@ -15,6 +15,7 @@ import {
     toolTitle,
     truncateResult,
     getToolRenderer,
+    formatDuration,
     type ToolInfo,
 } from "./tools.ts";
 
@@ -27,6 +28,8 @@ export interface ToolFrame {
     result?: unknown;
     isError?: boolean;
     details?: unknown;
+    /** How long the tool ran, in ms (host-stamped; live turns only). */
+    durationMs?: number;
 }
 
 export class PiTool extends HTMLElement {
@@ -66,6 +69,7 @@ export class PiTool extends HTMLElement {
             this.info.isError = !!m.isError;
             if (m.result != null) this.info.result = String(m.result);
             if (m.details != null) this.info.details = m.details;
+            if (m.durationMs != null) this.info.durationMs = m.durationMs;
         }
         this.render();
     }
@@ -94,8 +98,11 @@ export class PiTool extends HTMLElement {
             title.name;
         (head.querySelector(".tool-args") as HTMLElement).textContent =
             title.args;
+        // Append how long the tool took to the muted context (host-stamped;
+        // absent on replay, so it simply doesn't show there).
+        const dur = info.pending ? "" : formatDuration(info.durationMs);
         (head.querySelector(".tool-dim") as HTMLElement).textContent =
-            title.dim;
+            title.dim + (dur ? ` · ${dur}` : "");
         this.appendChild(head);
 
         // Extension override: a registered renderer may replace the body.

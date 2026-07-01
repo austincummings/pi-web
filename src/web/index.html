@@ -383,12 +383,6 @@
                 text-transform: uppercase;
                 letter-spacing: 0.08em;
             }
-            .msg.user .role {
-                color: var(--acc);
-            }
-            .msg.assistant .role {
-                color: var(--acc2);
-            }
             .msg.assistant .body {
                 white-space: normal;
             }
@@ -685,6 +679,9 @@
                 color: var(--bash-mode);
                 margin-right: 6px;
             }
+            .bash-run .elapsed {
+                color: var(--dim);
+            }
             .bash.excluded .bash-run .spin {
                 color: var(--dim);
             }
@@ -706,6 +703,10 @@
             }
             .bash-status.warn {
                 color: var(--warn);
+            }
+            /* neutral run-time note on a successful command (e.g. `(1.2s)`) */
+            .bash-status.meta {
+                color: var(--dim);
             }
             .panel {
                 background: var(--panel);

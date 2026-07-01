@@ -8,6 +8,20 @@
 export const MAX_TOOL_LINES = 8;
 
 /**
+ * Format a millisecond duration compactly, matching how the pi TUI shows how
+ * long a tool/command took: sub-second as `123ms`, seconds as `1.2s`, and
+ * anything past a minute as `1m 5s`. Returns "" for missing/negative input.
+ */
+export function formatDuration(ms: number | null | undefined): string {
+    if (ms == null || !isFinite(ms) || ms < 0) return "";
+    if (ms < 1000) return `${Math.round(ms)}ms`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+    const m = Math.floor(ms / 60000);
+    const sec = Math.round((ms % 60000) / 1000);
+    return `${m}m ${sec}s`;
+}
+
+/**
  * One-line summary of a tool call's arguments for the card header. Surfaces the
  * most meaningful field for common pi tools (bash command, file path, pattern,
  * query, url); otherwise a compact, length-capped JSON.
@@ -138,6 +152,8 @@ export interface ToolInfo {
     expanded: boolean;
     /** Structured tool details (e.g. edit's `diff`); pi-tui's renderResult input. */
     details?: any;
+    /** How long the tool ran, in ms (live turns only; absent on replay). */
+    durationMs?: number;
 }
 
 /** A custom tool renderer returns a DOM node, or null to fall back to default. */

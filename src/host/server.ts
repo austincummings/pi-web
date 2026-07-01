@@ -628,6 +628,11 @@ function customFrame(reg, m) {
 function subscribe(thread) {
     let streamed = false;
     let streamedThinking = false;
+    // Wall-clock start time per in-flight tool call, keyed by toolCallId, so we
+    // can stamp `durationMs` on the matching end frame (mirrors pi-tui showing
+    // how long a tool/command took). Only live turns are timed; replayed
+    // transcripts have no stored timing and simply omit the duration.
+    const toolStart = new Map();
     /** @param {ServerMessage} msg */
     const emit = (msg) => bus.broadcastToThread(thread.id, msg);
     return thread.session.subscribe((ev) => {
@@ -703,6 +708,7 @@ function subscribe(thread) {
                 break;
             }
             case "tool_execution_start":
+                toolStart.set(ev.toolCallId, Date.now());
                 emit({
                     kind: "tool",
                     id: ev.toolCallId,
@@ -711,7 +717,9 @@ function subscribe(thread) {
                     args: ev.args,
                 });
                 break;
-            case "tool_execution_end":
+            case "tool_execution_end": {
+                const t0 = toolStart.get(ev.toolCallId);
+                if (t0 != null) toolStart.delete(ev.toolCallId);
                 emit({
                     kind: "tool",
                     id: ev.toolCallId,
@@ -722,8 +730,11 @@ function subscribe(thread) {
                     // structured tool details for rich rendering (e.g. edit's
                     // `diff` string) — the web counterpart to pi-tui renderResult
                     details: ev.result?.details,
+                    // how long the tool ran (live turns only; see toolStart)
+                    durationMs: t0 != null ? Date.now() - t0 : undefined,
                 });
                 break;
+            }
             case "queue_update":
                 // steering / follow-up messages waiting to be delivered while a
                 // turn is in flight; mirror the pi TUI's pending-messages display
@@ -1556,6 +1567,7 @@ async function runBash(command, excludeFromContext, threadId) {
         command: cmd,
         excludeFromContext: !!excludeFromContext,
     });
+    const startedAt = Date.now();
     let streamed = false;
     try {
         const result = await s.executeBash(
@@ -1576,6 +1588,7 @@ async function runBash(command, excludeFromContext, threadId) {
             cancelled: !!result?.cancelled,
             truncated: !!result?.truncated,
             fullOutputPath: result?.fullOutputPath ?? null,
+            durationMs: Date.now() - startedAt,
         });
     } catch (err) {
         emit({
