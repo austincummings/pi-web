@@ -1720,8 +1720,15 @@ function loadPiTheme() {
 const piTheme = loadPiTheme();
 
 // ---- http -----------------------------------------------------------------
+// Web assets: from disk under `bun run` / `bun dev`; from the copy embedded at
+// compile time when running as a standalone binary (`bun build --compile`).
+const indexHtmlPath = Bun.embeddedFiles?.length
+    ? (await import("./embedded.ts")).indexHtmlPath
+    : join(WEB, "index.html");
+
 const server = createApp({
     web: WEB,
+    indexHtmlPath,
     theme: piTheme,
     bus,
     piweb,

@@ -30,6 +30,17 @@ async function build(webDir: string): Promise<string> {
 }
 
 /**
+ * When running as a compiled standalone binary (`bun build --compile`), the TS
+ * sources don't exist to bundle, so serve the prebuilt bundle embedded at
+ * compile time (see embedded.ts). Returns null when not compiled.
+ */
+async function loadEmbeddedAppJs(): Promise<string | null> {
+    if (!Bun.embeddedFiles?.length) return null;
+    const { appJsPath } = await import("./embedded.ts");
+    return await Bun.file(appJsPath).text();
+}
+
+/**
  * Create a bundler for the web entrypoint.
  * @param webDir absolute path to `src/web`
  * @param dev    rebuild on every call (no caching) for live editing
@@ -38,7 +49,10 @@ export function makeWebBundler(webDir: string, dev = false): WebBundler {
     let cached: string | null = null;
     return async () => {
         if (dev) return build(webDir);
-        if (cached == null) cached = await build(webDir);
+        // prod: prefer the embedded prebuilt bundle (compiled binary), else
+        // bundle the TS sources on first request and cache the result.
+        if (cached == null)
+            cached = (await loadEmbeddedAppJs()) ?? (await build(webDir));
         return cached;
     };
 }

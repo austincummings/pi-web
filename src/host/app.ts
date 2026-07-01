@@ -13,7 +13,6 @@ import http, {
     type IncomingMessage,
     type ServerResponse,
 } from "node:http";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createRouter } from "./router.ts";
 
@@ -32,6 +31,13 @@ export interface Bus {
 /** Options for {@link createApp}. Everything agent-coupled is an optional hook. */
 export interface AppOptions {
     web: string;
+    /**
+     * Absolute path to `index.html`. Under `bun run` this is a real file in
+     * `src/web`; in a compiled binary it's the embedded copy (a `Bun.file`
+     * virtual path). When set, it's served for `/` and `/index.html` instead
+     * of reading from the `web` directory.
+     */
+    indexHtmlPath?: string;
     bus: Bus;
     piweb: any;
     theme?: Record<string, string>;
@@ -174,6 +180,7 @@ function sendJson(res, code, obj) {
  */
 export function createApp({
     web,
+    indexHtmlPath,
     theme,
     bus,
     piweb,
@@ -514,7 +521,10 @@ export function createApp({
                 : undefined;
         if (entry) {
             try {
-                const buf = await readFile(join(web, entry[0]));
+                // Serve via Bun.file so the embedded (compiled-binary) path
+                // resolves; falls back to the on-disk web dir under `bun run`.
+                const p = indexHtmlPath ?? join(web, entry[0]);
+                const buf = Buffer.from(await Bun.file(p).arrayBuffer());
                 res.writeHead(200, { "Content-Type": entry[1] }).end(buf);
             } catch {
                 res.writeHead(404).end("not found");
