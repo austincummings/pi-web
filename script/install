@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+echo "→ Building pi-web binary..."
+bun run build:binary
+
+INSTALL_DIR="${HOME}/.local/bin"
+mkdir -p "$INSTALL_DIR"
+
+# Install atomically: write a temp file then rename over the target. `cp`
+# overwrites in place, which fails with ETXTBSY ("Text file busy") if the
+# current pi-web binary is running; rename() swaps the directory entry instead
+# (the running process keeps the old, now-unlinked inode).
+cp dist/pi-web "$INSTALL_DIR/pi-web.new"
+chmod +x "$INSTALL_DIR/pi-web.new"
+mv -f "$INSTALL_DIR/pi-web.new" "$INSTALL_DIR/pi-web"
+echo "→ Installed to $INSTALL_DIR/pi-web"
+echo "  (restart any running pi-web to pick up the new binary)"

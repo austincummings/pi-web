@@ -18,7 +18,11 @@ import {
 import { componentToNode } from "../src/host/component-adapter.ts";
 
 test("componentKind classifies real pi-tui components by constructor", () => {
-    expect(componentKind(new Image("QUJD", "image/png", { fallbackColor: (s) => s }))).toBe("image");
+    expect(
+        componentKind(
+            new Image("QUJD", "image/png", { fallbackColor: (s) => s }),
+        ),
+    ).toBe("image");
     expect(componentKind(new Box(1, 1))).toBe("box");
     expect(componentKind(new Container())).toBe("container");
     expect(componentKind(new Spacer(2))).toBe("spacer");
@@ -27,12 +31,25 @@ test("componentKind classifies real pi-tui components by constructor", () => {
 });
 
 test("readImage extracts base64Data + mimeType from a real Image", () => {
-    const img = new Image("QUJD", "image/png", { fallbackColor: (s) => s }, { filename: "cat.png" });
-    expect(readImage(img)).toEqual({ base64Data: "QUJD", mimeType: "image/png", filename: "cat.png" });
+    const img = new Image(
+        "QUJD",
+        "image/png",
+        { fallbackColor: (s) => s },
+        { filename: "cat.png" },
+    );
+    expect(readImage(img)).toEqual({
+        base64Data: "QUJD",
+        mimeType: "image/png",
+        filename: "cat.png",
+    });
 });
 
 test("readBoxPadding reads padding + detects a bgFn on a real Box", () => {
-    expect(readBoxPadding(new Box(3, 2))).toEqual({ paddingX: 3, paddingY: 2, hasBg: false });
+    expect(readBoxPadding(new Box(3, 2))).toEqual({
+        paddingX: 3,
+        paddingY: 2,
+        hasBg: false,
+    });
     expect(readBoxPadding(new Box(1, 1, (s) => s)).hasBg).toBe(true);
 });
 

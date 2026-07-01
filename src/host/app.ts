@@ -105,6 +105,11 @@ export interface AppOptions {
         list: (
             threadId?: string,
         ) => { items: any[] } | Promise<{ items: any[] }>;
+        run?: (
+            name: string,
+            args: string,
+            threadId?: string,
+        ) => Promise<{ ok: boolean; error?: string }>;
     };
     autocomplete?: (
         threadId: string | undefined,
@@ -544,6 +549,17 @@ export function createApp({
     router.post("/reload", async ({ res, body }) => {
         await onReload?.(body.threadId || undefined);
         res.writeHead(202).end();
+    });
+    // Execute a registered extension/prompt/skill slash command by name. The
+    // web composer dispatches commands from GET /commands here (instead of
+    // /prompt), so they run host-side like the pi TUI's `/` commands.
+    router.post("/command", async ({ res, body }) => {
+        const result = (await commandsApi?.run?.(
+            String(body.name || ""),
+            String(body.args ?? ""),
+            body.threadId || undefined,
+        )) ?? { ok: false, error: "command execution unsupported" };
+        sendJson(res, result.ok ? 200 : 400, result);
     });
     router.post("/interrupt", ({ res, body }) => {
         onInterrupt?.(body.threadId || undefined); // streamed over SSE

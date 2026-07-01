@@ -79,6 +79,7 @@ const WEB_BUILTIN_TOOLS = new Set([
 import { createPiWebHost } from "./piweb-host.ts";
 import { makeWebBundler } from "./build-web.ts";
 import { createBus, createApp } from "./app.ts";
+import { openApp, probeRunningInstance, browserHost } from "./open-app.ts";
 import { createRequire } from "node:module";
 
 // pi version, for the startup banner (mirrors the TUI's `pi v<version>` logo).
@@ -136,6 +137,21 @@ const HOST = process.env.HOST ?? "0.0.0.0";
 // each ThreadRuntime (sourced from its SessionManager header); pi binds cwd at
 // session creation, so "changing directory" means starting a thread elsewhere.
 const cwd = process.cwd();
+
+// If a pi-web instance is already serving on this port, don't boot a second
+// server (it would only fail to bind). Instead, open the existing instance in
+// the default browser as a chromeless --app window and exit. Probing here —
+// before the heavy agent bootstrap below — keeps the reuse path instant.
+{
+    const already = await probeRunningInstance(HOST, PORT);
+    if (already) {
+        const url = `http://${browserHost(HOST)}:${PORT}`;
+        console.log(`\n  pi-web already running \u2192 opening ${url}\n`);
+        await openApp(url);
+        process.exit(0);
+    }
+}
+
 // Directories pi-web has live/known threads in, so the thread list can span
 // multiple working dirs (on-disk sessions are partitioned per-cwd). Seeded with
 // the root; grows as threads are created in other directories this run.
@@ -1783,6 +1799,28 @@ const commandsApi = {
         // to `/autocomplete` when there's something to serve.
         return { items, autocomplete: !!rt?.piweb?.hasAutocomplete?.() };
     },
+    // Execute a registered slash command by name for a thread. Resolves the
+    // command off the session's extension runner and invokes its handler with a
+    // freshly built ExtensionCommandContext. `bindingThread` is set so any
+    // piweb surface mutations / sendMessage the handler makes route to *this*
+    // thread (mirrors the reload path).
+    async run(name: string, args: string, threadId?: string) {
+        const rt = threadId ? threadRuntimes.get(threadId) : undefined;
+        const runner = (rt?.session as any)?.extensionRunner;
+        const cmd = runner?.getCommand?.(name);
+        if (!rt || !cmd)
+            return { ok: false, error: `unknown command: /${name}` };
+        bindingThread = rt;
+        try {
+            const ctx = runner.createCommandContext();
+            await cmd.handler(args ?? "", ctx);
+            return { ok: true };
+        } catch (err: any) {
+            return { ok: false, error: String(err?.message ?? err) };
+        } finally {
+            bindingThread = null;
+        }
+    },
 };
 
 // ---- shell execution (! adds output to context, !! keeps it local) -------
@@ -2205,11 +2243,19 @@ const server = createApp({
      */
     onReload: async (threadId) => {
         const t = threadId ? threadRuntimes.get(threadId) : null;
-        if (!t?.resourceLoader || !t.piweb) return;
+        if (!t?.resourceLoader || !t.piweb || !t.session) return;
         t.piweb.clear();
         bindingThread = t;
         try {
-            await t.resourceLoader.reload();
+            // Mirror the pi TUI's /reload: call session.reload(), NOT just
+            // resourceLoader.reload(). session.reload() re-evaluates extension
+            // modules from disk AND rebuilds the live session's runtime in
+            // place (tool registry, message renderers, providers, flags,
+            // shortcuts) via _buildRuntime(), so tool/renderer edits take
+            // effect without recreating the session or restarting pi-web.
+            // resourceLoader.reload() alone re-reads the module but leaves the
+            // running session bound to the stale runtime.
+            await t.session.reload();
             bus.broadcastToThread(threadId, {
                 kind: "surfaces",
                 surfaces: t.piweb.snapshot(),

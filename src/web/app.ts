@@ -1928,6 +1928,12 @@ function runInput(text: string, images: any[] = []) {
         const cmd = sp === -1 ? text : text.slice(0, sp);
         const arg = sp === -1 ? "" : text.slice(sp + 1).trim();
         if (runCommand(cmd, arg)) return;
+        // Registered extension/prompt/skill command (from GET /commands): run it
+        // host-side instead of sending the slash text to the model as a prompt.
+        if (extCommands.some((c) => c.value === cmd)) {
+            postThread("/command", { name: cmd.slice(1), args: arg });
+            return;
+        }
     }
     postThread("/prompt", {
         text,

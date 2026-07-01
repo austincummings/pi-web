@@ -17,11 +17,7 @@
 
 /** Structural kinds we upgrade from a flat AnsiBlock to native/nested DOM. */
 export type ComponentKind =
-    | "image"
-    | "box"
-    | "container"
-    | "spacer"
-    | "unknown";
+    "image" | "box" | "container" | "spacer" | "unknown";
 
 function ctorName(x: unknown): string {
     return (x as any)?.constructor?.name ?? "";

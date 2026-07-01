@@ -101,16 +101,22 @@ export default function (pi: ExtensionAPI) {
         parameters,
         async execute() {
             return {
-                content: [{ type: "text", text: "parity_demo_structural ran." }],
+                content: [
+                    { type: "text", text: "parity_demo_structural ran." },
+                ],
                 details: {},
                 isError: false,
             };
         },
         renderResult() {
             const box = new Box(2, 1);
-            box.addChild(new Text("◆ Parity Demo — structural (Box → children)"));
+            box.addChild(
+                new Text("◆ Parity Demo — structural (Box → children)"),
+            );
             box.addChild(new Spacer(1));
-            box.addChild(new Text("Below is a real pi-tui Image → <img> in pi-web:"));
+            box.addChild(
+                new Text("Below is a real pi-tui Image → <img> in pi-web:"),
+            );
             box.addChild(
                 new Image(
                     PNG_1x1,

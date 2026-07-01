@@ -158,7 +158,10 @@ test("adapts an Image component to an <img> data URI (alt from filename)", () =>
 });
 
 test("an Image missing its data degrades to the ANSI leaf", () => {
-    const img = tag("Image", { mimeType: "image/png", render: () => ["fallback"] });
+    const img = tag("Image", {
+        mimeType: "image/png",
+        render: () => ["fallback"],
+    });
     const node = componentToNode(img, 80);
     expect(node.type).toBe("AnsiBlock");
     expect(node.lines).toEqual(["fallback"]);
@@ -171,13 +174,22 @@ test("adapts a Spacer to a gap node", () => {
 
 test("walks a Box: padding + recursively-adapted children at inner width", () => {
     const child = { render: (w) => ["child@" + w] }; // plain leaf
-    const box = tag("Box", { paddingX: 2, paddingY: 1, children: [child], render: () => ["boxansi"] });
+    const box = tag("Box", {
+        paddingX: 2,
+        paddingY: 1,
+        children: [child],
+        render: () => ["boxansi"],
+    });
     const node = componentToNode(box, 80);
     expect(node.type).toBe("Box");
     expect(node.paddingX).toBe(2);
     expect(node.paddingY).toBe(1);
     // child rendered at inner width 80 - 2*2 = 76
-    expect(node.children[0]).toEqual({ type: "AnsiBlock", cols: 76, lines: ["child@76"] });
+    expect(node.children[0]).toEqual({
+        type: "AnsiBlock",
+        cols: 76,
+        lines: ["child@76"],
+    });
 });
 
 test("a Box with a bgFn degrades to the ANSI leaf (bg unreproducible)", () => {
