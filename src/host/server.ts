@@ -1578,7 +1578,6 @@ async function runBash(command, excludeFromContext, threadId) {
         command: cmd,
         excludeFromContext: !!excludeFromContext,
     });
-    const startedAt = Date.now();
     let streamed = false;
     try {
         const result = await s.executeBash(
@@ -1599,7 +1598,6 @@ async function runBash(command, excludeFromContext, threadId) {
             cancelled: !!result?.cancelled,
             truncated: !!result?.truncated,
             fullOutputPath: result?.fullOutputPath ?? null,
-            durationMs: Date.now() - startedAt,
         });
     } catch (err) {
         emit({

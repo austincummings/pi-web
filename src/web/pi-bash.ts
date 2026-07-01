@@ -12,8 +12,6 @@
 // command runs, Esc cancels it (host `POST /bash/abort` -> session.abortBash());
 // the resulting end frame carries `cancelled: true`, shown as "(cancelled)".
 
-import { formatDuration } from "./tools.ts";
-
 // Preview line limit when collapsed (matches pi-tui's BashExecutionComponent).
 const PREVIEW_LINES = 20;
 
@@ -30,8 +28,6 @@ export interface BashFrame {
     cancelled?: boolean;
     truncated?: boolean;
     fullOutputPath?: string | null;
-    /** How long the command ran, in ms (host-stamped on the end frame). */
-    durationMs?: number;
 }
 
 export class PiBash extends HTMLElement {
@@ -44,11 +40,6 @@ export class PiBash extends HTMLElement {
     private truncated = false;
     private fullOutputPath: string | null = null;
     private expanded = false;
-    // Wall-clock start (for the live running counter) and final run time. The
-    // host stamps durationMs on the end frame; startedAt is the client-side
-    // fallback and drives the ticking elapsed while the command runs.
-    private startedAt: number | null = null;
-    private durationMs: number | null = null;
 
     private built = false;
     private spinTimer: ReturnType<typeof setInterval> | null = null;
@@ -72,7 +63,6 @@ export class PiBash extends HTMLElement {
             if (m.command != null) this.command = m.command;
             this.excluded = !!m.excludeFromContext;
             this.running = true;
-            this.startedAt = Date.now();
         } else if (m.status === "chunk") {
             this.output += m.text ?? "";
         } else if (m.status === "end") {
@@ -81,9 +71,6 @@ export class PiBash extends HTMLElement {
             this.cancelled = !!m.cancelled;
             this.truncated = !!m.truncated;
             this.fullOutputPath = m.fullOutputPath ?? null;
-            this.durationMs =
-                m.durationMs ??
-                (this.startedAt != null ? Date.now() - this.startedAt : null);
         }
         this.render();
         this.syncSpinner();
@@ -103,9 +90,6 @@ export class PiBash extends HTMLElement {
                 this.spinIndex = (this.spinIndex + 1) % SPIN_FRAMES.length;
                 const spin = this.querySelector<HTMLElement>(".bash-run .spin");
                 if (spin) spin.textContent = SPIN_FRAMES[this.spinIndex];
-                const el =
-                    this.querySelector<HTMLElement>(".bash-run .elapsed");
-                if (el) el.textContent = this.elapsedText();
             }, 80);
         } else if (!this.running) {
             this.stopSpinner();
@@ -142,16 +126,14 @@ export class PiBash extends HTMLElement {
 
         if (this.running) {
             // Footer: braille spinner + "Running…" while the command runs.
+            // Matches pi-tui's Loader (`Running... (esc to cancel)`) — no
+            // elapsed timer.
             const run = document.createElement("div");
             run.className = "bash-run";
             run.innerHTML =
-                '<span class="spin"></span>Running… ' +
-                '<span class="elapsed"></span>';
+                '<span class="spin"></span>Running… (esc to cancel)';
             (run.querySelector(".spin") as HTMLElement).textContent =
                 SPIN_FRAMES[this.spinIndex];
-            (run.querySelector(".elapsed") as HTMLElement).textContent =
-                this.elapsedText();
-            run.append(" (esc to cancel)");
             this.appendChild(run);
             return;
         }
@@ -173,18 +155,13 @@ export class PiBash extends HTMLElement {
             this.appendChild(more);
         }
 
-        // Footer: exit / cancel status with run time (mirrors pi-tui's status
-        // parts; the duration is appended like `(exit 1 · 1.2s)`).
-        const dur = formatDuration(this.durationMs);
+        // Footer: exit / cancel status (mirrors pi-tui's BashExecutionComponent
+        // status parts — a cancelled or non-zero-exit command only, with no run
+        // time; a successful command shows no status line at all).
         if (this.cancelled) {
-            this.appendStatus(dur ? `(cancelled · ${dur})` : "(cancelled)", "warn");
+            this.appendStatus("(cancelled)", "warn");
         } else if (this.exitCode != null && this.exitCode !== 0) {
-            this.appendStatus(
-                dur ? `(exit ${this.exitCode} · ${dur})` : `(exit ${this.exitCode})`,
-                "err",
-            );
-        } else if (dur) {
-            this.appendStatus(`(${dur})`, "meta");
+            this.appendStatus(`(exit ${this.exitCode})`, "err");
         }
         // Matches pi-tui: the truncation warning shows only when a full-output
         // temp file exists (that's where the elided output can be recovered).
@@ -196,14 +173,7 @@ export class PiBash extends HTMLElement {
         }
     }
 
-    // Elapsed time since the command started, for the live running counter.
-    private elapsedText(): string {
-        return this.startedAt == null
-            ? ""
-            : formatDuration(Date.now() - this.startedAt);
-    }
-
-    private appendStatus(text: string, kind: "warn" | "err" | "meta"): void {
+    private appendStatus(text: string, kind: "warn" | "err"): void {
         const s = document.createElement("div");
         s.className = "bash-status " + kind;
         s.textContent = text;
