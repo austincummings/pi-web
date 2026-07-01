@@ -11,6 +11,8 @@
  */
 const noop = () => {};
 const stub = {
+    setWidget: noop,
+    removeWidget: noop,
     dock: noop,
     overlay: noop,
     removeDock: noop,

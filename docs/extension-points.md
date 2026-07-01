@@ -47,7 +47,7 @@ Legend: ✅ implemented · 🟡 partial / proposed · ❌ missing · ➖ N/A in 
 | --- | -------------------------------------------------------------- | ------------------------------------------------------------ | :----: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | `notify(msg, level)`                                           | `piweb.notify(msg, type)`                                    |   ✅   | Toasts; same name, info/warning/error.                                                                                                                                                                                                                                       |
 | 2   | `setStatus(key, text)`                                         | `piweb.setStatus(key, text, opts?)`                          |   ✅   | Keyed footer segments; web adds align/tone superset.                                                                                                                                                                                                                         |
-| 3   | `setWidget(key, lines, {placement: aboveEditor\|belowEditor})` | `piweb.dock(id, def)` → left/right/bottom/footer rails       |   🟡   | Concept maps but name diverges; rename to `setWidget` + widened placement is **proposed** in `docs/widget.md` (TODO #20).                                                                                                                                                    |
+| 3   | `setWidget(key, lines, {placement: aboveEditor\|belowEditor})` | `piweb.setWidget(key, content, {placement})` → left/right/bottom/footer rails |   ✅   | Same name; `content` accepts `string[]` (drop-in for plain pi) or a serializable WidgetDef; `placement` widened with web-only `left`/`right` rails (`docs/widget.md`, TODO #20). `dock(id, def)` kept as a deprecated alias.                                                  |
 | 4   | `select / confirm / input / editor` dialogs                    | `piweb.overlay(id, def)` + `openOverlay/closeOverlay`        |   🟡   | Declarative modal cards exist; blocking `await select()`-style request/response (`POST /ui-response` + `ui_request` SSE) is **not yet wired** (carried-over TODO).                                                                                                           |
 | 5   | Custom tool rendering (`renderCall` / `renderResult`)          | `registerToolRenderer(name, fn)` (`src/web/tools.ts`)        |   ✅   | Returns a DOM node or `null` to fall back; web equivalent of the TUI render hooks (TODO #4).                                                                                                                                                                                 |
 | 6   | `registerMessageRenderer(customType, renderer)`                | —                                                            |   ❌   | Proposed as `piweb.registerMessageRenderer` returning a serializable node tree (TODO #19).                                                                                                                                                                                   |
@@ -71,8 +71,8 @@ Everything currently on `globalThis.__PIWEB__` (`src/host/piweb-host.ts`):
 
 | Method                                                       | Purpose                                                | TUI analogue                          |
 | ------------------------------------------------------------ | ------------------------------------------------------ | ------------------------------------- |
-| `dock(id, def)`                                              | Mount/replace a rail widget (left/right/bottom/footer) | `setWidget(aboveEditor\|belowEditor)` |
-| `removeDock(id)` / `remove(id)`                              | Remove a dock                                          | `setWidget(key, undefined)`           |
+| `setWidget(key, content, {placement})`                       | Mount/replace a rail widget (left/right/bottom/footer) | `setWidget(aboveEditor\|belowEditor)` |
+| `removeWidget(key)` / `dock(id, def)` _(deprecated alias)_   | Remove / mount via the legacy name                     | `setWidget(key, undefined)`           |
 | `overlay(id, def)`                                           | Define a modal card (starts closed)                    | `custom({ overlay })`                 |
 | `openOverlay(id)` / `closeOverlay(id)` / `removeOverlay(id)` | Show/hide/remove a modal                               | dialog lifecycle                      |
 | `notify(msg, type)`                                          | Transient toast                                        | `ui.notify`                           |
@@ -90,6 +90,7 @@ in-iframe `window.piweb.{action,notify}` (app.ts).
 ## 4. Gap summary
 
 - **Strong parity:** `notify`, `setStatus`, `setTitle`, custom tool rendering, host-presence guard.
-- **Proposed / in flight:** `setWidget` rename (TODO #20), `registerMessageRenderer` (TODO #19), blocking dialog request/response bridge, `ctx.mode === "web"`.
+- **Landed:** `setWidget` rename + widened placement (TODO #20).
+- **Proposed / in flight:** `registerMessageRenderer` (TODO #19), blocking dialog request/response bridge, `ctx.mode === "web"`.
 - **Missing:** `setFooter`, working-message/indicator overrides, editor-text bridge, `addAutocompleteProvider`, theme API.
 - **N/A in a browser:** `setEditorComponent` (TUI Component swap).

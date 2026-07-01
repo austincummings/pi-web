@@ -1,8 +1,15 @@
 # `piweb.setWidget` — sticky extension chrome for the web UI
 
-Status: **proposed** (TODO #20). This document specifies the rename of the
+Status: **implemented** (TODO #20). This document specifies the rename of the
 current `dock` surface API to `setWidget`, aligning pi-web with pi's TUI
 `ExtensionUIContext.setWidget` while remaining a serializable superset.
+
+Landed: `setWidget(key, content, options)` + `removeWidget(key)` on the host
+registry (`src/host/piweb-host.ts`), forwarded in `src/host/server.ts` and
+stubbed as no-ops in `src/sdk/piweb.ts`. `string[]` content, the
+`aboveEditor`/`belowEditor`/`left`/`right` placements, and `title`/`order`
+options all work; `dock()` remains as a deprecated authoring alias. The wire
+protocol and front-end (`docks.{left,right,bottom,footer}` cards) are unchanged.
 
 ---
 

@@ -37,14 +37,19 @@ Simple, line-based backlog. Check items off as they land.
       spans without a `Frame`, (c) capturing the fenced-code language in
       `markdown.ts` so code blocks can be routed to a registered renderer.
       Stays portable: with no host present the call no-ops like the rest of `piweb`.
-- [ ] 20. Rename the `dock`/`overlay` surface API toward pi parity: `dock` -> `setWidget`
+- [x] 20. Rename the `dock`/`overlay` surface API toward pi parity: `dock` -> `setWidget`
       with a widened `placement` (`aboveEditor`/`belowEditor` aliases for today's
       `bottom`/`footer`, plus web-only `left`/`right` rails), and accept `string[]`
       content for drop-in compatibility with plain pi extensions. Keep `overlay`
       separate (it maps to pi's `custom({ overlay })`, not a widget placement).
       `dock`/`overlay` currently have no real callers, so the rename is cheap; keep
       `dock` as a thin deprecated alias for one release. See `docs/widget.md` for the
-      full spec.
+      full spec. (Done: `setWidget(key, content, options)` + `removeWidget(key)` on
+      the host registry map `placement` onto internal `side`s (`aboveEditor->bottom`,
+      `belowEditor->footer`, `left`/`right` pass through), synthesize a Text `Stack`
+      from `string[]`, and honor `title`/`order`; forwarded in `server.ts` and
+      stubbed no-op in `sdk/piweb.ts`. `dock()` stays as a deprecated alias; the
+      wire protocol + front-end are unchanged.)
 
 - [ ] 21. Reach slash-command parity with the pi TUI. The web UI (`src/web/app.ts`
       `COMMANDS`) now ships 16 of the TUI's 22 commands. Shared today:
@@ -92,7 +97,7 @@ Simple, line-based backlog. Check items off as they land.
       `docs/extension-points.md`). Extensions inherit pi's event/tool/session/model
       layers unchanged; only the UI layer needs a web bridge. Already at parity:
       `notify`, `setStatus`, custom tool rendering (`registerToolRenderer`), and the
-      host-presence/no-op guard. To build: - [ ] `setWidget` rename + widened placement (folds in #20) — replaces `dock` - [ ] blocking dialog request/response so `select`/`confirm`/`input`/`editor`
+      host-presence/no-op guard. To build: - [x] `setWidget` rename + widened placement (folds in #20) — replaces `dock` - [ ] blocking dialog request/response so `select`/`confirm`/`input`/`editor`
       can `await` (`POST /ui-response` + `ui_request` SSE; see carried-over bridge) - [ ] `registerMessageRenderer` (folds in #19) - [x] `setTitle` web page-title hook (folds in #8 — `piweb.setTitle`; `ctx.ui` wiring still pending) - [ ] `setFooter` — footer replacement hook - [ ] `setWorkingMessage` / `setWorkingVisible` / `setWorkingIndicator` - [ ] `setEditorText` / `getEditorText` / `pasteToEditor` composer bridge - [ ] `addAutocompleteProvider` — extension-supplied completion - [ ] `getToolsExpanded` / `setToolsExpanded` programmatic control - [ ] theme API: `getAllThemes` / `getTheme` / `setTheme` / `theme.fg(...)` - [ ] `ctx.mode === "web"` so portable extensions can branch on the medium - [ ] N/A in a browser: `setEditorComponent` / `getEditorComponent` (TUI
       Component swap) — document as out of scope rather than implement
 

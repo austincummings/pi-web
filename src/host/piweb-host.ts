@@ -5,8 +5,11 @@
  * createAgentSession). It generalizes pi's TUI `ExtensionUIContext` into a 2D,
  * serializable model. Extensions mount **surfaces**:
  *
- *   - **docks** — persistent, stackable widgets in the left / right / bottom
- *     rails (the web analogue of pi-tui's `setWidget(aboveEditor|belowEditor)`).
+ *   - **widgets** — persistent, stackable widgets in the left / right / bottom
+ *     / footer rails, authored via `setWidget(key, content, { placement })`
+ *     (the web analogue of pi-tui's `setWidget(aboveEditor|belowEditor)`,
+ *     widened with web-only `left`/`right` rails). Internally still tracked as
+ *     `dock`-kind surfaces; `dock()` remains a deprecated authoring alias.
  *   - **overlays** — declarative modal cards, opened/closed on demand
  *     (the analogue of pi-tui's `custom({ overlay })` + select/confirm/input).
  *
@@ -103,6 +106,29 @@ export function createPiWebHost({ broadcast, getPi }) {
     const push = () => broadcast({ kind: "surfaces", surfaces: snapshot() });
 
     /**
+     * Map a widget `placement` (pi-parity + web-only rails) onto an internal
+     * dock `side`. `aboveEditor`/`belowEditor` are pi's two slots; `left`/`right`
+     * are the web-only rails; the raw `side` values pass through unchanged.
+     * @param {"aboveEditor"|"belowEditor"|"left"|"right"|"bottom"|"footer"} [placement]
+     * @returns {DockSide}
+     */
+    const placementToSide = (placement) => {
+        switch (placement) {
+            case "belowEditor":
+            case "footer":
+                return "footer";
+            case "left":
+                return "left";
+            case "right":
+                return "right";
+            case "aboveEditor":
+            case "bottom":
+            default:
+                return "bottom";
+        }
+    };
+
+    /**
      * @param {string} id
      * @param {"dock"|"overlay"} kind
      * @param {object} def
@@ -135,7 +161,53 @@ export function createPiWebHost({ broadcast, getPi }) {
     const host = {
         present: true,
 
-        /** Mount/update a dock surface. @param {string} id @param {object} def */
+        /**
+         * Mount/replace a sticky widget (pi-parity name for the legacy `dock`).
+         * Mirrors pi-tui `ExtensionUIContext.setWidget`, widened with `left`/
+         * `right` rails and a serializable render tree in place of a live
+         * `Component`. Same `key` replaces in place; `undefined` content removes.
+         *
+         * @param {string} key
+         * @param {string[]|object|undefined} content  plain lines, a WidgetDef, or undefined to remove
+         * @param {{placement?:"aboveEditor"|"belowEditor"|"left"|"right", title?:string, order?:number}} [options]
+         */
+        setWidget(key, content, options: Record<string, any> = {}) {
+            if (content === undefined) {
+                if (surfaces.delete(key)) push();
+                return;
+            }
+            // string[] -> a default Stack of Text rows (drop-in for plain pi).
+            const def = Array.isArray(content)
+                ? {
+                      render: () => ({
+                          type: "Stack",
+                          children: content.map((t) => ({
+                              type: "Text",
+                              text: String(t),
+                          })),
+                      }),
+                  }
+                : { ...content };
+            // `options` wins, but a WidgetDef may also carry placement/title/
+            // order inline (see docs/widget.md §7), so fall back to those.
+            def.side = placementToSide(options.placement ?? def.placement);
+            if (options.title !== undefined) def.title = options.title;
+            if (options.order !== undefined) def.order = options.order;
+            define(key, "dock", def);
+        },
+        /**
+         * Remove a widget (alias for `setWidget(key, undefined)`).
+         * @param {string} key
+         */
+        removeWidget(key) {
+            if (surfaces.delete(key)) push();
+        },
+
+        /**
+         * @deprecated Use `setWidget(key, content, { placement })`. Thin alias
+         * kept for one release; defaults to the `right` rail like before.
+         * @param {string} id @param {object} def
+         */
         dock(id, def = {}) {
             define(id, "dock", def);
         },

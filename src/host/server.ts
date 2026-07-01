@@ -273,6 +273,8 @@ const sessionFor = (id) =>
 // or dispatching (during a panel action). Panel writes reach only the clients
 // viewing that thread, via the thread registry's broadcast().
 const nullRegistry = {
+    setWidget() {},
+    removeWidget() {},
     dock() {},
     overlay() {},
     removeDock() {},
@@ -297,6 +299,8 @@ const activeRegistry = () =>
     nullRegistry;
 const piweb = {
     present: true,
+    setWidget: (...a) => activeRegistry().setWidget(...a),
+    removeWidget: (...a) => activeRegistry().removeWidget(...a),
     dock: (...a) => activeRegistry().dock(...a),
     overlay: (...a) => activeRegistry().overlay(...a),
     removeDock: (...a) => activeRegistry().removeDock(...a),
