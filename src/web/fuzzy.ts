@@ -5,10 +5,15 @@
  * consecutive). Lower score = better match. Kept dependency-free and
  * DOM-free so it can be unit-tested under `bun test`.
  */
-export function fuzzyMatch(query, text) {
+export interface FuzzyMatchResult {
+    matches: boolean;
+    score: number;
+}
+
+export function fuzzyMatch(query: string, text: string): FuzzyMatchResult {
     const queryLower = query.toLowerCase();
     const textLower = text.toLowerCase();
-    const matchQuery = (normalizedQuery) => {
+    const matchQuery = (normalizedQuery: string): FuzzyMatchResult => {
         if (normalizedQuery.length === 0) {
             return { matches: true, score: 0 };
         }
@@ -85,18 +90,22 @@ export function fuzzyMatch(query, text) {
  * Filter and sort items by fuzzy match quality (best matches first).
  * Supports whitespace- and slash-separated tokens: all tokens must match.
  */
-export function fuzzyFilter(items, query, getText) {
+export function fuzzyFilter<T>(
+    items: T[],
+    query: string,
+    getText: (item: T) => string,
+): T[] {
     if (!query.trim()) {
         return items;
     }
     const tokens = query
         .trim()
         .split(/[\s/]+/)
-        .filter((t) => t.length > 0);
+        .filter((t: string) => t.length > 0);
     if (tokens.length === 0) {
         return items;
     }
-    const results = [];
+    const results: { item: T; totalScore: number }[] = [];
     for (const item of items) {
         const text = getText(item);
         let totalScore = 0;

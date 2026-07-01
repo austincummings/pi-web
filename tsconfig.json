@@ -11,7 +11,7 @@
         "skipLibCheck": true,
         "esModuleInterop": true,
         "resolveJsonModule": true,
-        "strict": false,
+        "strict": true,
         "forceConsistentCasingInFileNames": true
     },
     "include": ["src", "test", ".pi/extensions"],

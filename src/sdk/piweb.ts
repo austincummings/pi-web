@@ -122,6 +122,11 @@ export interface PiWebSurface {
     [key: string]: any;
 }
 
+declare global {
+    // eslint-disable-next-line no-var
+    var __PIWEB__: PiWebSurface | undefined;
+}
+
 const noop = () => {};
 // Blocking dialogs degrade to an immediate cancel under plain pi (no host):
 // select/input/editor resolve to undefined, confirm to false — same as a
@@ -162,9 +167,9 @@ export function getPiWeb() {
 export const piweb: PiWebSurface = new Proxy(
     {},
     {
-        get(_t, prop) {
+        get(_t, prop: string | symbol) {
             const host = globalThis.__PIWEB__ ?? stub;
-            return host[prop];
+            return (host as Record<string | symbol, any>)[prop];
         },
     },
 ) as PiWebSurface;

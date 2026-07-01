@@ -54,21 +54,21 @@ registerToolRenderer("edit", (info: ToolInfo) => {
     return pre;
 });
 
-const $transcript = document.getElementById("transcript");
-const $dockLeft = document.getElementById("dock-left");
-const $dockRight = document.getElementById("dock-right");
-const $dockBottom = document.getElementById("dock-bottom");
-const $dockFooter = document.getElementById("dock-footer");
-const $overlayLayer = document.getElementById("overlay-layer");
-const $toastLayer = document.getElementById("toast-layer");
-const $statusbar = document.getElementById("statusbar");
-const $contextbar = document.getElementById("contextbar");
-const $status = document.getElementById("status");
-const $threadTitle = document.getElementById("threadTitle");
-const $overlay = document.getElementById("overlay");
-const $picker = document.getElementById("picker");
-const $dialog = document.getElementById("dialog");
-const $dialogCard = document.getElementById("dialog-card");
+const $transcript = document.getElementById("transcript")!;
+const $dockLeft = document.getElementById("dock-left")!;
+const $dockRight = document.getElementById("dock-right")!;
+const $dockBottom = document.getElementById("dock-bottom")!;
+const $dockFooter = document.getElementById("dock-footer")!;
+const $overlayLayer = document.getElementById("overlay-layer")!;
+const $toastLayer = document.getElementById("toast-layer")!;
+const $statusbar = document.getElementById("statusbar")!;
+const $contextbar = document.getElementById("contextbar")!;
+const $status = document.getElementById("status")!;
+const $threadTitle = document.getElementById("threadTitle")!;
+const $overlay = document.getElementById("overlay")!;
+const $picker = document.getElementById("picker")!;
+const $dialog = document.getElementById("dialog")!;
+const $dialogCard = document.getElementById("dialog-card")!;
 const $prompt = document.getElementById("prompt") as HTMLTextAreaElement;
 const $backdrop = document.getElementById("backdrop") as HTMLElement;
 
@@ -84,21 +84,20 @@ $prompt?.addEventListener("scroll", () => {
     $backdrop.scrollLeft = $prompt.scrollLeft;
 });
 const $ask = document.getElementById("ask") as HTMLFormElement;
-const $ac = document.getElementById("ac");
-const $working = document.getElementById("working");
-const $queued = document.getElementById("queued");
-const $attachments = document.getElementById("attachments");
+const $ac = document.getElementById("ac")!;
+const $working = document.getElementById("working")!;
+const $queued = document.getElementById("queued")!;
+const $attachments = document.getElementById("attachments")!;
 
 // ---- pasted/attached images (Ctrl+V into the composer) --------------------
 // Images pasted (or dropped) into the composer are held here as base64 until
 // the message is sent, and shown as removable thumbnail chips below the input.
 // Each entry: { data: base64 (no data: prefix), mimeType, url: data-URL }.
-/** @type {{data:string; mimeType:string; url:string}[]} */
-let pendingImages = [];
+let pendingImages: { data: string; mimeType: string; url: string }[] = [];
 const MAX_IMAGE_DIM = 2000; // downscale large pastes (mirrors the pi CLI cap)
 
 // Read a File as a data: URL.
-function readAsDataURL(file): Promise<string> {
+function readAsDataURL(file: Blob): Promise<string> {
     return new Promise((resolve, reject) => {
         const r = new FileReader();
         r.onerror = () => reject(r.error);
@@ -108,7 +107,7 @@ function readAsDataURL(file): Promise<string> {
 }
 
 // Decode a data-URL into an <img> so we can measure/resize it on a canvas.
-function loadImageEl(url): Promise<HTMLImageElement> {
+function loadImageEl(url: string): Promise<HTMLImageElement> {
     return new Promise((resolve, reject) => {
         const im = new Image();
         im.onload = () => resolve(im);
@@ -120,7 +119,7 @@ function loadImageEl(url): Promise<HTMLImageElement> {
 // Turn a File into a pending-image record, downscaling to MAX_IMAGE_DIM on the
 // longest edge when needed (keeps request payloads sane). Falls back to the
 // original bytes if canvas processing fails.
-async function fileToImage(file) {
+async function fileToImage(file: File) {
     const url = await readAsDataURL(file);
     let outUrl = url;
     let mimeType = file.type || "image/png";
@@ -132,7 +131,7 @@ async function fileToImage(file) {
             const c = document.createElement("canvas");
             c.width = Math.round(im.width * scale);
             c.height = Math.round(im.height * scale);
-            c.getContext("2d").drawImage(im, 0, 0, c.width, c.height);
+            c.getContext("2d")!.drawImage(im, 0, 0, c.width, c.height);
             outUrl = c.toDataURL("image/png");
             mimeType = "image/png";
         }
@@ -144,7 +143,7 @@ async function fileToImage(file) {
 }
 
 // Ingest a pasted/dropped image file into the pending list.
-async function addImageFile(file) {
+async function addImageFile(file: File) {
     try {
         pendingImages.push(await fileToImage(file));
         renderAttachments();
@@ -254,10 +253,10 @@ async function restoreQueue({ abort }: { abort: boolean }) {
 
 // ---- "Working" spinner (mirrors pi-tui's Loader: braille frames @ 80ms) ----
 const SPIN_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-let spinTimer = null;
+let spinTimer: ReturnType<typeof setInterval> | null = null;
 let spinIndex = 0;
 /** Show/hide the spinner above the input while the focused thread is working. */
-function setWorking(on) {
+function setWorking(on: boolean) {
     if (!$working) return;
     const spin = $working.querySelector(".spin");
     if (on) {
@@ -278,13 +277,13 @@ function setWorking(on) {
     }
 }
 
-let assistantEl = null; // current streaming assistant bubble
-let bashEl = null; // current streaming bash output block
+let assistantEl: HTMLElement | null = null; // current streaming assistant bubble
+let bashEl: PiBash | null = null; // current streaming bash output block
 let thinkingHidden = false; // mirrors pi's "hide thinking blocks" setting
 let thinkingLevel = "off"; // per-session reasoning level (focused border color)
 let thinkingSupported = false; // does the active model support cycling levels?
 let assistantRaw = ""; // accumulated assistant text (rendered as markdown)
-let threadItems = []; // last known thread list (from SSE)
+let threadItems: any[] = []; // last known thread list (from SSE)
 // The selected thread is driven by the URL (`/?thread=<id>`), so it survives
 // refreshes, is shareable/bookmarkable, and lets different tabs view different
 // threads. `activeThreadId` always mirrors the current URL.
@@ -379,7 +378,7 @@ const COMMANDS = [
     },
 ];
 
-function bubble(role, text = "", images = []) {
+function bubble(role: string, text = "", images: any[] = []) {
     clearEmpty();
     const el = document.createElement("div");
     el.className = `msg ${role}`;
@@ -387,7 +386,7 @@ function bubble(role, text = "", images = []) {
     // turns apart with the userMessageBg wash and renders assistant turns as
     // plain markdown. (custom messages render their own label elsewhere.)
     el.innerHTML = `<div class="body"></div>`;
-    el.querySelector(".body").textContent = text;
+    el.querySelector(".body")!.textContent = text;
     if (images && images.length) {
         const wrap = document.createElement("div");
         wrap.className = "msg-images";
@@ -398,14 +397,14 @@ function bubble(role, text = "", images = []) {
             img.addEventListener("click", () => window.open(img.src, "_blank"));
             wrap.appendChild(img);
         });
-        el.querySelector(".body").appendChild(wrap);
+        el.querySelector(".body")!.appendChild(wrap);
     }
     $transcript.appendChild(el);
     followBottom();
     return el;
 }
 
-function bashBubble(command, excluded): PiBash {
+function bashBubble(command: string, excluded: boolean): PiBash {
     clearEmpty();
     const el = document.createElement("pi-bash") as PiBash;
     el.apply({ status: "start", command, excludeFromContext: excluded });
@@ -414,8 +413,8 @@ function bashBubble(command, excluded): PiBash {
     return el;
 }
 
-function renderAssistant(el, text) {
-    el.querySelector(".body").innerHTML = renderMarkdown(text);
+function renderAssistant(el: HTMLElement, text: string) {
+    el.querySelector(".body")!.innerHTML = renderMarkdown(text);
     followBottom();
 }
 
@@ -423,7 +422,7 @@ function renderAssistant(el, text) {
 // serialized component `tree` (from a registered message renderer), render it
 // via renderNode; otherwise render the message's text as markdown. The
 // customType is shown as the role label (mirrors the TUI's customMessageLabel).
-function renderCustomMessage(m) {
+function renderCustomMessage(m: any) {
     clearEmpty();
     const el = document.createElement("div");
     el.className = "msg custom";
@@ -537,9 +536,7 @@ function fillWelcome(el: HTMLElement, expanded: boolean, onToggle: () => void) {
 }
 
 function renderWelcome() {
-    let el = $transcript.querySelector(
-        ".welcome.pinned",
-    ) as HTMLElement | null;
+    let el = $transcript.querySelector(".welcome.pinned") as HTMLElement | null;
     if (!welcomeInfo) {
         if (el) el.remove();
         return;
@@ -612,7 +609,7 @@ function followBottom() {
 // Apply a `tool` SSE frame: create or look up the <pi-tool> card for this call
 // id, feed it the frame, and auto-follow only if we were near the bottom (so we
 // don't yank the view while the user reads back).
-function applyToolFrame(m) {
+function applyToolFrame(m: any) {
     let el = toolCard(m.id);
     if (!el) {
         clearEmpty();
@@ -647,7 +644,7 @@ $transcript.addEventListener("pithinking-render", () => followBottom());
 
 // Apply the hidden state to the DOM (CSS collapses .think-body). When `persist`
 // is set, also write the new value back to pi's settings via the host.
-function setThinkingHidden(hidden, persist) {
+function setThinkingHidden(hidden: boolean, persist: boolean) {
     thinkingHidden = !!hidden;
     document.body.classList.toggle("hide-thinking", thinkingHidden);
     if (persist) postThread("/thinking", { hidden: thinkingHidden });
@@ -683,7 +680,7 @@ function scheduleAssistantRender() {
     });
 }
 
-function post(path, body) {
+function post(path: string, body: any) {
     return fetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -697,7 +694,7 @@ function post(path, body) {
  * @param {string} path
  * @param {object} [body]
  */
-function postThread(path, body = {}) {
+function postThread(path: string, body: any = {}) {
     return post(path, { ...body, threadId: activeThreadId });
 }
 
@@ -705,7 +702,7 @@ function postThread(path, body = {}) {
 // boots/resumes the thread on (re)connect and replays its transcript, so no
 // separate "switch" round-trip is needed.
 /** @param {string} id */
-function gotoThread(id) {
+function gotoThread(id: string) {
     if (!id || id === activeThreadId) return;
     activeThreadId = id;
     fileCacheAt = 0; // the new thread may have a different cwd → refetch @-files
@@ -719,7 +716,7 @@ function gotoThread(id) {
 // element (./pi-frame.ts), which owns its iframe lifecycle and emits bubbling
 // `piframe-action` / `piframe-notify` events. Those are routed to the host once,
 // below (see the document-level listeners near `toast`).
-function renderNode(node, surfaceId) {
+function renderNode(node: any, surfaceId: string | null) {
     if (!node || typeof node !== "object")
         return document.createTextNode(String(node ?? ""));
     switch (node.type) {
@@ -755,7 +752,7 @@ function renderNode(node, surfaceId) {
         case "Frame": {
             // arbitrary HTML/CSS/JS, isolated in a sandboxed <pi-frame>
             const frame = document.createElement("pi-frame") as PiFrame;
-            frame.surfaceId = surfaceId;
+            frame.surfaceId = surfaceId ?? "";
             frame.frameHtml = node.html ?? "";
             if (node.height != null) frame.frameHeight = node.height;
             return frame;
@@ -774,9 +771,9 @@ function renderNode(node, surfaceId) {
 }
 
 // ---- surfaces: docks (left/right/bottom), overlays, status, toasts ----
-let openOverlays = []; // ids of currently-open extension overlays
+let openOverlays: string[] = []; // ids of currently-open extension overlays
 
-function surfaceCard(card) {
+function surfaceCard(card: any) {
     const el = document.createElement("div");
     el.className = "surface";
     if (card.title) {
@@ -792,7 +789,7 @@ function surfaceCard(card) {
     return el;
 }
 
-function renderDock(el, cards) {
+function renderDock(el: HTMLElement | null, cards: any[]) {
     if (!el) return;
     el.innerHTML = "";
     const has = cards && cards.length;
@@ -801,30 +798,32 @@ function renderDock(el, cards) {
 }
 
 // Apply a few overlay option hints (anchor/size) to the modal card.
-function applyOverlayOptions(card, options) {
+function applyOverlayOptions(card: HTMLElement, options: any) {
     if (!options) return;
-    const sz = (v) => (typeof v === "number" ? `${v}px` : v);
+    const sz = (v: any) => (typeof v === "number" ? `${v}px` : v);
     if (options.width != null) card.style.width = sz(options.width);
     if (options.maxHeight != null) card.style.maxHeight = sz(options.maxHeight);
     const a = options.anchor;
     if (a && a !== "center") {
         // map the 9 pi-tui anchors onto flex alignment of the overlay layer
-        const [v, h] = {
-            "top-left": ["start", "start"],
-            "top-center": ["start", "center"],
-            "top-right": ["start", "end"],
-            "left-center": ["center", "start"],
-            "right-center": ["center", "end"],
-            "bottom-left": ["end", "start"],
-            "bottom-center": ["end", "center"],
-            "bottom-right": ["end", "end"],
-        }[a] || ["center", "center"];
+        const [v, h] = (
+            {
+                "top-left": ["start", "start"],
+                "top-center": ["start", "center"],
+                "top-right": ["start", "end"],
+                "left-center": ["center", "start"],
+                "right-center": ["center", "end"],
+                "bottom-left": ["end", "start"],
+                "bottom-center": ["end", "center"],
+                "bottom-right": ["end", "end"],
+            } as Record<string, [string, string]>
+        )[a] || ["center", "center"];
         $overlayLayer.style.alignItems = v;
         $overlayLayer.style.justifyContent = h;
     }
 }
 
-function renderOverlays(overlays) {
+function renderOverlays(overlays: any[]) {
     if (!$overlayLayer) return;
     $overlayLayer.innerHTML = "";
     $overlayLayer.style.alignItems = "center";
@@ -850,7 +849,7 @@ function renderOverlays(overlays) {
 }
 
 // compact token formatting, mirroring the pi TUI footer's formatTokens
-function fmtTokens(n) {
+function fmtTokens(n: number) {
     if (n < 1000) return String(n);
     if (n < 10000) return (n / 1000).toFixed(1) + "k";
     if (n < 1000000) return Math.round(n / 1000) + "k";
@@ -863,7 +862,7 @@ function fmtTokens(n) {
  * FooterComponent: a pwd/session line and a token-stats / `<model> • thinking
  * <level>` line. @param {any} f
  */
-function renderFooter(f) {
+function renderFooter(f: any) {
     if (!$contextbar) return;
     if (!f) {
         $contextbar.classList.remove("show");
@@ -881,7 +880,7 @@ function renderFooter(f) {
     const l2 = document.createElement("div");
     l2.className = "line";
     const t = f.tokens || {};
-    const stats = [];
+    const stats: string[] = [];
     if (t.input) stats.push(`↑${fmtTokens(t.input)}`);
     if (t.output) stats.push(`↓${fmtTokens(t.output)}`);
     if (t.cacheRead) stats.push(`R${fmtTokens(t.cacheRead)}`);
@@ -913,14 +912,14 @@ function renderFooter(f) {
     $contextbar.classList.add("show");
 }
 
-function renderStatus(segments) {
+function renderStatus(segments: any[]) {
     if (!$statusbar) return;
     $statusbar.innerHTML = "";
-    const segs = segments || [];
+    const segs: any[] = segments || [];
     $statusbar.classList.toggle("show", segs.length > 0);
     const left = segs.filter((s) => s.align !== "right");
     const right = segs.filter((s) => s.align === "right");
-    const add = (s, pushRight) => {
+    const add = (s: any, pushRight: boolean) => {
         const el = document.createElement("span");
         el.className =
             "seg" +
@@ -935,7 +934,7 @@ function renderStatus(segments) {
     right.forEach((s, i) => add(s, i === 0));
 }
 
-function renderSurfaces(s) {
+function renderSurfaces(s: any) {
     // <pi-frame> elements are re-created on every surface render; each owns its
     // own message listener (added/removed via connected/disconnectedCallback),
     // so there's no central registry to reset here.
@@ -962,20 +961,20 @@ function closeTopOverlay() {
 // travels in the surfaces snapshot, so a refresh replays it (see host
 // piweb-host.ts requestUi).
 /** @type {any} */
-let activeDialog = null;
+let activeDialog: any = null;
 let dialogSel = 0; // highlighted option index (select dialogs)
 
 // Send the browser's answer back to the awaiting extension. `value` is the
 // chosen string / boolean / text, or null to cancel (host maps null ->
 // undefined for select/input/editor, false for confirm).
-function answerDialog(value) {
+function answerDialog(value: any) {
     if (!activeDialog) return;
     const id = activeDialog.id;
     activeDialog = null;
     postThread("/ui-response", { requestId: id, value });
 }
 
-function setDialogSel(i, rows) {
+function setDialogSel(i: number, rows: HTMLElement[]) {
     if (!rows.length) return;
     dialogSel = (i + rows.length) % rows.length;
     rows.forEach((el, idx) => el.classList.toggle("sel", idx === dialogSel));
@@ -983,7 +982,7 @@ function setDialogSel(i, rows) {
 }
 
 // Build the modal DOM for one dialog spec and wire its submit/cancel paths.
-function buildDialog(d) {
+function buildDialog(d: any) {
     $dialogCard.innerHTML = "";
     dialogSel = 0;
     const h = document.createElement("h3");
@@ -994,8 +993,8 @@ function buildDialog(d) {
     $dialogCard.appendChild(body);
 
     if (d.dialog === "select") {
-        const rows = [];
-        (d.options || []).forEach((opt, i) => {
+        const rows: HTMLElement[] = [];
+        (d.options || []).forEach((opt: any, i: number) => {
             const row = document.createElement("div");
             row.className = "item";
             row.textContent = opt;
@@ -1050,7 +1049,7 @@ function buildDialog(d) {
         body.appendChild(btns);
         // Enter submits a single-line input; the editor keeps Enter for newlines
         // (submit via the button or Ctrl/Cmd+Enter).
-        field.addEventListener("keydown", (e) => {
+        (field as HTMLElement).addEventListener("keydown", (e: any) => {
             if (e.key === "Enter" && (!multiline || e.ctrlKey || e.metaKey)) {
                 e.preventDefault();
                 answerDialog(field.value);
@@ -1063,7 +1062,7 @@ function buildDialog(d) {
 // Render the open dialog (the most-recently-opened wins if several stack). Skips
 // a rebuild when the same dialog id is already shown, so unrelated surface
 // pushes don't wipe a half-typed input.
-function renderDialogs(dialogs) {
+function renderDialogs(dialogs: any[]) {
     if (!$dialog || !$dialogCard) return;
     const list = dialogs || [];
     const d = list.length ? list[list.length - 1] : null;
@@ -1133,7 +1132,7 @@ document.addEventListener("piframe-notify", (e) => {
     toast(d.message, d.level);
 });
 
-function toast(message, level = "info") {
+function toast(message: string, level = "info") {
     if (!$toastLayer) return;
     const el = document.createElement("div");
     el.className = `toast ${level}`;
@@ -1143,7 +1142,7 @@ function toast(message, level = "info") {
 }
 
 // ---- threads (conversation sessions) ----
-function relTime(d) {
+function relTime(d: string | number | Date) {
     const s = Math.max(0, (Date.now() - new Date(d).getTime()) / 1000);
     if (s < 60) return "just now";
     if (s < 3600) return `${Math.floor(s / 60)}m ago`;
@@ -1151,21 +1150,21 @@ function relTime(d) {
     return `${Math.floor(s / 86400)}d ago`;
 }
 
-function threadName(t) {
+function threadName(t: any) {
     return (t?.name || "(new thread)").replace(/\s+/g, " ").slice(0, 60);
 }
 
 // Short label for a working directory: the basename (full path kept for the
 // `title` tooltip). Threads can live in different dirs, so the picker/header
 // surface where each one runs.
-function dirBase(p) {
+function dirBase(p: string) {
     if (!p) return "";
     return p.replace(/\/+$/, "").split("/").pop() || p;
 }
 
 // A compact directory label: the last two path segments (e.g. `projects/pi-web`),
 // enough to disambiguate same-named project folders without the full path.
-function dirShort(p) {
+function dirShort(p: string) {
     if (!p) return "";
     const parts = p.replace(/\/+$/, "").split("/").filter(Boolean);
     return parts.slice(-2).join("/") || p;
@@ -1182,7 +1181,7 @@ let extPageTitle = "";
  * clears it so the title falls back to the `π web - <session> - <cwd>` default.
  * @param {string} [text]
  */
-function setPageTitle(text) {
+function setPageTitle(text?: string) {
     extPageTitle = text ? String(text) : "";
     // Refresh both the browser tab and the in-page thread title bar, which now
     // mirrors the same override.
@@ -1230,15 +1229,15 @@ function updateTitle() {
 // Selectable rows in the resume picker, in visual order, for keyboard nav.
 // `pickerNav` gates the arrow/Enter handling so the generic showOverlay()
 // dialog (which reuses #picker) isn't affected.
-let pickerItems = [];
+let pickerItems: HTMLElement[] = [];
 let pickerIndex = -1;
 let pickerNav = false;
 // threadId of the row awaiting a delete confirmation (Ctrl+D), or null. While
 // set, the picker swallows every key but Enter (confirm) / Esc (cancel), just
 // like the pi TUI's session-selector delete flow.
-let pickerConfirmId = null;
+let pickerConfirmId: string | null = null;
 
-function setPickerSel(i) {
+function setPickerSel(i: number) {
     if (!pickerItems.length) return;
     pickerIndex = (i + pickerItems.length) % pickerItems.length;
     pickerItems.forEach((el, idx) =>
@@ -1260,7 +1259,12 @@ function openPicker() {
     hint.className = "picker-hint";
     $picker.appendChild(hint);
 
-    const mk = (cls, name, meta, onClick) => {
+    const mk = (
+        cls: string,
+        name: string,
+        meta: string,
+        onClick: () => void,
+    ) => {
         const item = document.createElement("div");
         item.className = `item ${cls}`;
         const n = document.createElement("span");
@@ -1282,15 +1286,15 @@ function openPicker() {
             newThread(cwd);
         }),
     );
-    pickerItems.push($picker.lastElementChild);
+    pickerItems.push($picker.lastElementChild as HTMLElement);
 
     // Group threads by working directory (sessions are partitioned per-cwd), so
     // it's clear where each thread runs. The active thread's group sorts first.
-    const groups = new Map();
+    const groups = new Map<string, any[]>();
     for (const t of threadItems) {
         const key = t.cwd || cwd || "";
         if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(t);
+        groups.get(key)!.push(t);
     }
     const activeCwd =
         threadItems.find((t) => t.id === activeThreadId)?.cwd || cwd || "";
@@ -1306,7 +1310,7 @@ function openPicker() {
             head.title = key;
             $picker.appendChild(head);
         }
-        for (const t of groups.get(key)) {
+        for (const t of groups.get(key)!) {
             const flags = [t.running ? "● running" : t.loaded ? "live" : null]
                 .filter(Boolean)
                 .join(" ");
@@ -1401,7 +1405,7 @@ async function confirmDeleteThread() {
         // thread this client is currently viewing.
         r = await (await post("/threads/delete", { threadId: id })).json();
     } catch (err) {
-        toast(`Failed to delete: ${err?.message ?? err}`, "error");
+        toast(`Failed to delete: ${(err as any)?.message ?? err}`, "error");
         return;
     }
     if (r?.ok) {
@@ -1503,12 +1507,12 @@ function tryHistoryDown() {
 }
 
 // ---- fuzzy command + @file typeahead ----
-let acItems = [];
+let acItems: any[] = [];
 let acIndex = 0;
 // Extension/prompt/skill commands for the current thread (from GET /commands),
 // merged into the `/` palette alongside the built-in client COMMANDS. Refreshed
 // on thread switch and after /reload.
-let extCommands = [];
+let extCommands: any[] = [];
 // Whether the active thread has any extension autocomplete providers
 // (piweb.addAutocompleteProvider). Gates the `/autocomplete` round-trip so
 // plain prose typing doesn't hit the host on every keystroke.
@@ -1528,12 +1532,12 @@ async function refreshCommands() {
     extAcEnabled = !!data?.autocomplete;
     const builtin = new Set(COMMANDS.map((c) => c.value));
     extCommands = (data?.items || [])
-        .map((c) => ({
+        .map((c: any) => ({
             value: "/" + c.name,
             label: "/" + c.name,
             description: c.description || (c.source ? `(${c.source})` : ""),
         }))
-        .filter((c) => !builtin.has(c.value));
+        .filter((c: any) => !builtin.has(c.value));
 }
 // "command" = leading-slash command palette; "file" = `@`-mention completion.
 let acMode = "command";
@@ -1544,7 +1548,7 @@ let acAtEnd = 0;
 // Sequence guard so a slow /files fetch can't clobber a newer keystroke.
 let acReq = 0;
 // Cached project file list (fetched lazily on first `@`, refreshed on a TTL).
-let fileCache = null;
+let fileCache: any[] = [];
 let fileCacheAt = 0;
 const FILE_CACHE_TTL_MS = 8000;
 
@@ -1562,7 +1566,7 @@ async function ensureFiles() {
                     : ""),
         );
         const j = await r.json();
-        fileCache = (j.items || []).map((p) => ({
+        fileCache = (j.items || []).map((p: any) => ({
             value: "@" + p,
             label: p.slice(p.lastIndexOf("/") + 1),
             description: p,
@@ -1577,7 +1581,7 @@ async function ensureFiles() {
 
 // Find a `@token` ending at the caret: an `@` at start-of-text or after
 // whitespace, followed by non-whitespace (the query). Returns null otherwise.
-function atTokenBeforeCaret(text, caret) {
+function atTokenBeforeCaret(text: string, caret: number) {
     const before = text.slice(0, caret);
     const m = before.match(/(^|\s)@([^\s@]*)$/);
     if (!m) return null;
@@ -1585,7 +1589,7 @@ function atTokenBeforeCaret(text, caret) {
     return { start: caret - query.length - 1, end: caret, query };
 }
 
-async function showFileAc(query) {
+async function showFileAc(query: string) {
     const myReq = ++acReq;
     const files = await ensureFiles();
     if (myReq !== acReq) return; // a newer keystroke superseded this one
@@ -1600,7 +1604,7 @@ async function showFileAc(query) {
 // whitespace-delimited token. Returns null when the input isn't a bash command.
 // Used by the Tab handler to force-open file completion (the pi TUI's
 // forceFileAutocomplete), so it isn't spammed on every keystroke.
-function bashTokenSpan(v, caret) {
+function bashTokenSpan(v: string, caret: number) {
     const trimmed = v.trimStart();
     if (!trimmed.startsWith("!")) return null;
     const before = v.slice(0, caret);
@@ -1610,18 +1614,19 @@ function bashTokenSpan(v, caret) {
     const afterBang = before.slice(leadingWs + bangCount);
     const spaceIdx = afterBang.lastIndexOf(" ");
     const token = spaceIdx >= 0 ? afterBang.slice(spaceIdx + 1) : afterBang;
-    const tokenStart = leadingWs + bangCount + (spaceIdx >= 0 ? spaceIdx + 1 : 0);
+    const tokenStart =
+        leadingWs + bangCount + (spaceIdx >= 0 ? spaceIdx + 1 : 0);
     return { token, start: tokenStart, end: caret };
 }
 
 // File completions for `!`/`!!` bash commands (same file cache as @-mentions,
 // but values carry the bare path instead of `@path`).
-async function showBashFileAc(query) {
+async function showBashFileAc(query: string) {
     const myReq = ++acReq;
     const files = await ensureFiles();
     if (myReq !== acReq) return;
     // Reuse the cached file list; map to items with the bare path as value.
-    const bashFiles = files.map((f) => ({
+    const bashFiles = files.map((f: any) => ({
         value: f.path,
         label: f.label,
         description: f.description,
@@ -1637,9 +1642,9 @@ async function showBashFileAc(query) {
 
 // Directory suggestions for `/new <dir>`: the host resolves the partial against
 // the active thread's cwd and returns matching subdirs as absolute paths.
-async function showDirAc(query) {
+async function showDirAc(query: string) {
     const myReq = ++acReq;
-    let items = [];
+    let items: any[] = [];
     try {
         const r = await fetch(
             "/dirs?q=" +
@@ -1660,7 +1665,7 @@ async function showDirAc(query) {
 // the active thread's providers against the composer text + caret and returns a
 // `{ start, end, items }` splice span. Guarded by acReq like the other async
 // sources so a slow response can't clobber a newer keystroke.
-async function showExtAc(text, caret) {
+async function showExtAc(text: string, caret: number) {
     const myReq = ++acReq;
     let result = null;
     try {
@@ -1677,12 +1682,12 @@ async function showExtAc(text, caret) {
     } catch {}
     if (myReq !== acReq) return; // superseded
     const items = (result?.items || [])
-        .map((it) => ({
+        .map((it: any) => ({
             value: it.value,
             label: it.label || it.value,
             description: it.description || "",
         }))
-        .filter((it) => it.value);
+        .filter((it: any) => it.value);
     if (!items.length) {
         closeAc();
         return;
@@ -1788,7 +1793,7 @@ function updateAc() {
     closeAc();
 }
 
-function acceptAc(run) {
+function acceptAc(run: boolean) {
     const it = acItems[acIndex];
     if (!it) return;
 
@@ -1883,11 +1888,11 @@ function acceptAc(run) {
     autoGrow();
 }
 
-function notice(text) {
+function notice(text: string) {
     bubble("system", text);
 }
 
-async function getJson(path) {
+async function getJson(path: string) {
     try {
         return await (await fetch(path)).json();
     } catch {
@@ -1895,7 +1900,7 @@ async function getJson(path) {
     }
 }
 
-function showOverlay(title, contentEl) {
+function showOverlay(title: string, contentEl: HTMLElement) {
     if (!$overlay) return;
     pickerNav = false;
     $picker.innerHTML = "";
@@ -1908,7 +1913,7 @@ function showOverlay(title, contentEl) {
     $overlay.classList.add("show");
 }
 
-function runInput(text, images = []) {
+function runInput(text: string, images: any[] = []) {
     text = (text ?? "").trim();
     if (!text && !images.length) return;
     if (text.startsWith("!")) {
@@ -1945,7 +1950,7 @@ function newThread(dir = "") {
 }
 
 // returns true if handled as a client command
-function runCommand(cmd, arg) {
+function runCommand(cmd: string, arg: string) {
     switch (cmd) {
         case "/resume":
             openPicker();
@@ -2016,7 +2021,7 @@ function copyLastAssistant() {
     );
 }
 
-async function doExport(format) {
+async function doExport(format: string) {
     const fmt = format === "jsonl" ? "jsonl" : "html";
     const r = await (
         await postThread("/session/export", { format: fmt })
@@ -2027,7 +2032,7 @@ async function doExport(format) {
 
 // Append `?thread=<id>` to a GET path so a read-only endpoint resolves the
 // thread the client is currently viewing (the POST helpers use postThread).
-function withThread(path) {
+function withThread(path: string) {
     return (
         path +
         (activeThreadId ? "?thread=" + encodeURIComponent(activeThreadId) : "")
@@ -2037,7 +2042,7 @@ function withThread(path) {
 // Generic single-column selector that reuses the resume-picker chrome and its
 // shared keyboard navigation (Up/Down/Enter/Home/End via the pickerNav
 // listener). `rows` is ordered; each is { name, meta?, cls?, title?, onClick }.
-function openListPicker(title, rows, selectIndex = 0) {
+function openListPicker(title: string, rows: any[], selectIndex = 0) {
     if (!$overlay) return;
     $picker.innerHTML = "";
     const h = document.createElement("h3");
@@ -2085,7 +2090,7 @@ async function openTreePicker() {
         notice("no earlier points to jump to");
         return;
     }
-    const rows = entries.map((e) => {
+    const rows = entries.map((e: any) => {
         const indent = "  ".repeat(Math.min(e.depth || 0, 6));
         const role =
             e.role === "user"
@@ -2102,7 +2107,7 @@ async function openTreePicker() {
             onClick: () => navigateTree(e.id),
         };
     });
-    const curIdx = entries.findIndex((e) => e.current);
+    const curIdx = entries.findIndex((e: any) => e.current);
     openListPicker(
         "Jump to a point in the session",
         rows,
@@ -2110,7 +2115,7 @@ async function openTreePicker() {
     );
 }
 
-async function navigateTree(entryId) {
+async function navigateTree(entryId: string) {
     const r = await (await postThread("/tree/navigate", { entryId })).json();
     if (r?.error) notice("navigate failed: " + r.error);
     else if (r?.cancelled) notice("navigation cancelled");
@@ -2133,7 +2138,7 @@ async function openForkPicker() {
         notice("no messages to fork from");
         return;
     }
-    const rows = items.map((m) => ({
+    const rows = items.map((m: any) => ({
         name: m.text || "(empty message)",
         meta: "",
         onClick: () => forkFrom(m.id),
@@ -2142,7 +2147,7 @@ async function openForkPicker() {
     openListPicker("Fork from a message", rows, rows.length - 1);
 }
 
-async function forkFrom(entryId) {
+async function forkFrom(entryId: string) {
     const r = await (await postThread("/threads/fork", { entryId })).json();
     if (r?.id) gotoThread(r.id);
     else notice("fork failed" + (r?.error ? ": " + r.error : ""));
@@ -2156,7 +2161,7 @@ async function doClone() {
 }
 
 // ---- /import <file>: resume a session from a JSONL file ------------------
-async function doImport(file) {
+async function doImport(file: string) {
     const path = (file || "").trim();
     if (!path) {
         notice("usage: /import <file.jsonl>");
@@ -2215,8 +2220,8 @@ let modelFiltered: any[] = []; // data behind modelRows
 let modelIndex = 0;
 let modelNav = false; // gates the model picker's key handling
 
-function modelMeta(m) {
-    const parts = [];
+function modelMeta(m: any) {
+    const parts: string[] = [];
     if (m.contextWindow) parts.push(`${fmtTokens(m.contextWindow)} ctx`);
     if (m.reasoning) parts.push("thinking");
     if (m.sub) parts.push("subscription");
@@ -2225,12 +2230,12 @@ function modelMeta(m) {
 
 // Fuzzy-search text mirroring the TUI's getModelSelectorSearchText (provider
 // first so provider-prefixed queries rank ahead of proxy-provider ids).
-function modelSearchText(m) {
+function modelSearchText(m: any) {
     const name = m.name ? ` ${m.name}` : "";
     return `${m.provider} ${m.provider}/${m.id} ${m.provider} ${m.id}${name}`;
 }
 
-function setModelSel(i) {
+function setModelSel(i: number) {
     if (!modelRows.length) return;
     modelIndex = (i + modelRows.length) % modelRows.length;
     modelRows.forEach((el, idx) =>
@@ -2239,7 +2244,7 @@ function setModelSel(i) {
     modelRows[modelIndex].scrollIntoView({ block: "nearest" });
 }
 
-function renderModelList(container, query) {
+function renderModelList(container: HTMLElement, query: string) {
     const ranked = query
         ? fuzzyFilter(modelList, query, (m) => modelSearchText(m))
         : modelList;
@@ -2272,7 +2277,7 @@ function renderModelList(container, query) {
     setModelSel(activeIdx >= 0 ? activeIdx : 0);
 }
 
-async function chooseModel(m) {
+async function chooseModel(m: any) {
     closePicker();
     const r = await (
         await postThread("/model", { provider: m.provider, id: m.id })
@@ -2615,8 +2620,7 @@ $ask.addEventListener("submit", (e) => {
 // ---- SSE stream ----
 // One EventSource at a time, scoped to the viewed thread via `?thread`.
 // Switching threads = reopen the stream; the host replays the new thread.
-/** @type {EventSource|null} */
-let es = null;
+let es: EventSource | null = null;
 
 function streamUrl() {
     return (
@@ -2638,8 +2642,7 @@ function reopenStream() {
     es.onmessage = onSseMessage;
 }
 
-/** @param {MessageEvent} e */
-function onSseMessage(e) {
+function onSseMessage(e: MessageEvent) {
     const m = JSON.parse(e.data);
     switch (m.kind) {
         case "config":

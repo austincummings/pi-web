@@ -58,21 +58,67 @@
  * @property {DialogSpec[]} dialogs             open blocking dialogs (select/confirm/input/editor)
  */
 
+type DockSide = "left" | "right" | "bottom" | "footer";
+type DialogKind = "select" | "confirm" | "input" | "editor";
+type NotifyLevel = "info" | "warning" | "error";
+
+interface Surface {
+    id: string;
+    kind: "dock" | "overlay";
+    side?: DockSide;
+    title?: string;
+    order: number;
+    open: boolean;
+    options?: Record<string, any>;
+    render: (state: any) => any;
+    actions: Record<string, (ctx: any) => any>;
+    state: any;
+}
+
+interface SurfaceCard {
+    id: string;
+    title?: string;
+    tree: any;
+    options?: Record<string, any>;
+}
+
+interface DialogSpec {
+    id: string;
+    dialog: DialogKind;
+    title: string;
+    message?: string;
+    options?: string[];
+    placeholder?: string;
+    prefill?: string;
+}
+
+type AutocompleteProvider = (ctx: { text: string; caret: number }) => any;
+
 /**
- * @param {object} o
- * @param {(frame: any) => void} o.broadcast   send a server message to viewers
- * @param {() => any} o.getPi                   live ExtensionAPI for this thread
+ * @param o.broadcast   send a server message to viewers
+ * @param o.getPi       live ExtensionAPI for this thread
  */
-export function createPiWebHost({ broadcast, getPi }) {
-    /** @type {Map<string, Surface>} */
-    const surfaces = new Map();
-    /** @type {Map<string, {text:string, align?:string, tone?:string}>} keyed status segments */
-    const statuses = new Map();
+export function createPiWebHost({
+    broadcast,
+    getPi,
+}: {
+    broadcast: (frame: any) => void;
+    getPi: () => any;
+}) {
+    const surfaces = new Map<string, Surface>();
+    /** keyed status segments */
+    const statuses = new Map<
+        string,
+        { text: string; align?: string; tone?: string }
+    >();
     /**
      * Open blocking dialogs awaiting a browser response.
      * @type {Map<string, {kind:string, spec:DialogSpec, settle:(v:any)=>void}>}
      */
-    const pendingUi = new Map();
+    const pendingUi = new Map<
+        string,
+        { kind: DialogKind; spec: DialogSpec; settle: (v: any) => void }
+    >();
     /**
      * Custom transcript-message renderers, keyed by `customType`. Each takes a
      * CustomMessage + options and returns a *serializable* component tree (the
@@ -81,7 +127,10 @@ export function createPiWebHost({ broadcast, getPi }) {
      * `Component`).
      * @type {Map<string, (message:any, opts:any)=>any>}
      */
-    const messageRenderers = new Map();
+    const messageRenderers = new Map<
+        string,
+        (message: any, opts: any) => any
+    >();
     /**
      * Extension-supplied composer autocomplete providers (the web analogue of
      * pi-tui `ctx.ui.addAutocompleteProvider`). Each is called with the current
@@ -90,7 +139,7 @@ export function createPiWebHost({ broadcast, getPi }) {
      * the browser queries them over `/autocomplete` as the user types.
      * @type {((ctx:{text:string,caret:number})=>any)[]}
      */
-    const autocompleteProviders = [];
+    const autocompleteProviders: AutocompleteProvider[] = [];
     let orderSeq = 0;
     let uiSeq = 0;
     // pi's runtime label shown in place of a collapsed thinking block
@@ -99,8 +148,7 @@ export function createPiWebHost({ broadcast, getPi }) {
     // replayed on (re)connect from getHiddenThinkingLabel().
     let hiddenThinkingLabel = "Thinking...";
 
-    /** @param {Surface} s @returns {SurfaceCard} */
-    const renderCard = (s) => {
+    const renderCard = (s: Surface): SurfaceCard => {
         try {
             return {
                 id: s.id,
@@ -112,15 +160,22 @@ export function createPiWebHost({ broadcast, getPi }) {
             return {
                 id: s.id,
                 title: s.title,
-                tree: { type: "Text", text: `render error: ${err.message}` },
+                tree: {
+                    type: "Text",
+                    text: `render error: ${(err as any)?.message}`,
+                },
             };
         }
     };
 
-    /** @returns {SurfacesSnapshot} */
     const snapshot = () => {
-        const docks = { left: [], right: [], bottom: [], footer: [] };
-        const overlays = [];
+        const docks: Record<DockSide, SurfaceCard[]> = {
+            left: [],
+            right: [],
+            bottom: [],
+            footer: [],
+        };
+        const overlays: SurfaceCard[] = [];
         const ordered = [...surfaces.values()].sort(
             (a, b) => a.order - b.order,
         );
@@ -128,7 +183,7 @@ export function createPiWebHost({ broadcast, getPi }) {
             if (s.kind === "overlay") {
                 if (s.open) overlays.push(renderCard(s));
             } else {
-                (docks[s.side] ?? docks.bottom).push(renderCard(s));
+                (docks[s.side ?? "bottom"] ?? docks.bottom).push(renderCard(s));
             }
         }
         const status = [...statuses.entries()]
@@ -156,11 +211,15 @@ export function createPiWebHost({ broadcast, getPi }) {
      * @param {{signal?:AbortSignal, timeout?:number}} [opts]
      * @returns {Promise<any>}
      */
-    const requestUi = (kind, spec, opts: Record<string, any> = {}) => {
+    const requestUi = (
+        kind: DialogKind,
+        spec: Record<string, any>,
+        opts: Record<string, any> = {},
+    ): Promise<any> => {
         const id = `ui-${++uiSeq}`;
         return new Promise((resolve) => {
-            let timer = null;
-            const settle = (value) => {
+            let timer: ReturnType<typeof setTimeout> | null = null;
+            const settle = (value: any) => {
                 if (!pendingUi.has(id)) return;
                 pendingUi.delete(id);
                 if (timer) clearTimeout(timer);
@@ -176,7 +235,7 @@ export function createPiWebHost({ broadcast, getPi }) {
             const onAbort = () => settle(undefined);
             pendingUi.set(id, {
                 kind,
-                spec: { id, dialog: kind, ...spec },
+                spec: { id, dialog: kind, ...spec } as DialogSpec,
                 settle,
             });
             if (opts.signal) {
@@ -200,7 +259,7 @@ export function createPiWebHost({ broadcast, getPi }) {
      * @param {"aboveEditor"|"belowEditor"|"left"|"right"|"bottom"|"footer"} [placement]
      * @returns {DockSide}
      */
-    const placementToSide = (placement) => {
+    const placementToSide = (placement?: string): DockSide => {
         switch (placement) {
             case "belowEditor":
             case "footer":
@@ -221,7 +280,11 @@ export function createPiWebHost({ broadcast, getPi }) {
      * @param {"dock"|"overlay"} kind
      * @param {object} def
      */
-    const define = (id, kind, def: Record<string, any> = {}) => {
+    const define = (
+        id: string,
+        kind: "dock" | "overlay",
+        def: Record<string, any> = {},
+    ) => {
         const prev = surfaces.get(id);
         surfaces.set(id, {
             id,
@@ -259,7 +322,11 @@ export function createPiWebHost({ broadcast, getPi }) {
          * @param {string[]|object|undefined} content  plain lines, a WidgetDef, or undefined to remove
          * @param {{placement?:"aboveEditor"|"belowEditor"|"left"|"right", title?:string, order?:number}} [options]
          */
-        setWidget(key, content, options: Record<string, any> = {}) {
+        setWidget(
+            key: string,
+            content: any,
+            options: Record<string, any> = {},
+        ) {
             if (content === undefined) {
                 if (surfaces.delete(key)) push();
                 return;
@@ -287,7 +354,7 @@ export function createPiWebHost({ broadcast, getPi }) {
          * Remove a widget (alias for `setWidget(key, undefined)`).
          * @param {string} key
          */
-        removeWidget(key) {
+        removeWidget(key: string) {
             if (surfaces.delete(key)) push();
         },
 
@@ -296,36 +363,31 @@ export function createPiWebHost({ broadcast, getPi }) {
          * kept for one release; defaults to the `right` rail like before.
          * @param {string} id @param {object} def
          */
-        dock(id, def = {}) {
+        dock(id: string, def: Record<string, any> = {}) {
             define(id, "dock", def);
         },
-        /** Mount/update an overlay surface (starts closed). @param {string} id @param {object} def */
-        overlay(id, def = {}) {
+        /** Mount/update an overlay surface (starts closed). */
+        overlay(id: string, def: Record<string, any> = {}) {
             define(id, "overlay", def);
         },
-        /** @param {string} id */
-        removeDock(id) {
+        removeDock(id: string) {
             if (surfaces.delete(id)) push();
         },
-        /** @param {string} id */
-        removeOverlay(id) {
+        removeOverlay(id: string) {
             if (surfaces.delete(id)) push();
         },
-        /** @param {string} id */
-        remove(id) {
+        remove(id: string) {
             if (surfaces.delete(id)) push();
         },
 
-        /** @param {string} id */
-        openOverlay(id) {
+        openOverlay(id: string) {
             const s = surfaces.get(id);
             if (s && s.kind === "overlay" && !s.open) {
                 s.open = true;
                 push();
             }
         },
-        /** @param {string} id */
-        closeOverlay(id) {
+        closeOverlay(id: string) {
             const s = surfaces.get(id);
             if (s && s.kind === "overlay" && s.open) {
                 s.open = false;
@@ -341,7 +403,7 @@ export function createPiWebHost({ broadcast, getPi }) {
          * @param {{signal?:AbortSignal, timeout?:number}} [opts]
          * @returns {Promise<string|undefined>}
          */
-        select(title, options, opts) {
+        select(title: string, options: string[], opts?: Record<string, any>) {
             return requestUi(
                 "select",
                 {
@@ -359,7 +421,7 @@ export function createPiWebHost({ broadcast, getPi }) {
          * @param {{signal?:AbortSignal, timeout?:number}} [opts]
          * @returns {Promise<boolean>}
          */
-        confirm(title, message, opts) {
+        confirm(title: string, message: string, opts?: Record<string, any>) {
             return requestUi(
                 "confirm",
                 { title: String(title ?? ""), message: String(message ?? "") },
@@ -374,7 +436,7 @@ export function createPiWebHost({ broadcast, getPi }) {
          * @param {{signal?:AbortSignal, timeout?:number}} [opts]
          * @returns {Promise<string|undefined>}
          */
-        input(title, placeholder, opts) {
+        input(title: string, placeholder?: string, opts?: Record<string, any>) {
             return requestUi(
                 "input",
                 {
@@ -392,7 +454,7 @@ export function createPiWebHost({ broadcast, getPi }) {
          * @param {{signal?:AbortSignal, timeout?:number}} [opts]
          * @returns {Promise<string|undefined>}
          */
-        editor(title, prefill, opts) {
+        editor(title: string, prefill?: string, opts?: Record<string, any>) {
             return requestUi(
                 "editor",
                 {
@@ -411,7 +473,10 @@ export function createPiWebHost({ broadcast, getPi }) {
          * @param {string} customType
          * @param {(message:any, opts:{expanded:boolean})=>any} renderer
          */
-        registerMessageRenderer(customType, renderer) {
+        registerMessageRenderer(
+            customType: string,
+            renderer: (message: any, opts: any) => any,
+        ) {
             const key = String(customType);
             if (typeof renderer === "function")
                 messageRenderers.set(key, renderer);
@@ -421,7 +486,7 @@ export function createPiWebHost({ broadcast, getPi }) {
          * Whether a renderer is registered for `customType`.
          * @param {string} customType @returns {boolean}
          */
-        hasMessageRenderer(customType) {
+        hasMessageRenderer(customType: string) {
             return messageRenderers.has(String(customType));
         },
         /**
@@ -433,13 +498,20 @@ export function createPiWebHost({ broadcast, getPi }) {
          * @param {{expanded?:boolean}} [opts]
          * @returns {any|null}
          */
-        renderMessage(customType, message, opts = {}) {
+        renderMessage(
+            customType: string,
+            message: any,
+            opts: Record<string, any> = {},
+        ) {
             const r = messageRenderers.get(String(customType));
             if (!r) return null;
             try {
                 return r(message, { expanded: false, ...opts }) ?? null;
             } catch (err) {
-                return { type: "Text", text: `render error: ${err.message}` };
+                return {
+                    type: "Text",
+                    text: `render error: ${(err as any)?.message}`,
+                };
             }
         },
 
@@ -453,7 +525,7 @@ export function createPiWebHost({ broadcast, getPi }) {
          * @param {(ctx:{text:string,caret:number})=>any} provider
          * @returns {() => void}
          */
-        addAutocompleteProvider(provider) {
+        addAutocompleteProvider(provider: AutocompleteProvider) {
             if (typeof provider !== "function") return () => {};
             autocompleteProviders.push(provider);
             return () => {
@@ -472,10 +544,10 @@ export function createPiWebHost({ broadcast, getPi }) {
          * @param {{text?:string, caret?:number}} ctx
          * @returns {Promise<{start:number,end:number,items:{value:string,label:string,description?:string}[]}|null>}
          */
-        async autocomplete(ctx) {
+        async autocomplete(ctx: { text?: string; caret?: number }) {
             const text = String(ctx?.text ?? "");
             const caret = Number.isInteger(ctx?.caret)
-                ? Math.max(0, Math.min(ctx.caret, text.length))
+                ? Math.max(0, Math.min(ctx.caret as number, text.length))
                 : text.length;
             // Default span: the whitespace-delimited token ending at the caret.
             const tokenStart =
@@ -528,7 +600,7 @@ export function createPiWebHost({ broadcast, getPi }) {
          * @param {string} id
          * @param {any} value
          */
-        resolveUiRequest(id, value) {
+        resolveUiRequest(id: string, value: any) {
             pendingUi.get(id)?.settle(value);
         },
 
@@ -537,7 +609,7 @@ export function createPiWebHost({ broadcast, getPi }) {
          * @param {string} message
          * @param {"info"|"warning"|"error"} [type]
          */
-        notify(message, type = "info") {
+        notify(message: string, type: NotifyLevel = "info") {
             broadcast({
                 kind: "notify",
                 message: String(message ?? ""),
@@ -550,7 +622,7 @@ export function createPiWebHost({ broadcast, getPi }) {
          * sets the terminal title). Pass undefined/"" to restore the default.
          * @param {string} [text]
          */
-        setTitle(text) {
+        setTitle(text?: string) {
             broadcast({
                 kind: "title",
                 text: text == null ? "" : String(text),
@@ -563,7 +635,7 @@ export function createPiWebHost({ broadcast, getPi }) {
          * default ("Thinking...").
          * @param {string} [label]
          */
-        setHiddenThinkingLabel(label) {
+        setHiddenThinkingLabel(label?: string) {
             hiddenThinkingLabel =
                 label == null || String(label).trim() === ""
                     ? "Thinking..."
@@ -583,7 +655,11 @@ export function createPiWebHost({ broadcast, getPi }) {
          * @param {string} [text]
          * @param {{align?:"right", tone?:"warning"|"error"}} [opts]
          */
-        setStatus(key, text, opts) {
+        setStatus(
+            key: string,
+            text?: string,
+            opts?: { align?: "right"; tone?: "warning" | "error" },
+        ) {
             if (text == null || text === "") statuses.delete(key);
             else
                 statuses.set(key, {
@@ -612,7 +688,7 @@ export function createPiWebHost({ broadcast, getPi }) {
          * @param {string} action
          * @param {any} payload
          */
-        async dispatch(surfaceId, action, payload) {
+        async dispatch(surfaceId: string, action: string, payload?: any) {
             const s = surfaces.get(surfaceId);
             if (!s) return;
             const handler = s.actions[action];
@@ -622,7 +698,7 @@ export function createPiWebHost({ broadcast, getPi }) {
                 get state() {
                     return s.state;
                 },
-                setState(patch) {
+                setState(patch: any) {
                     const next =
                         typeof patch === "function" ? patch(s.state) : patch;
                     s.state = { ...s.state, ...next };
@@ -630,9 +706,9 @@ export function createPiWebHost({ broadcast, getPi }) {
                 },
                 pi: getPi(),
                 // let handlers drive overlays / toasts (e.g. a button opens a modal)
-                openOverlay: (id) => host.openOverlay(id),
-                closeOverlay: (id) => host.closeOverlay(id),
-                notify: (m, t) => host.notify(m, t),
+                openOverlay: (id: string) => host.openOverlay(id),
+                closeOverlay: (id: string) => host.closeOverlay(id),
+                notify: (m: string, t?: NotifyLevel) => host.notify(m, t),
             };
             try {
                 await handler(ctx);

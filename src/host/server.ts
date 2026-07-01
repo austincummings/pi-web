@@ -51,6 +51,8 @@ import {
     getPackageDir,
     AuthStorage,
     ModelRegistry,
+    type AgentSession,
+    type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import { renderToolResultToNode } from "./component-adapter.ts";
 import { webPaletteTheme } from "./tui-theme.ts";
@@ -90,11 +92,23 @@ const PI_VERSION = (() => {
     }
 })();
 
-/**
- * @typedef {import("@earendil-works/pi-coding-agent").AgentSession} AgentSession
- * @typedef {import("@earendil-works/pi-coding-agent").ExtensionAPI} ExtensionAPI
- * @typedef {ReturnType<typeof createPiWebHost>} PiWebRegistry
- */
+type PiWebRegistry = ReturnType<typeof createPiWebHost>;
+
+/** A serializable server->client message frame. */
+type ServerMessage = { kind: string; [k: string]: any };
+
+/** A live, independently-running conversation thread. */
+interface ThreadRuntime {
+    id: string;
+    cwd: string;
+    sm: SessionManager;
+    session: AgentSession | null;
+    pi: ExtensionAPI | null;
+    piweb: PiWebRegistry | null;
+    resourceLoader: DefaultResourceLoader | null;
+    unsubscribe: (() => void) | null;
+    busy: boolean;
+}
 
 /**
  * A live, independently-running conversation thread.
@@ -136,7 +150,7 @@ const knownCwds = new Set([cwd]);
  * @param {string} [dir]
  * @returns {string}
  */
-function resolveThreadCwd(dir) {
+function resolveThreadCwd(dir?: string) {
     const raw = (dir ?? "").trim();
     if (!raw) return cwd;
     const expanded = raw.startsWith("~")
@@ -172,7 +186,7 @@ const WALK_SKIP = new Set([
 /** Per-directory file-list cache (the `@` typeahead is scoped to a thread's cwd). @type {Map<string, { at: number, items: string[] }>} */
 const fileCacheByDir = new Map();
 
-async function walkFiles(dir, base, out) {
+async function walkFiles(dir: string, base: string, out: string[]) {
     if (out.length >= FILE_LIST_CAP) return;
     let entries;
     try {
@@ -199,13 +213,13 @@ async function walkFiles(dir, base, out) {
  * List project files for the `@` mention typeahead, scoped to a thread's cwd.
  * @param {string} [dir]
  */
-async function listProjectFiles(dir) {
+async function listProjectFiles(dir?: string) {
     const base = dir || cwd;
     const cached = fileCacheByDir.get(base);
     if (cached && Date.now() - cached.at < FILE_CACHE_TTL_MS) {
         return cached.items;
     }
-    let items;
+    let items: string[];
     try {
         const { stdout } = await execFileP(
             "git",
@@ -228,10 +242,11 @@ async function listProjectFiles(dir) {
  * @param {string} q
  * @param {string} [threadId]
  */
-async function listProjectDirs(q, threadId) {
-    const baseCwd = threadRuntimes.get(threadId)?.cwd || cwd;
+async function listProjectDirs(q: string, threadId?: string) {
+    const baseCwd =
+        (threadId ? threadRuntimes.get(threadId) : undefined)?.cwd || cwd;
     const raw = (q ?? "").trim();
-    const expand = (p) =>
+    const expand = (p: string) =>
         p.startsWith("~") ? join(process.env.HOME ?? "", p.slice(1)) : p;
     let listDir;
     let prefix;
@@ -254,7 +269,7 @@ async function listProjectDirs(q, threadId) {
     } catch {
         return [];
     }
-    const items = [];
+    const items: { value: string; label: string; description: string }[] = [];
     for (const e of ents) {
         if (!e.isDirectory()) continue;
         // hide dotdirs unless the user is explicitly typing one
@@ -272,20 +287,18 @@ const bus = createBus();
 const broadcast = bus.broadcast;
 
 // ---- thread registry ------------------------------------------------------
-/** @type {Map<string, ThreadRuntime>} */
-const threadRuntimes = new Map();
-/** Fallback thread for clients that connect without a `?thread`. @type {ThreadRuntime|null} */
-let defaultThread = null;
-/** Thread whose extensions are registering panels *right now* (during boot/reload). @type {ThreadRuntime|null} */
-let bindingThread = null;
-/** Thread currently handling a panel action dispatch. @type {ThreadRuntime|null} */
-let dispatchingThread = null;
+const threadRuntimes = new Map<string, ThreadRuntime>();
+/** Fallback thread for clients that connect without a `?thread`. */
+let defaultThread: ThreadRuntime | null = null;
+/** Thread whose extensions are registering panels *right now* (during boot/reload). */
+let bindingThread: ThreadRuntime | null = null;
+/** Thread currently handling a panel action dispatch. */
+let dispatchingThread: ThreadRuntime | null = null;
 /** Thread whose extension code is executing now (event handlers route surface
- * updates here). @type {ThreadRuntime|null} */
-let currentThread = null;
+ * updates here). */
+let currentThread: ThreadRuntime | null = null;
 
-/** @param {string|undefined|null} id */
-const sessionFor = (id) =>
+const sessionFor = (id: string | undefined | null) =>
     id ? (threadRuntimes.get(id)?.session ?? null) : null;
 
 // ---- piweb router (injected into extensions) ------------------------------
@@ -305,6 +318,7 @@ const nullRegistry = {
     closeOverlay() {},
     notify() {},
     setStatus() {},
+    setTitle() {},
     setHiddenThinkingLabel() {},
     getHiddenThinkingLabel() {
         return "Thinking...";
@@ -349,38 +363,40 @@ const nullRegistry = {
     },
     async dispatch() {},
 };
-const activeRegistry = () =>
+const activeRegistry = (): any =>
     (bindingThread ?? dispatchingThread ?? currentThread)?.piweb ??
     nullRegistry;
 const piweb = {
     present: true,
-    setWidget: (...a) => activeRegistry().setWidget(...a),
-    removeWidget: (...a) => activeRegistry().removeWidget(...a),
-    dock: (...a) => activeRegistry().dock(...a),
-    overlay: (...a) => activeRegistry().overlay(...a),
-    removeDock: (...a) => activeRegistry().removeDock(...a),
-    removeOverlay: (...a) => activeRegistry().removeOverlay(...a),
-    remove: (...a) => activeRegistry().remove(...a),
-    openOverlay: (...a) => activeRegistry().openOverlay(...a),
-    closeOverlay: (...a) => activeRegistry().closeOverlay(...a),
-    notify: (...a) => activeRegistry().notify(...a),
-    setStatus: (...a) => activeRegistry().setStatus(...a),
-    setHiddenThinkingLabel: (...a) =>
+    setWidget: (...a: any[]) => activeRegistry().setWidget(...a),
+    removeWidget: (...a: any[]) => activeRegistry().removeWidget(...a),
+    dock: (...a: any[]) => activeRegistry().dock(...a),
+    overlay: (...a: any[]) => activeRegistry().overlay(...a),
+    removeDock: (...a: any[]) => activeRegistry().removeDock(...a),
+    removeOverlay: (...a: any[]) => activeRegistry().removeOverlay(...a),
+    remove: (...a: any[]) => activeRegistry().remove(...a),
+    openOverlay: (...a: any[]) => activeRegistry().openOverlay(...a),
+    closeOverlay: (...a: any[]) => activeRegistry().closeOverlay(...a),
+    notify: (...a: any[]) => activeRegistry().notify(...a),
+    setStatus: (...a: any[]) => activeRegistry().setStatus(...a),
+    setTitle: (...a: any[]) => activeRegistry().setTitle(...a),
+    setHiddenThinkingLabel: (...a: any[]) =>
         activeRegistry().setHiddenThinkingLabel(...a),
     // custom transcript-message renderers (customType -> serializable tree)
-    registerMessageRenderer: (...a) =>
+    registerMessageRenderer: (...a: any[]) =>
         activeRegistry().registerMessageRenderer(...a),
-    hasMessageRenderer: (...a) => activeRegistry().hasMessageRenderer(...a),
-    renderMessage: (...a) => activeRegistry().renderMessage(...a),
+    hasMessageRenderer: (...a: any[]) =>
+        activeRegistry().hasMessageRenderer(...a),
+    renderMessage: (...a: any[]) => activeRegistry().renderMessage(...a),
     // composer autocomplete providers (piweb.addAutocompleteProvider)
-    addAutocompleteProvider: (...a) =>
+    addAutocompleteProvider: (...a: any[]) =>
         activeRegistry().addAutocompleteProvider(...a),
     // blocking dialogs — return promises that settle on the browser's response
-    select: (...a) => activeRegistry().select(...a),
-    confirm: (...a) => activeRegistry().confirm(...a),
-    input: (...a) => activeRegistry().input(...a),
-    editor: (...a) => activeRegistry().editor(...a),
-    clear: (...a) => activeRegistry().clear(...a),
+    select: (...a: any[]) => activeRegistry().select(...a),
+    confirm: (...a: any[]) => activeRegistry().confirm(...a),
+    input: (...a: any[]) => activeRegistry().input(...a),
+    editor: (...a: any[]) => activeRegistry().editor(...a),
+    clear: (...a: any[]) => activeRegistry().clear(...a),
     snapshot: () => activeRegistry().snapshot(),
     /**
      * Resolve a thread's concrete surface registry by its session id (== thread
@@ -393,7 +409,7 @@ const piweb = {
      * the global router (which routes via bindingThread at that moment).
      * @param {string|undefined|null} id
      */
-    forSession(id) {
+    forSession(id: string | undefined | null) {
         return (id && threadRuntimes.get(id)?.piweb) || null;
     },
     /**
@@ -403,7 +419,12 @@ const piweb = {
      * @param {any} payload
      * @param {string} [threadId]
      */
-    async dispatch(surfaceId, action, payload, threadId) {
+    async dispatch(
+        surfaceId: string,
+        action: string,
+        payload: any,
+        threadId?: string,
+    ) {
         const t = threadId ? threadRuntimes.get(threadId) : null;
         if (!t?.piweb) return;
         dispatchingThread = t;
@@ -431,7 +452,7 @@ const modelRegistry = ModelRegistry.create(authStorage);
  * @param {unknown} content
  * @returns {string}
  */
-function textOf(content) {
+function textOf(content: unknown): string {
     if (typeof content === "string") return content;
     if (!Array.isArray(content)) return "";
     return content
@@ -446,7 +467,7 @@ function textOf(content) {
  * @param {unknown} content
  * @returns {{data:string; mimeType:string}[]}
  */
-function imagesOf(content) {
+function imagesOf(content: unknown): { data: string; mimeType: string }[] {
     if (!Array.isArray(content)) return [];
     return content
         .filter((b) => b?.type === "image" && b.data)
@@ -458,7 +479,7 @@ function imagesOf(content) {
  * @param {unknown} content
  * @returns {string}
  */
-function thinkingOf(content) {
+function thinkingOf(content: unknown): string {
     if (!Array.isArray(content)) return "";
     return content
         .filter((b) => b?.type === "thinking" && !b.redacted)
@@ -470,7 +491,7 @@ function thinkingOf(content) {
  * @param {AgentSession|null|undefined} s
  * @returns {boolean}
  */
-function thinkingHidden(s) {
+function thinkingHidden(s: AgentSession | null | undefined) {
     try {
         return !!s?.settingsManager?.getHideThinkingBlock?.();
     } catch {
@@ -486,9 +507,9 @@ function thinkingHidden(s) {
  * @param {AgentSession|null|undefined} s
  * @returns {{kind:"thinking_level", level:string, available:string[], supported:boolean}}
  */
-function thinkingLevelFrame(s) {
+function thinkingLevelFrame(s: AgentSession | null | undefined) {
     let level = "off";
-    let available = [];
+    let available: string[] = [];
     try {
         level = s?.thinkingLevel || "off";
         available = s?.getAvailableThinkingLevels?.() ?? [];
@@ -510,7 +531,7 @@ function thinkingLevelFrame(s) {
  * @param {string} home
  * @returns {string}
  */
-function formatCwdForFooter(dir, home) {
+function formatCwdForFooter(dir: string, home: string) {
     if (!home) return dir;
     const rel = relative(resolve(home), resolve(dir));
     const inside =
@@ -528,7 +549,7 @@ function formatCwdForFooter(dir, home) {
  * @param {AgentSession|null|undefined} s
  * @param {string} [threadCwd]
  */
-function footerFrame(s, threadCwd = "") {
+function footerFrame(s: AgentSession | null | undefined, threadCwd = "") {
     let model = null;
     let reasoning = false;
     let level = "off";
@@ -536,7 +557,10 @@ function footerFrame(s, threadCwd = "") {
     let tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
     let cost = 0;
     let sub = false;
-    let context = { percent: null, window: 0 };
+    let context: { percent: number | null; window: number } = {
+        percent: null,
+        window: 0,
+    };
     let autoCompact = false;
     let cwdStr = threadCwd || cwd;
     try {
@@ -589,8 +613,8 @@ function footerFrame(s, threadCwd = "") {
  * @param {AgentSession|null|undefined} s
  * @returns {{kind:"queue", items:string[]}}
  */
-function queueFrame(s) {
-    let items = [];
+function queueFrame(s: AgentSession | null | undefined) {
+    let items: string[] = [];
     try {
         const steering = s?.getSteeringMessages?.() ?? [];
         const followUp = s?.getFollowUpMessages?.() ?? [];
@@ -605,7 +629,7 @@ function queueFrame(s) {
  * @param {unknown} raw
  * @returns {string}
  */
-function describeError(raw) {
+function describeError(raw: unknown): string {
     if (!raw) return "model returned an error";
     try {
         return JSON.parse(String(raw))?.error?.message ?? String(raw);
@@ -615,7 +639,7 @@ function describeError(raw) {
 }
 
 /** @param {AgentSession} s */
-async function pinModel(s) {
+async function pinModel(s: AgentSession) {
     const model = modelRegistry.find(PROVIDER, MODEL_ID);
     if (model) {
         await s.setModel(model);
@@ -648,8 +672,8 @@ async function pinModel(s) {
  * @param {any} m                              the CustomMessage
  * @returns {ServerMessage}
  */
-function customFrame(reg, m) {
-    const frame: Record<string, unknown> = {
+function customFrame(reg: PiWebRegistry | null | undefined, m: any) {
+    const frame: ServerMessage = {
         kind: "custom",
         customType: m.customType || "",
     };
@@ -664,7 +688,7 @@ function customFrame(reg, m) {
     return frame;
 }
 
-function subscribe(thread) {
+function subscribe(thread: ThreadRuntime) {
     let streamed = false;
     let streamedThinking = false;
     // Wall-clock start time per in-flight tool call, keyed by toolCallId, so we
@@ -674,15 +698,15 @@ function subscribe(thread) {
     const toolStart = new Map();
     const toolArgs = new Map();
     /** @param {ServerMessage} msg */
-    const emit = (msg) => bus.broadcastToThread(thread.id, msg);
-    return thread.session.subscribe((ev) => {
+    const emit = (msg: ServerMessage) => bus.broadcastToThread(thread.id, msg);
+    return thread.session!.subscribe((ev) => {
         // route surface updates from this thread's extension event handlers
         // (setStatus, dock, notify, …) to its own registry
         currentThread = thread;
         switch (ev.type) {
             case "message_start":
                 if (ev.message?.role === "user") {
-                    const frame: Record<string, unknown> = {
+                    const frame: ServerMessage = {
                         kind: "user",
                         text: textOf(ev.message.content),
                     };
@@ -769,7 +793,7 @@ function subscribe(thread) {
                 if (t0 != null) toolStart.delete(ev.toolCallId);
                 const args = toolArgs.get(ev.toolCallId);
                 toolArgs.delete(ev.toolCallId);
-                const frame: Record<string, unknown> = {
+                const frame: ServerMessage = {
                     kind: "tool",
                     id: ev.toolCallId,
                     name: ev.toolName,
@@ -788,7 +812,7 @@ function subscribe(thread) {
                 // registered renderer over the tree when present.
                 if (!WEB_BUILTIN_TOOLS.has(ev.toolName)) {
                     try {
-                        const def = thread.session.getToolDefinition?.(
+                        const def = thread.session?.getToolDefinition?.(
                             ev.toolName,
                         );
                         if (def?.renderResult) {
@@ -848,14 +872,13 @@ let createChain = Promise.resolve();
  * @param {SessionManager} sm
  * @returns {ThreadRuntime}
  */
-function makeThread(sm) {
+function makeThread(sm: SessionManager): ThreadRuntime {
     // The SessionManager header is the source of truth for a thread's cwd (pi
     // binds it at creation). Fall back to the process root for legacy/in-memory
     // sessions that don't carry one.
     const threadCwd = sm.getCwd() || cwd;
     knownCwds.add(threadCwd);
-    /** @type {ThreadRuntime} */
-    const thread = {
+    const thread: ThreadRuntime = {
         id: sm.getSessionId(),
         cwd: threadCwd,
         sm,
@@ -880,7 +903,7 @@ function makeThread(sm) {
  * @param {SessionManager} sm
  * @returns {Promise<ThreadRuntime>}
  */
-function createThread(sm) {
+function createThread(sm: SessionManager) {
     const run = createChain.then(async () => {
         const thread = makeThread(sm);
         const threadCwd = thread.cwd;
@@ -936,7 +959,7 @@ function createThread(sm) {
  * @param {string|undefined|null} id
  * @returns {Promise<ThreadRuntime|null>}
  */
-async function ensureLoaded(id) {
+async function ensureLoaded(id: string | undefined | null) {
     if (!id) return null;
     const existing = threadRuntimes.get(id);
     if (existing) return existing;
@@ -966,13 +989,13 @@ async function ensureLoaded(id) {
  * @param {AgentSession} s
  * @param {(msg: ServerMessage) => void} send
  */
-function replayTranscript(s, send) {
+function replayTranscript(s: AgentSession, send: (msg: ServerMessage) => void) {
     send({ kind: "transcript_reset" });
     // this thread's surface registry, for re-rendering custom messages on replay
     const replayReg = threadRuntimes.get(
         s?.sessionManager?.getSessionId?.(),
     )?.piweb;
-    let messages = [];
+    let messages: any[] = [];
     try {
         const ctx = s.sessionManager.buildSessionContext?.();
         messages = Array.isArray(ctx?.messages) ? ctx.messages : [];
@@ -982,7 +1005,7 @@ function replayTranscript(s, send) {
     for (const m of messages) {
         switch (m?.role) {
             case "user": {
-                const frame: Record<string, unknown> = {
+                const frame: ServerMessage = {
                     kind: "user",
                     text: textOf(m.content),
                 };
@@ -1065,7 +1088,7 @@ function replayTranscript(s, send) {
 // A short, human label for a resource path. Extensions usually live in
 // `.../<name>/index.ts`, so prefer the containing folder name; otherwise the
 // basename. Plain files are shown cwd-relative.
-function resourceLabel(p) {
+function resourceLabel(p: string) {
     const rel = p.startsWith(cwd + "/") ? p.slice(cwd.length + 1) : p;
     const parts = rel.split("/");
     const base = parts[parts.length - 1] || rel;
@@ -1078,13 +1101,13 @@ function resourceLabel(p) {
 // Gather the loaded resources for the startup/reload intro view, mirroring the
 // TUI's `showLoadedResources` sections (Context, Skills, Prompts, Extensions,
 // Themes). Each accessor is guarded so one broken loader can't sink the banner.
-function buildWelcome(rl) {
-    const sections = [];
-    const add = (name, items) => {
+function buildWelcome(rl: any) {
+    const sections: { name: string; items: any[] }[] = [];
+    const add = (name: string, items: any[]) => {
         const list = (items || []).filter(Boolean);
         if (list.length) sections.push({ name, items: list });
     };
-    const safe = (fn, fallback) => {
+    const safe = <T>(fn: () => T, fallback: T): T => {
         try {
             return fn();
         } catch {
@@ -1094,38 +1117,43 @@ function buildWelcome(rl) {
     if (rl) {
         add(
             "Context",
-            safe(() => rl.getAgentsFiles().agentsFiles, []).map((f) =>
+            safe(() => rl.getAgentsFiles().agentsFiles, []).map((f: any) =>
                 resourceLabel(f.path),
             ),
         );
         add(
             "Skills",
-            safe(() => rl.getSkills().skills, []).map((s) => s.name),
+            safe(() => rl.getSkills().skills, []).map((s: any) => s.name),
         );
         add(
             "Prompts",
-            safe(() => rl.getPrompts().prompts, []).map((p) => `/${p.name}`),
+            safe(() => rl.getPrompts().prompts, []).map(
+                (p: any) => `/${p.name}`,
+            ),
         );
         add(
             "Extensions",
             safe(() => rl.getExtensions().extensions, [])
                 // Skip synthetic/inline extensions (e.g. "<inline:1>"), like the
                 // factory pi-web injects to capture each thread's ExtensionAPI.
-                .filter((e) => !e.path.startsWith("<"))
-                .map((e) => resourceLabel(e.path)),
+                .filter((e: any) => !e.path.startsWith("<"))
+                .map((e: any) => resourceLabel(e.path)),
         );
         add(
             "Themes",
             safe(() => rl.getThemes().themes, [])
-                .filter((t) => t.sourcePath)
-                .map((t) => t.name || resourceLabel(t.sourcePath)),
+                .filter((t: any) => t.sourcePath)
+                .map((t: any) => t.name || resourceLabel(t.sourcePath)),
         );
     }
     return { version: PI_VERSION, sections };
 }
 
-async function handleConnect(send, threadId) {
-    let t = null;
+async function handleConnect(
+    send: (msg: ServerMessage) => void,
+    threadId?: string,
+) {
+    let t: ThreadRuntime | null = null;
     try {
         t = await ensureLoaded(threadId);
     } catch {
@@ -1213,8 +1241,8 @@ const threads = {
             try {
                 const msgs = sm?.buildSessionContext?.().messages ?? [];
                 messageCount = msgs.length;
-                const u = msgs.find((m) => m?.role === "user");
-                if (u) firstMessage = textOf(u.content).slice(0, 80);
+                const u = msgs.find((m: any) => m?.role === "user");
+                if (u) firstMessage = textOf((u as any).content).slice(0, 80);
             } catch {}
             // No messages yet → don't list it (avoids empty-thread clutter).
             if (messageCount === 0) continue;
@@ -1237,7 +1265,7 @@ const threads = {
      * thread is the honest way to "change directory".
      * @param {string} [dir]
      */
-    async create(dir) {
+    async create(dir?: string) {
         const target = resolveThreadCwd(dir);
         const t = await createThread(SessionManager.create(target));
         return { id: t.id, cwd: t.cwd };
@@ -1247,7 +1275,7 @@ const threads = {
      * stream with `?thread=<id>`; this just guarantees it is live).
      * @param {string} id
      */
-    async switch(id) {
+    async switch(id: string) {
         if (!id) return;
         const t = await ensureLoaded(id);
         if (!t) throw new Error(`unknown thread: ${id}`);
@@ -1258,11 +1286,11 @@ const threads = {
      * navigates to the returned id.
      * @param {string} threadId
      */
-    async clone(threadId) {
-        const rt = threadRuntimes.get(threadId);
+    async clone(threadId?: string) {
+        const rt = threadId ? threadRuntimes.get(threadId) : undefined;
         const file = rt?.session?.sessionManager?.getSessionFile?.();
         if (!file) throw new Error("nothing to clone yet");
-        const t = await createThread(SessionManager.forkFrom(file, rt.cwd));
+        const t = await createThread(SessionManager.forkFrom(file, rt!.cwd));
         return { id: t.id, cwd: t.cwd };
     },
     /**
@@ -1273,12 +1301,12 @@ const threads = {
      * @param {string} threadId
      * @param {string} entryId
      */
-    async fork(threadId, entryId) {
-        const rt = threadRuntimes.get(threadId);
+    async fork(threadId: string | undefined, entryId: string) {
+        const rt = threadId ? threadRuntimes.get(threadId) : undefined;
         const file = rt?.session?.sessionManager?.getSessionFile?.();
         if (!file) throw new Error("nothing to fork yet");
         if (!entryId) throw new Error("missing entryId");
-        const sm = SessionManager.forkFrom(file, rt.cwd);
+        const sm = SessionManager.forkFrom(file, rt!.cwd);
         sm.branch(entryId);
         const t = await createThread(sm);
         return { id: t.id, cwd: t.cwd };
@@ -1290,11 +1318,12 @@ const threads = {
      * @param {string} path
      * @param {string} [threadId]
      */
-    async importJsonl(path, threadId) {
+    async importJsonl(path: string, threadId?: string) {
         const p = (path ?? "").trim();
         if (!p) throw new Error("missing file path");
         const abs = isAbsolute(p) ? p : resolve(cwd, p);
-        const targetCwd = threadRuntimes.get(threadId)?.cwd || cwd;
+        const targetCwd =
+            (threadId ? threadRuntimes.get(threadId) : undefined)?.cwd || cwd;
         const t = await createThread(SessionManager.forkFrom(abs, targetCwd));
         return { id: t.id, cwd: t.cwd };
     },
@@ -1305,7 +1334,7 @@ const threads = {
      * simply dropped from the registry.
      * @param {string} threadId
      */
-    async delete(threadId) {
+    async delete(threadId: string) {
         if (!threadId) throw new Error("missing threadId");
         // Parity with the TUI's "Cannot delete the currently active session":
         // the web has no single active thread, so block any thread with a turn
@@ -1333,7 +1362,7 @@ const threads = {
      * @param {string} threadId
      * @param {string} name
      */
-    async rename(threadId, name) {
+    async rename(threadId: string, name: string) {
         const n = (name ?? "").trim();
         if (!n) throw new Error("missing name");
         const s = sessionFor(threadId);
@@ -1358,7 +1387,7 @@ const threads = {
  * @param {string} threadId
  * @returns {Promise<string | undefined>}
  */
-async function sessionFileForThread(threadId) {
+async function sessionFileForThread(threadId: string) {
     const live = threadRuntimes
         .get(threadId)
         ?.session?.sessionManager?.getSessionFile?.();
@@ -1374,7 +1403,7 @@ async function sessionFileForThread(threadId) {
  * @param {string} sessionPath
  */
 async function deleteSessionFile(
-    sessionPath,
+    sessionPath: string,
 ): Promise<{ ok: boolean; method: "trash" | "unlink"; error?: string }> {
     const trashArgs = sessionPath.startsWith("-")
         ? ["--", sessionPath]
@@ -1382,7 +1411,7 @@ async function deleteSessionFile(
     const trashResult = spawnSync("trash", trashArgs, { encoding: "utf-8" });
 
     const getTrashErrorHint = () => {
-        const parts = [];
+        const parts: string[] = [];
         if (trashResult.error) parts.push(trashResult.error.message);
         const stderr = trashResult.stderr?.trim();
         if (stderr) parts.push(stderr.split("\n")[0] ?? stderr);
@@ -1413,7 +1442,7 @@ async function deleteSessionFile(
 // null for entries that aren't useful to jump to (model/thinking changes, tool
 // noise) so the web tree selector stays readable. Mirrors the pi TUI, which
 // lets you navigate to any earlier point and continue from there.
-function treeEntryInfo(node) {
+function treeEntryInfo(node: any) {
     const e = node?.entry;
     if (!e) return null;
     const label = node.label || null;
@@ -1432,8 +1461,7 @@ function treeEntryInfo(node) {
 // ---- session commands (/session, /name, /compact, /export, /changelog) ----
 // All operate on the thread named by the calling client (threadId).
 const sessionApi = {
-    /** @param {string} [threadId] */
-    info(threadId) {
+    info(threadId?: string) {
         const s = sessionFor(threadId);
         const sm = s?.sessionManager;
         return {
@@ -1447,7 +1475,7 @@ const sessionApi = {
      * @param {string} name
      * @param {string} [threadId]
      */
-    setName(name, threadId) {
+    setName(name: string, threadId?: string) {
         const n = (name ?? "").trim();
         const s = sessionFor(threadId);
         if (n && s) {
@@ -1461,8 +1489,7 @@ const sessionApi = {
             });
         }
     },
-    /** @param {string} [threadId] */
-    async compact(threadId) {
+    async compact(threadId?: string) {
         const s = sessionFor(threadId);
         if (!s) return;
         bus.broadcastToThread(threadId, {
@@ -1481,7 +1508,7 @@ const sessionApi = {
         } catch (err) {
             bus.broadcastToThread(threadId, {
                 kind: "error",
-                text: "compact failed: " + String(err?.message ?? err),
+                text: "compact failed: " + String((err as any)?.message ?? err),
             });
         }
     },
@@ -1489,7 +1516,7 @@ const sessionApi = {
      * @param {"html"|"jsonl"} format
      * @param {string} [threadId]
      */
-    async export(format, threadId) {
+    async export(format: "html" | "jsonl", threadId?: string) {
         const s = sessionFor(threadId);
         if (!s) return { error: "no active session" };
         try {
@@ -1497,7 +1524,7 @@ const sessionApi = {
                 format === "jsonl" ? s.exportToJsonl() : await s.exportToHtml();
             return { path, format: format === "jsonl" ? "jsonl" : "html" };
         } catch (err) {
-            return { error: String(err?.message ?? err) };
+            return { error: String((err as any)?.message ?? err) };
         }
     },
     async changelog() {
@@ -1508,7 +1535,7 @@ const sessionApi = {
             );
             return { text: text.slice(0, 20000) };
         } catch (err) {
-            return { text: "", error: String(err?.message ?? err) };
+            return { text: "", error: String((err as any)?.message ?? err) };
         }
     },
     // ---- session tree navigation (/tree) ---------------------------------
@@ -1517,13 +1544,13 @@ const sessionApi = {
      * with the current leaf marked. Powers the web /tree selector.
      * @param {string} [threadId]
      */
-    tree(threadId) {
+    tree(threadId?: string) {
         const s = sessionFor(threadId);
         const sm = s?.sessionManager;
         if (!sm) return { entries: [], leafId: null };
         const leafId = sm.getLeafId?.() ?? null;
-        const entries = [];
-        const visit = (nodes, depth) => {
+        const entries: any[] = [];
+        const visit = (nodes: any[], depth: number) => {
             for (const node of nodes ?? []) {
                 const info = treeEntryInfo(node);
                 if (info)
@@ -1546,32 +1573,38 @@ const sessionApi = {
      * @param {string} entryId
      * @param {string} [threadId]
      */
-    async navigateTree(entryId, threadId) {
+    async navigateTree(entryId: string, threadId?: string) {
         const s = sessionFor(threadId);
         if (!s) return { error: "no active session" };
         if (!entryId) return { error: "missing entryId" };
         try {
             const result = await s.navigateTree(entryId);
             if (result?.cancelled) return { cancelled: true };
-            const emit = (msg) => bus.broadcastToThread(threadId, msg);
+            const emit = (msg: ServerMessage) =>
+                bus.broadcastToThread(threadId, msg);
             replayTranscript(s, emit);
-            emit(footerFrame(s, threadRuntimes.get(threadId)?.cwd));
+            emit(
+                footerFrame(
+                    s,
+                    (threadId ? threadRuntimes.get(threadId) : undefined)?.cwd,
+                ),
+            );
             broadcastThreads();
             return { ok: true, editorText: result?.editorText ?? "" };
         } catch (err) {
-            return { error: String(err?.message ?? err) };
+            return { error: String((err as any)?.message ?? err) };
         }
     },
     /**
      * User messages that can serve as fork points (/fork), newest last.
      * @param {string} [threadId]
      */
-    forkMessages(threadId) {
+    forkMessages(threadId?: string) {
         const s = sessionFor(threadId);
         try {
             const items = s?.getUserMessagesForForking?.() ?? [];
             return {
-                items: items.map((m) => ({
+                items: items.map((m: any) => ({
                     id: m.entryId,
                     text: String(m.text ?? "")
                         .replace(/\s+/g, " ")
@@ -1590,14 +1623,14 @@ const sessionApi = {
      * `gh` installed + authenticated on the host.
      * @param {string} [threadId]
      */
-    async share(threadId) {
+    async share(threadId?: string) {
         const s = sessionFor(threadId);
         if (!s) return { error: "no active session" };
         try {
             await execFileP("gh", ["auth", "status"]);
         } catch (err) {
             const missing = /not found|ENOENT/i.test(
-                String(err?.message ?? err),
+                String((err as any)?.message ?? err),
             );
             return {
                 error: missing
@@ -1621,7 +1654,7 @@ const sessionApi = {
                 process.env.PI_SHARE_VIEWER_URL || "https://pi.dev/session/";
             return { gistUrl, viewerUrl: `${base}#${gistId}` };
         } catch (err) {
-            return { error: String(err?.message ?? err) };
+            return { error: String((err as any)?.message ?? err) };
         } finally {
             unlink(tmpFile).catch(() => {});
         }
@@ -1640,10 +1673,10 @@ const modelApi = {
      * if none resolve. The active model is pinned first, then provider/id order.
      * @param {string} [threadId]
      */
-    list(threadId) {
+    list(threadId?: string) {
         const s = sessionFor(threadId);
         const current = s?.state?.model ?? null;
-        let models = [];
+        let models: any[] = [];
         try {
             models = modelRegistry.getAvailable();
         } catch {
@@ -1656,9 +1689,9 @@ const modelApi = {
                 models = [];
             }
         }
-        const isCurrent = (m) =>
+        const isCurrent = (m: any) =>
             !!current && m.provider === current.provider && m.id === current.id;
-        const sub = (m) => {
+        const sub = (m: any) => {
             try {
                 return !!modelRegistry.isUsingOAuth(m);
             } catch {
@@ -1666,7 +1699,7 @@ const modelApi = {
             }
         };
         const items = models
-            .map((m) => ({
+            .map((m: any) => ({
                 provider: m.provider,
                 id: m.id,
                 name: m.name ?? "",
@@ -1697,7 +1730,7 @@ const modelApi = {
      * @param {string} id
      * @param {string} [threadId]
      */
-    async set(provider, id, threadId) {
+    async set(provider: string, id: string, threadId?: string) {
         const s = sessionFor(threadId);
         if (!s) return { error: "no active session" };
         const model = modelRegistry.find(provider, id);
@@ -1705,9 +1738,10 @@ const modelApi = {
         try {
             await s.setModel(model);
         } catch (err) {
-            return { error: String(err?.message ?? err) };
+            return { error: String((err as any)?.message ?? err) };
         }
-        const cwdOf = threadRuntimes.get(threadId)?.cwd;
+        const cwdOf = (threadId ? threadRuntimes.get(threadId) : undefined)
+            ?.cwd;
         // available thinking levels can change with the model → re-assert border
         bus.broadcastToThread(threadId, thinkingLevelFrame(s));
         // the context bar's `<model>` segment must reflect the new model
@@ -1732,12 +1766,11 @@ const modelApi = {
 // offer them alongside its built-in client commands. Executed by falling
 // through to s.prompt("/name ..."), which dispatches registered commands.
 const commandsApi = {
-    /** @param {string} [threadId] */
-    list(threadId) {
-        const rt = threadRuntimes.get(threadId);
-        let items = [];
+    list(threadId?: string) {
+        const rt = threadId ? threadRuntimes.get(threadId) : undefined;
+        let items: any[] = [];
         try {
-            items = (rt?.pi?.getCommands?.() ?? []).map((c) => ({
+            items = (rt?.pi?.getCommands?.() ?? []).map((c: any) => ({
                 name: c.name,
                 description: c.description ?? "",
                 source: c.source,
@@ -1758,12 +1791,15 @@ const commandsApi = {
  * @param {boolean} excludeFromContext
  * @param {string} [threadId]
  */
-async function runBash(command, excludeFromContext, threadId) {
+async function runBash(
+    command: string,
+    excludeFromContext: boolean,
+    threadId?: string,
+) {
     const cmd = (command ?? "").trim();
     const s = sessionFor(threadId);
     if (!s || !cmd) return;
-    /** @param {ServerMessage} msg */
-    const emit = (msg) => bus.broadcastToThread(threadId, msg);
+    const emit = (msg: ServerMessage) => bus.broadcastToThread(threadId, msg);
     emit({
         kind: "bash",
         status: "start",
@@ -1774,7 +1810,7 @@ async function runBash(command, excludeFromContext, threadId) {
     try {
         const result = await s.executeBash(
             cmd,
-            (chunk) => {
+            (chunk: string) => {
                 streamed = true;
                 emit({ kind: "bash", status: "chunk", text: chunk });
             },
@@ -1794,7 +1830,7 @@ async function runBash(command, excludeFromContext, threadId) {
     } catch (err) {
         emit({
             kind: "error",
-            text: "bash failed: " + String(err?.message ?? err),
+            text: "bash failed: " + String((err as any)?.message ?? err),
         });
     }
 }
@@ -1820,15 +1856,15 @@ function loadPiTheme() {
         );
         const vars = theme.vars ?? {};
         const colors = theme.colors ?? {};
-        const pick = (t) => vars[colors[t] ?? t] ?? vars[t] ?? null;
+        const pick = (t: string) => vars[colors[t] ?? t] ?? vars[t] ?? null;
         // Like pick, but tolerates direct hex literals in `colors` (the thinking
         // tokens are a mix of named refs e.g. "darkGray" and raw hex "#81a2be").
-        const resolve = (x) =>
+        const resolve = (x: any) =>
             typeof x === "string" && x.startsWith("#") ? x : (vars[x] ?? null);
-        const pickC = (t) => resolve(colors[t] ?? t);
+        const pickC = (t: string) => resolve(colors[t] ?? t);
         // Resolve the `export` block (raw var refs, e.g. { pageBg: "bg" }).
         const exp = theme.export ?? {};
-        const pickE = (t) => (exp[t] != null ? resolve(exp[t]) : null);
+        const pickE = (t: string) => (exp[t] != null ? resolve(exp[t]) : null);
         const map = {
             "--bg": pick("bg"),
             "--panel": vars.surface ?? null,
@@ -1900,7 +1936,7 @@ function loadPiTheme() {
             "--export-card-bg": pickE("cardBg"),
             "--export-info-bg": pickE("infoBg"),
         };
-        const out = {};
+        const out: Record<string, string> = {};
         for (const [k, v] of Object.entries(map)) if (v) out[k] = v;
         return out;
     } catch {
@@ -1931,7 +1967,9 @@ const server = createApp({
     // Project file list for the browser's `@` mention typeahead, scoped to the
     // viewing thread's working directory.
     listFiles: (threadId) =>
-        listProjectFiles(threadRuntimes.get(threadId)?.cwd),
+        listProjectFiles(
+            (threadId ? threadRuntimes.get(threadId) : undefined)?.cwd,
+        ),
     // Run this thread's registered autocomplete providers for the composer.
     autocomplete: async (threadId, ctx) => {
         const t = threadId ? threadRuntimes.get(threadId) : null;
@@ -2010,11 +2048,13 @@ const server = createApp({
         const imageBlocks = images?.length
             ? images.map((img) => ({ type: "image", ...img }))
             : undefined;
-        const promptOpts = imageBlocks ? { ...opts, images: imageBlocks } : opts;
-        s.prompt(text, promptOpts).catch((err) =>
+        const promptOpts = imageBlocks
+            ? { ...opts, images: imageBlocks }
+            : opts;
+        s.prompt(text, promptOpts as any).catch((err: any) =>
             bus.broadcastToThread(threadId, {
                 kind: "error",
-                text: String(err?.message ?? err),
+                text: String((err as any)?.message ?? err),
             }),
         );
     },
@@ -2031,7 +2071,7 @@ const server = createApp({
     onDequeue: async (threadId, abort) => {
         const s = sessionFor(threadId);
         if (!s) return { items: [] };
-        let items = [];
+        let items: string[] = [];
         try {
             const { steering, followUp } = s.clearQueue?.() ?? {
                 steering: [],
@@ -2053,7 +2093,9 @@ const server = createApp({
             } catch (err) {
                 bus.broadcastToThread(threadId, {
                     kind: "error",
-                    text: "interrupt failed: " + String(err?.message ?? err),
+                    text:
+                        "interrupt failed: " +
+                        String((err as any)?.message ?? err),
                 });
             } finally {
                 const t = threadId ? threadRuntimes.get(threadId) : null;
@@ -2097,7 +2139,7 @@ const server = createApp({
         let newLevel;
         try {
             if (op === "set") {
-                if (level) s.setThinkingLevel?.(level);
+                if (level) s.setThinkingLevel?.(level as any);
                 newLevel = s.thinkingLevel;
             } else {
                 newLevel = s.cycleThinkingLevel?.();
@@ -2113,7 +2155,9 @@ const server = createApp({
         } catch (err) {
             bus.broadcastToThread(threadId, {
                 kind: "error",
-                text: "thinking level failed: " + String(err?.message ?? err),
+                text:
+                    "thinking level failed: " +
+                    String((err as any)?.message ?? err),
             });
             return;
         }
@@ -2144,7 +2188,8 @@ const server = createApp({
         } catch (err) {
             bus.broadcastToThread(threadId, {
                 kind: "error",
-                text: "interrupt failed: " + String(err?.message ?? err),
+                text:
+                    "interrupt failed: " + String((err as any)?.message ?? err),
             });
         } finally {
             const t = threadId ? threadRuntimes.get(threadId) : null;
@@ -2183,7 +2228,7 @@ const server = createApp({
         } catch (err) {
             bus.broadcastToThread(threadId, {
                 kind: "error",
-                text: "reload failed: " + String(err?.message ?? err),
+                text: "reload failed: " + String((err as any)?.message ?? err),
             });
         } finally {
             bindingThread = null;

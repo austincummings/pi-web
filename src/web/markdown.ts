@@ -7,11 +7,11 @@
  * output can never inject markup or scripts.
  */
 
-function escapeHtml(s) {
+function escapeHtml(s: string) {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function safeUrl(url) {
+function safeUrl(url: string) {
     const u = url.trim();
     if (/^(https?:|mailto:|\/|#|\.\/|\.\.\/)/i.test(u)) return u;
     return "#";
@@ -19,7 +19,7 @@ function safeUrl(url) {
 
 // Split a table row into trimmed cells, ignoring the optional
 // leading/trailing pipes. Operates on already-escaped text.
-function splitRow(line) {
+function splitRow(line: string) {
     const s = line.trim().replace(/^\|/, "").replace(/\|$/, "");
     return s.split("|").map((c) => c.trim());
 }
@@ -27,7 +27,7 @@ function splitRow(line) {
 // A GFM table starts where a header row (contains "|") is immediately
 // followed by a delimiter row whose every cell is `:?-+:?` (---, :--, --:,
 // :-:). The two-line lookahead avoids misfiring on stray "|" in prose.
-function isTableStart(lines, i) {
+function isTableStart(lines: string[], i: number) {
     const head = lines[i];
     const delim = lines[i + 1];
     if (!head || !delim || !head.includes("|") || !delim.includes("|"))
@@ -37,10 +37,10 @@ function isTableStart(lines, i) {
 }
 
 // Inline formatting. Operates on already-escaped text.
-function inline(text) {
+function inline(text: string) {
     let out = text;
     // protect inline code spans first
-    const codes = [];
+    const codes: string[] = [];
     out = out.replace(/`([^`]+)`/g, (_, c) => {
         codes.push(c);
         return `\u0000C${codes.length - 1}\u0000`;
@@ -67,12 +67,12 @@ function inline(text) {
     return out;
 }
 
-export function renderMarkdown(src) {
+export function renderMarkdown(src: string) {
     const text = escapeHtml(String(src ?? "")).replace(/\r\n?/g, "\n");
     const lines = text.split("\n");
-    const html = [];
+    const html: string[] = [];
     let i = 0;
-    let listType = null; // "ul" | "ol"
+    let listType: "ul" | "ol" | null = null;
 
     const closeList = () => {
         if (listType) {
@@ -162,13 +162,13 @@ export function renderMarkdown(src) {
                 return "";
             });
             i += 2;
-            const cell = (tag, txt, idx) => {
+            const cell = (tag: string, txt: string, idx: number) => {
                 const a = aligns[idx];
                 const style = a ? ` style="text-align:${a}"` : "";
                 return `<${tag}${style}>${inline(txt)}</${tag}>`;
             };
             const head = headers.map((c, idx) => cell("th", c, idx)).join("");
-            const rows = [];
+            const rows: string[] = [];
             while (
                 i < lines.length &&
                 lines[i].includes("|") &&
@@ -226,11 +226,11 @@ export function renderMarkdown(src) {
  * Input is HTML-escaped first; only <span class> wrappers are ever emitted, so
  * this can never inject markup.
  */
-function highlightInline(s) {
+function highlightInline(s: string) {
     // Stash each matched token as a placeholder so later passes can't re-match
     // inside an already-wrapped span. NUL delimiters never occur in real input.
-    const stash = [];
-    const keep = (cls, str) => {
+    const stash: string[] = [];
+    const keep = (cls: string, str: string) => {
         stash.push(`<span class="${cls}">${str}</span>`);
         return `\u0000${stash.length - 1}\u0000`;
     };
@@ -245,7 +245,7 @@ function highlightInline(s) {
     ); // _italic_
     s = s.replace(/(^|\s)(@[^\s]+)/g, (_, p, t) => p + keep("md-mention", t)); // @file
     // Restore placeholders (repeat: a token may nest inside another's text).
-    let prev;
+    let prev: string;
     do {
         prev = s;
         s = s.replace(/\u0000(\d+)\u0000/g, (_, i) => stash[+i]);
@@ -253,7 +253,7 @@ function highlightInline(s) {
     return s;
 }
 
-export function highlightComposer(src) {
+export function highlightComposer(src: string) {
     const text = escapeHtml(String(src ?? "")).replace(/\r\n?/g, "\n");
     const lines = text.split("\n");
     let inFence = false;

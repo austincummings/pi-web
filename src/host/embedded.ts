@@ -11,6 +11,10 @@
  * require a prebuilt `dist/app.js` to exist.
  */
 import indexHtmlFile from "../web/index.html" with { type: "file" };
+// `dist/app.js` is a prebuilt bundle with no type declarations and may not
+// exist outside a binary build; the `type: "file"` import resolves to a path
+// string at compile time either way.
+// @ts-expect-error -- untyped Bun file import (prebuilt front-end bundle)
 import appJsFile from "../../dist/app.js" with { type: "file" };
 
 // The `type: "file"` assertion makes these resolve to a path usable with

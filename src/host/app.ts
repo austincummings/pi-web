@@ -130,11 +130,11 @@ export interface AppOptions {
 export function createBus(): Bus {
     const clients = new Set<SSEClient>();
     const frame = (msg: Frame) => `data: ${JSON.stringify(msg)}\n\n`;
-    const broadcast = (msg) => {
+    const broadcast = (msg: Frame) => {
         const line = frame(msg);
         for (const res of clients) res.write(line);
     };
-    const broadcastToThread = (threadId, msg) => {
+    const broadcastToThread = (threadId: string | undefined, msg: Frame) => {
         if (!threadId) return;
         const line = frame(msg);
         for (const res of clients)
@@ -143,8 +143,8 @@ export function createBus(): Bus {
     return { clients, broadcast, broadcastToThread };
 }
 
-async function readBody(req) {
-    const chunks = [];
+async function readBody(req: IncomingMessage): Promise<Record<string, any>> {
+    const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c);
     if (!chunks.length) return {};
     try {
@@ -154,7 +154,7 @@ async function readBody(req) {
     }
 }
 
-function sendJson(res, code, obj) {
+function sendJson(res: ServerResponse, code: number, obj: unknown) {
     res.writeHead(code, { "Content-Type": "application/json" }).end(
         JSON.stringify(obj),
     );
@@ -216,7 +216,7 @@ export function createApp({
 }: AppOptions): Server {
     // `/app.js` is produced by the TS bundler (see build-web.ts); the rest are
     // served verbatim from src/web.
-    const STATIC = {
+    const STATIC: Record<string, [string, string]> = {
         "/": ["index.html", "text/html; charset=utf-8"],
         "/index.html": ["index.html", "text/html; charset=utf-8"],
     };
@@ -246,7 +246,8 @@ export function createApp({
             Connection: "keep-alive",
         });
         res.write(": connected\n\n");
-        const send = (msg) => res.write(`data: ${JSON.stringify(msg)}\n\n`);
+        const send = (msg: Frame) =>
+            res.write(`data: ${JSON.stringify(msg)}\n\n`);
         // the thread this client is viewing (URL-driven selection)
         const wanted = url.searchParams.get("thread") || undefined;
         res.__threadId = wanted;
@@ -369,7 +370,7 @@ export function createApp({
             res.writeHead(500, {
                 "Content-Type": "text/javascript; charset=utf-8",
             }).end(
-                `/* web build failed */\nconsole.error(${JSON.stringify(String(err?.message ?? err))});`,
+                `/* web build failed */\nconsole.error(${JSON.stringify(String((err as any)?.message ?? err))});`,
             );
         }
     });
@@ -468,7 +469,7 @@ export function createApp({
             const result = (await threads?.create?.(body.cwd)) ?? {};
             sendJson(res, 200, result);
         } catch (err) {
-            sendJson(res, 400, { error: String(err?.message ?? err) });
+            sendJson(res, 400, { error: String((err as any)?.message ?? err) });
         }
     });
     router.post("/threads/switch", async ({ res, body }) => {
@@ -476,7 +477,7 @@ export function createApp({
             await threads?.switch?.(body.id);
             res.writeHead(202).end();
         } catch (err) {
-            sendJson(res, 409, { error: String(err?.message ?? err) });
+            sendJson(res, 409, { error: String((err as any)?.message ?? err) });
         }
     });
     // /clone, /fork, /import all mint a new thread and return its id so the
@@ -487,7 +488,7 @@ export function createApp({
                 (await threads?.clone?.(body.threadId || undefined)) ?? {};
             sendJson(res, 200, result);
         } catch (err) {
-            sendJson(res, 400, { error: String(err?.message ?? err) });
+            sendJson(res, 400, { error: String((err as any)?.message ?? err) });
         }
     });
     router.post("/threads/fork", async ({ res, body }) => {
@@ -499,7 +500,7 @@ export function createApp({
                 )) ?? {};
             sendJson(res, 200, result);
         } catch (err) {
-            sendJson(res, 400, { error: String(err?.message ?? err) });
+            sendJson(res, 400, { error: String((err as any)?.message ?? err) });
         }
     });
     router.post("/threads/import", async ({ res, body }) => {
@@ -511,7 +512,7 @@ export function createApp({
                 )) ?? {};
             sendJson(res, 200, result);
         } catch (err) {
-            sendJson(res, 400, { error: String(err?.message ?? err) });
+            sendJson(res, 400, { error: String((err as any)?.message ?? err) });
         }
     });
     // Delete a thread's session (Ctrl+D in the resume picker). Mirrors the pi
@@ -526,7 +527,7 @@ export function createApp({
         } catch (err) {
             sendJson(res, 400, {
                 ok: false,
-                error: String(err?.message ?? err),
+                error: String((err as any)?.message ?? err),
             });
         }
     });
@@ -537,7 +538,7 @@ export function createApp({
                 (await threads?.rename?.(body.threadId, body.name)) ?? {};
             sendJson(res, 200, result);
         } catch (err) {
-            sendJson(res, 400, { error: String(err?.message ?? err) });
+            sendJson(res, 400, { error: String((err as any)?.message ?? err) });
         }
     });
     router.post("/reload", async ({ res, body }) => {
