@@ -18,7 +18,7 @@ import {
     formatDuration,
     type ToolInfo,
 } from "./tools.ts";
-import { ansiToHtml } from "./ansi.ts";
+import { renderStaticNode } from "./nodes.ts";
 
 // The shape of an SSE `tool` frame (start = name+args; end = result+isError).
 export interface ToolFrame {
@@ -129,19 +129,17 @@ export class PiTool extends HTMLElement {
             }
         }
 
-        // Render-model parity P1: a tool's custom renderResult arrives as a
-        // host-adapted AnsiBlock tree. Paint it (unless a registered renderer
-        // above already handled the body). Falls through if absent/unknown.
-        if (this.tree && (this.tree as any).type === "AnsiBlock") {
-            const pre = document.createElement("div");
-            pre.className = "ansi";
-            pre.innerHTML = ansiToHtml(
-                Array.isArray((this.tree as any).lines)
-                    ? (this.tree as any).lines
-                    : [],
-            );
-            this.appendChild(pre);
-            return;
+        // Render-model parity: a tool's custom renderResult arrives as a
+        // host-adapted node tree (AnsiBlock leaf, or a structural Box/Image/
+        // Spacer tree — P2). Paint it via the shared static-node renderer
+        // (unless a registered renderer above already handled the body). Falls
+        // through if absent/unknown.
+        if (this.tree && typeof this.tree === "object") {
+            const el = renderStaticNode(this.tree);
+            if (el) {
+                this.appendChild(el);
+                return;
+            }
         }
 
         if (!info.result) return;

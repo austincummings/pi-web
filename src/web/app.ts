@@ -4,7 +4,7 @@ import { fuzzyFilter } from "./fuzzy.ts";
 import { renderMarkdown, highlightComposer } from "./markdown.ts";
 import { registerToolRenderer, type ToolInfo } from "./tools.ts";
 import { renderDiffHtml } from "./diff.ts";
-import { ansiToHtml } from "./ansi.ts";
+import { renderStaticNode } from "./nodes.ts";
 import {
     keyHintsLine,
     sectionSummary,
@@ -478,22 +478,14 @@ function clearEmpty() {
     $transcript.querySelectorAll(".empty").forEach((e) => e.remove());
 }
 
-function renderWelcome() {
-    let el = $transcript.querySelector(".welcome") as HTMLElement | null;
+// Build the intro view's content (logo/version, key hints, loaded-resource
+// sections, expand/collapse toggle) into `el` from the current welcomeInfo.
+// `expanded` picks compact comma lists vs. one-per-line; `onToggle` fires on
+// click so each caller can flip its own expanded state and re-render.
+function fillWelcome(el: HTMLElement, expanded: boolean, onToggle: () => void) {
     const info = welcomeInfo;
-    if (!info) {
-        if (el) el.remove();
-        return;
-    }
-    if (!el) {
-        el = document.createElement("div");
-        el.className = "welcome";
-    }
-    // keep the banner pinned as the first transcript entry
-    if ($transcript.firstChild !== el) {
-        $transcript.insertBefore(el, $transcript.firstChild);
-    }
-    el.classList.toggle("expanded", welcomeExpanded);
+    if (!info) return;
+    el.classList.toggle("expanded", expanded);
     el.innerHTML = "";
 
     const logo = document.createElement("div");
@@ -524,7 +516,7 @@ function renderWelcome() {
             name.textContent = `[${s.name}] `;
             const items = document.createElement("span");
             items.className = "sec-items";
-            items.textContent = welcomeExpanded
+            items.textContent = expanded
                 ? s.items.join("\n")
                 : sectionSummary(s.items);
             sec.appendChild(name);
@@ -536,15 +528,54 @@ function renderWelcome() {
 
     const toggle = document.createElement("div");
     toggle.className = "toggle";
-    toggle.textContent = welcomeExpanded
+    toggle.textContent = expanded
         ? "collapse"
         : "show loaded resources (click)";
     el.appendChild(toggle);
 
-    el.onclick = () => {
+    el.onclick = onToggle;
+}
+
+function renderWelcome() {
+    let el = $transcript.querySelector(
+        ".welcome.pinned",
+    ) as HTMLElement | null;
+    if (!welcomeInfo) {
+        if (el) el.remove();
+        return;
+    }
+    if (!el) {
+        el = document.createElement("div");
+        el.className = "welcome pinned";
+    }
+    // keep the banner pinned as the first transcript entry
+    if ($transcript.firstChild !== el) {
+        $transcript.insertBefore(el, $transcript.firstChild);
+    }
+    fillWelcome(el, welcomeExpanded, () => {
         welcomeExpanded = !welcomeExpanded;
         renderWelcome();
-    };
+    });
+}
+
+// Show the intro view inline at the bottom of the transcript. Used after
+// /reload so the freshly loaded resources are visible in place, rather than
+// only silently refreshed in the pinned banner up top (which the user has
+// usually scrolled past). Each inline copy tracks its own expanded state.
+function appendWelcome() {
+    if (!welcomeInfo) return;
+    clearEmpty();
+    const el = document.createElement("div");
+    el.className = "welcome inline";
+    let expanded = false;
+    const draw = () =>
+        fillWelcome(el, expanded, () => {
+            expanded = !expanded;
+            draw();
+        });
+    draw();
+    $transcript.appendChild(el);
+    followBottom();
 }
 
 // True when the transcript is scrolled (near) to the bottom, so we only
@@ -692,37 +723,6 @@ function renderNode(node, surfaceId) {
     if (!node || typeof node !== "object")
         return document.createTextNode(String(node ?? ""));
     switch (node.type) {
-        // Box: vertical child container (mirrors pi-tui's Box). `Stack` is the
-        // pre-rename alias, kept for one release.
-        case "Box":
-        case "Stack": {
-            const d = document.createElement("div");
-            d.style.display = "flex";
-            d.style.flexDirection = "column";
-            d.style.gap = "8px";
-            (node.children || []).forEach((c) =>
-                d.appendChild(renderNode(c, surfaceId)),
-            );
-            return d;
-        }
-        case "Row": {
-            const d = document.createElement("div");
-            d.className = "row";
-            (node.children || []).forEach((c) =>
-                d.appendChild(renderNode(c, surfaceId)),
-            );
-            return d;
-        }
-        case "Text": {
-            const d = document.createElement("div");
-            d.textContent = node.text ?? "";
-            return d;
-        }
-        case "Divider": {
-            const d = document.createElement("div");
-            d.className = "divider";
-            return d;
-        }
         case "Button": {
             const b = document.createElement("button");
             b.textContent = node.label ?? "button";
@@ -752,16 +752,6 @@ function renderNode(node, surfaceId) {
                 });
             return i;
         }
-        // Markdown: rich text rendered via the same markdown pipeline as the
-        // transcript (mirrors pi-tui's Markdown component). Fenced code blocks
-        // are highlighted by markdown.ts using the theme --syn-* palette; this
-        // is where code highlighting lives (the TUI has no separate Code type).
-        case "Markdown": {
-            const d = document.createElement("div");
-            d.className = "md";
-            d.innerHTML = renderMarkdown(node.text ?? "");
-            return d;
-        }
         case "Frame": {
             // arbitrary HTML/CSS/JS, isolated in a sandboxed <pi-frame>
             const frame = document.createElement("pi-frame") as PiFrame;
@@ -770,18 +760,12 @@ function renderNode(node, surfaceId) {
             if (node.height != null) frame.frameHeight = node.height;
             return frame;
         }
-        // AnsiBlock: a block of ANSI-styled monospace lines produced by a pi TUI
-        // Component's render(width) (render-model parity, docs/render-model-parity.md).
-        // ansiToHtml parses the ANSI into escaped, whitelisted spans.
-        case "AnsiBlock": {
-            const pre = document.createElement("div");
-            pre.className = "ansi";
-            pre.innerHTML = ansiToHtml(
-                Array.isArray(node.lines) ? node.lines : [],
-            );
-            return pre;
-        }
+        // Everything else (Box/Row/Text/Markdown/AnsiBlock/Spacer/Image, …) is
+        // static; the shared renderer owns it. Container children recurse back
+        // through renderNode so interactive nodes nested in a Box still work.
         default: {
+            const el = renderStaticNode(node, (c) => renderNode(c, surfaceId));
+            if (el) return el;
             const d = document.createElement("div");
             d.textContent = `[unknown node: ${node.type}]`;
             return d;
@@ -2578,6 +2562,10 @@ function onSseMessage(e) {
                 sections: m.sections || [],
             };
             renderWelcome();
+            // After a /reload, also show the intro inline at the bottom so the
+            // freshly loaded resources are visible in place (the pinned banner
+            // up top has usually been scrolled past).
+            if (m.reload) appendWelcome();
             // extensions may have changed (first load / after /reload) — refresh
             // the `/` typeahead's extension commands
             refreshCommands();

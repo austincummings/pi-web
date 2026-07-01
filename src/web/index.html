@@ -604,6 +604,16 @@
             .ansi a {
                 color: var(--acc);
             }
+            /* Image: a pi-tui Image component lifted to a real <img> via a data
+               URI (render-model parity §7.4). The terminal renders it as pixel
+               cells; the DOM shows the actual image, bounded to the card width. */
+            .pi-img {
+                display: block;
+                margin: 4px 0 0;
+                max-width: 100%;
+                height: auto;
+                border-radius: 6px;
+            }
             /* Diff body (edit results): one span per line, colored by the
                theme's toolDiff* slots; changed tokens carry .inverse. Mirrors
                pi-tui's renderDiff. Kept monospace + non-wrapping so line numbers

@@ -3,12 +3,24 @@
  * docs/render-model-parity.md). pi runs in-process, so this walks the *live*
  * component objects and emits pi-web's serializable node tree for the browser.
  *
- * Parity P0: the whole component is emitted as a single `AnsiBlock` — we call
- * its `render(cols)` (the one universal contract) and ship the ANSI lines, which
- * the client paints via `ansiToHtml` (src/web/ansi.ts). Structural recognition
- * (Box/Container/Image → native nodes) and interactivity are later phases
- * (§7/§8); this module is the foundation they build on.
+ * Parity P0: a leaf component is emitted as a single `AnsiBlock` — we call its
+ * `render(cols)` (the one universal contract) and ship the ANSI lines, which the
+ * client paints via `ansiToHtml` (src/web/ansi.ts).
+ *
+ * Parity P2 (§7): opportunistic *structural* recognition. Box/Container are
+ * walked into nested nodes (their `children` are public), `Image` becomes a real
+ * `<img>` via the guarded internals accessor (§7.4), and `Spacer` becomes a gap.
+ * This is never required for correctness — anything unrecognized (or any field
+ * drift) degrades to the ANSI leaf. Interactivity is a later phase (§8).
  */
+
+import {
+    componentKind,
+    readBoxPadding,
+    readChildren,
+    readImage,
+    readSpacerLines,
+} from "./tui-internals.ts";
 
 /** The minimal pi-tui Component contract we depend on (tui.d.ts). */
 export interface TuiComponent {
@@ -26,6 +38,36 @@ export interface AnsiBlockNode {
     focusable?: boolean;
 }
 
+/** A nested container node (adapted from pi-tui Box/Container). */
+export interface BoxNode {
+    type: "Box";
+    /** Horizontal padding in terminal cells (0 for a bare Container). */
+    paddingX: number;
+    /** Vertical padding in terminal cells (0 for a bare Container). */
+    paddingY: number;
+    children: AdaptedNode[];
+}
+
+/** A vertical gap node (adapted from pi-tui Spacer). */
+export interface SpacerNode {
+    type: "Spacer";
+    lines: number;
+}
+
+/** A real image node (adapted from pi-tui Image via §7.4). */
+export interface ImageNode {
+    type: "Image";
+    /** A `data:<mime>;base64,<data>` URI the client mounts as `<img>`. */
+    src: string;
+    alt?: string;
+}
+
+/** Any node the adapter can emit. */
+export type AdaptedNode = AnsiBlockNode | BoxNode | SpacerNode | ImageNode;
+
+/** Guard against pathological/cyclic component trees. */
+const MAX_DEPTH = 32;
+
 /** Duck-type check: anything exposing `render(width) => string[]`. */
 export function isComponent(x: unknown): x is TuiComponent {
     return !!x && typeof (x as any).render === "function";
@@ -42,7 +84,80 @@ export function isComponent(x: unknown): x is TuiComponent {
 export function componentToNode(
     component: TuiComponent,
     cols = 80,
-): AnsiBlockNode {
+): AdaptedNode {
+    return adapt(component, cols, 0);
+}
+
+/**
+ * Structural recognition (§7). Recurses Box/Container, lifts Image→`<img>` and
+ * Spacer→gap, and falls back to an ANSI leaf for anything else (or on any field
+ * drift / bg it cannot reproduce faithfully — see §7.4 faithfulness caveat).
+ */
+function adapt(
+    component: TuiComponent,
+    cols: number,
+    depth: number,
+): AdaptedNode {
+    if (depth < MAX_DEPTH) {
+        switch (componentKind(component)) {
+            case "image": {
+                const img = readImage(component);
+                if (img) {
+                    return {
+                        type: "Image",
+                        src: `data:${img.mimeType};base64,${img.base64Data}`,
+                        alt: img.filename,
+                    };
+                }
+                break; // drift → ANSI leaf
+            }
+            case "spacer": {
+                const n = readSpacerLines(component);
+                if (n != null) return { type: "Spacer", lines: n };
+                break;
+            }
+            case "container":
+            case "box": {
+                const box = adaptContainer(component, cols, depth);
+                if (box) return box;
+                break; // no children / bg / drift → ANSI leaf
+            }
+        }
+    }
+    return renderLeaf(component, cols);
+}
+
+/**
+ * Adapt a Box/Container into a nested BoxNode. Returns null (→ ANSI leaf) when
+ * the children aren't readable, or when a Box paints a background we can't
+ * reproduce in the DOM (rendering the whole subtree as ANSI keeps the bg).
+ */
+function adaptContainer(
+    component: TuiComponent,
+    cols: number,
+    depth: number,
+): BoxNode | null {
+    const children = readChildren(component);
+    if (!children) return null;
+    let paddingX = 0;
+    let paddingY = 0;
+    if (componentKind(component) === "box") {
+        const pad = readBoxPadding(component);
+        if (!pad || pad.hasBg) return null; // drift or unreproducible bg
+        paddingX = pad.paddingX;
+        paddingY = pad.paddingY;
+    }
+    // Box renders children at (width - 2*paddingX) — thread the same inner width.
+    const inner = Math.max(1, Math.floor(cols) - paddingX * 2);
+    const kids: AdaptedNode[] = [];
+    for (const child of children) {
+        if (isComponent(child)) kids.push(adapt(child, inner, depth + 1));
+    }
+    return { type: "Box", paddingX, paddingY, children: kids };
+}
+
+/** The universal fallback: render the component to ANSI lines (P0 contract). */
+function renderLeaf(component: TuiComponent, cols: number): AnsiBlockNode {
     let lines: string[] = [];
     try {
         const out = component.render(Math.max(1, Math.floor(cols)));
@@ -131,7 +246,7 @@ export function renderToolCallToNode(
     p: ToolRenderParams,
     theme: any,
     cols = 80,
-): AnsiBlockNode | null {
+): AdaptedNode | null {
     const fn = def?.renderCall;
     if (typeof fn !== "function") return null;
     try {
@@ -152,7 +267,7 @@ export function renderToolResultToNode(
     p: ToolRenderParams,
     theme: any,
     cols = 80,
-): AnsiBlockNode | null {
+): AdaptedNode | null {
     const fn = def?.renderResult;
     if (typeof fn !== "function") return null;
     try {

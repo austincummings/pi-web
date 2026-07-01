@@ -133,3 +133,74 @@ test("returns null when the hook returns a non-Component", () => {
     );
     expect(node).toBeNull();
 });
+
+// ---- Parity P2: structural recognition (fake constructor names) ----
+// componentKind keys off constructor.name; tag plain objects to exercise the
+// structural paths without importing pi-tui (see tui-internals.test.mjs for the
+// real-class drift self-check).
+const tag = (name, obj) => {
+    obj.constructor = { name };
+    return obj;
+};
+
+test("adapts an Image component to an <img> data URI (alt from filename)", () => {
+    const img = tag("Image", {
+        base64Data: "QUJD",
+        mimeType: "image/png",
+        options: { filename: "cat.png" },
+        render: () => ["<ansi image fallback>"],
+    });
+    expect(componentToNode(img, 80)).toEqual({
+        type: "Image",
+        src: "data:image/png;base64,QUJD",
+        alt: "cat.png",
+    });
+});
+
+test("an Image missing its data degrades to the ANSI leaf", () => {
+    const img = tag("Image", { mimeType: "image/png", render: () => ["fallback"] });
+    const node = componentToNode(img, 80);
+    expect(node.type).toBe("AnsiBlock");
+    expect(node.lines).toEqual(["fallback"]);
+});
+
+test("adapts a Spacer to a gap node", () => {
+    const sp = tag("Spacer", { lines: 4, render: () => ["", "", "", ""] });
+    expect(componentToNode(sp, 80)).toEqual({ type: "Spacer", lines: 4 });
+});
+
+test("walks a Box: padding + recursively-adapted children at inner width", () => {
+    const child = { render: (w) => ["child@" + w] }; // plain leaf
+    const box = tag("Box", { paddingX: 2, paddingY: 1, children: [child], render: () => ["boxansi"] });
+    const node = componentToNode(box, 80);
+    expect(node.type).toBe("Box");
+    expect(node.paddingX).toBe(2);
+    expect(node.paddingY).toBe(1);
+    // child rendered at inner width 80 - 2*2 = 76
+    expect(node.children[0]).toEqual({ type: "AnsiBlock", cols: 76, lines: ["child@76"] });
+});
+
+test("a Box with a bgFn degrades to the ANSI leaf (bg unreproducible)", () => {
+    const box = tag("Box", {
+        paddingX: 1,
+        paddingY: 0,
+        bgFn: (s) => s,
+        children: [{ render: () => ["c"] }],
+        render: () => ["boxed-with-bg"],
+    });
+    const node = componentToNode(box, 80);
+    expect(node.type).toBe("AnsiBlock");
+    expect(node.lines).toEqual(["boxed-with-bg"]);
+});
+
+test("adapts a Container to a zero-padding Box", () => {
+    const container = tag("Container", {
+        children: [{ render: () => ["a"] }, { render: () => ["b"] }],
+        render: () => ["ansi"],
+    });
+    const node = componentToNode(container, 40);
+    expect(node.type).toBe("Box");
+    expect(node.paddingX).toBe(0);
+    expect(node.paddingY).toBe(0);
+    expect(node.children.map((c) => c.lines[0])).toEqual(["a", "b"]);
+});
