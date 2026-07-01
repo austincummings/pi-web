@@ -2002,7 +2002,15 @@ const server = createApp({
         // SDK when streaming, so only pass it when a turn is actually running.
         const opts = s.isStreaming ? { streamingBehavior: "steer" } : undefined;
         // Attach any pasted/dropped images (base64 blocks) to the message.
-        const promptOpts = images?.length ? { ...opts, images } : opts;
+        // Normalize to well-formed ImageContent blocks: the web client sends
+        // `{ data, mimeType }`, but the SDK splices these straight into the user
+        // message content and downstream consumers (provider transforms, and our
+        // own `imagesOf` transcript extractor) key off `type: "image"`. Without
+        // it the image is dropped from the rendered bubble and the model input.
+        const imageBlocks = images?.length
+            ? images.map((img) => ({ type: "image", ...img }))
+            : undefined;
+        const promptOpts = imageBlocks ? { ...opts, images: imageBlocks } : opts;
         s.prompt(text, promptOpts).catch((err) =>
             bus.broadcastToThread(threadId, {
                 kind: "error",
