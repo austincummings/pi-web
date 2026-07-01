@@ -496,6 +496,25 @@ function footerFrame(s, threadCwd = "") {
     };
 }
 /**
+ * Build the `queue` frame: the per-thread steering/follow-up messages waiting to
+ * be delivered while a turn is in flight. Mirrors the pi TUI's pending-messages
+ * display (drained at the next message boundary / turn end). Best-effort.
+ * @param {AgentSession|null|undefined} s
+ * @returns {{kind:"queue", items:string[]}}
+ */
+function queueFrame(s) {
+    let items = [];
+    try {
+        const steering = s?.getSteeringMessages?.() ?? [];
+        const followUp = s?.getFollowUpMessages?.() ?? [];
+        items = [...steering, ...followUp];
+    } catch {
+        /* best-effort: empty queue */
+    }
+    return { kind: "queue", items };
+}
+
+/**
  * @param {unknown} raw
  * @returns {string}
  */
@@ -614,6 +633,14 @@ function subscribe(thread) {
                     status: "end",
                     isError: ev.isError,
                     result: textOf(ev.result?.content),
+                });
+                break;
+            case "queue_update":
+                // steering / follow-up messages waiting to be delivered while a
+                // turn is in flight; mirror the pi TUI's pending-messages display
+                emit({
+                    kind: "queue",
+                    items: [...(ev.steering ?? []), ...(ev.followUp ?? [])],
                 });
                 break;
             case "agent_end":
@@ -914,6 +941,8 @@ async function handleConnect(send, threadId) {
     // default below-composer context bar (pwd/session + tokens + model•thinking)
     send(footerFrame(t.session, t.cwd));
     replayTranscript(t.session, send);
+    // pending steering/follow-up messages, so a refreshing viewer sees the queue
+    send(queueFrame(t.session));
     send({ kind: "thread_switched", id: t.id });
     // reflect the thread's current activity (e.g. focusing a busy background
     // thread should show the spinner immediately)
@@ -1264,6 +1293,9 @@ function loadPiTheme() {
         const resolve = (x) =>
             typeof x === "string" && x.startsWith("#") ? x : (vars[x] ?? null);
         const pickC = (t) => resolve(colors[t] ?? t);
+        // Resolve the `export` block (raw var refs, e.g. { pageBg: "bg" }).
+        const exp = theme.export ?? {};
+        const pickE = (t) => (exp[t] != null ? resolve(exp[t]) : null);
         const map = {
             "--bg": pick("bg"),
             "--panel": vars.surface ?? null,
@@ -1284,6 +1316,56 @@ function loadPiTheme() {
             "--think-high": pickC("thinkingHigh"),
             "--think-xhigh": pickC("thinkingXhigh"),
             "--bash-mode": pickC("bashMode"),
+            // tool-card status tints + title/output (literal theme slots, so the
+            // web washes cards with the exact colors the TUI uses — no color-mix)
+            "--tool-pending-bg": pick("toolPendingBg"),
+            "--tool-success-bg": pick("toolSuccessBg"),
+            "--tool-error-bg": pick("toolErrorBg"),
+            "--tool-title": pick("toolTitle"),
+            "--tool-output": pick("toolOutput"),
+            // markdown styling
+            "--md-heading": pick("mdHeading"),
+            "--md-link": pick("mdLink"),
+            "--md-link-url": pick("mdLinkUrl"),
+            "--md-code": pick("mdCode"),
+            "--md-code-block": pick("mdCodeBlock"),
+            "--md-code-block-border": pick("mdCodeBlockBorder"),
+            "--md-quote": pick("mdQuote"),
+            "--md-quote-border": pick("mdQuoteBorder"),
+            "--md-hr": pick("mdHr"),
+            "--md-list-bullet": pick("mdListBullet"),
+            // diff colors (pairs with #19 syntax/diff rendering)
+            "--diff-added": pick("toolDiffAdded"),
+            "--diff-removed": pick("toolDiffRemoved"),
+            "--diff-context": pick("toolDiffContext"),
+            // syntax highlighting slots (pairs with #19)
+            "--syn-comment": pick("syntaxComment"),
+            "--syn-keyword": pick("syntaxKeyword"),
+            "--syn-function": pick("syntaxFunction"),
+            "--syn-variable": pick("syntaxVariable"),
+            "--syn-string": pick("syntaxString"),
+            "--syn-number": pick("syntaxNumber"),
+            "--syn-type": pick("syntaxType"),
+            "--syn-operator": pick("syntaxOperator"),
+            "--syn-punctuation": pick("syntaxPunctuation"),
+            // message styling
+            "--selected-bg": pick("selectedBg"),
+            "--user-msg-bg": pick("userMessageBg"),
+            "--user-msg-text": pick("userMessageText"),
+            "--custom-msg-bg": pick("customMessageBg"),
+            "--custom-msg-text": pick("customMessageText"),
+            "--custom-msg-label": pick("customMessageLabel"),
+            // misc raw palette slots exposed for extensions / future use
+            "--hover": pick("hover"),
+            "--border-variant": pick("borderVariant"),
+            "--comment": pick("comment"),
+            "--cyan": pick("cyan"),
+            "--bright-cyan": pick("brightCyan"),
+            "--dim-blue": pick("dimBlue"),
+            // export block (TUI HTML-export palette; surfaced for parity)
+            "--export-page-bg": pickE("pageBg"),
+            "--export-card-bg": pickE("cardBg"),
+            "--export-info-bg": pickE("infoBg"),
         };
         const out = {};
         for (const [k, v] of Object.entries(map)) if (v) out[k] = v;
@@ -1339,12 +1421,68 @@ const server = createApp({
     onPrompt: (text, threadId) => {
         const s = sessionFor(threadId);
         if (!s) return;
-        s.prompt(text).catch((err) =>
+        // While a turn is in flight, pi keeps letting you type: each message is
+        // appended to the thread's steering queue instead of starting a second
+        // concurrent turn. Steering messages are injected at the next message
+        // boundary (adjusting course) and, if the turn ends first, delivered as
+        // the next turn automatically. `streamingBehavior` is required by the
+        // SDK when streaming, so only pass it when a turn is actually running.
+        const opts = s.isStreaming ? { streamingBehavior: "steer" } : undefined;
+        s.prompt(text, opts).catch((err) =>
             bus.broadcastToThread(threadId, {
                 kind: "error",
                 text: String(err?.message ?? err),
             }),
         );
+    },
+    /**
+     * Restore the thread's queued (steering/follow-up) messages: clear the
+     * queue and return the messages so the client can pop them back into the
+     * composer to edit/delete. When `abort` is set (Esc while working) the
+     * in-flight turn is also interrupted — mirroring the pi TUI's
+     * `restoreQueuedMessagesToEditor({ abort })`.
+     * @param {string|undefined} threadId
+     * @param {boolean} abort
+     * @returns {Promise<{items:string[]}>}
+     */
+    onDequeue: async (threadId, abort) => {
+        const s = sessionFor(threadId);
+        if (!s) return { items: [] };
+        let items = [];
+        try {
+            const { steering, followUp } = s.clearQueue?.() ?? {
+                steering: [],
+                followUp: [],
+            };
+            items = [...steering, ...followUp];
+        } catch {
+            /* best-effort */
+        }
+        // reflect the now-empty queue to every viewer of this thread
+        bus.broadcastToThread(threadId, { kind: "queue", items: [] });
+        if (abort) {
+            try {
+                if (s.isStreaming) await s.abort();
+                bus.broadcastToThread(threadId, {
+                    kind: "system",
+                    text: "interrupted",
+                });
+            } catch (err) {
+                bus.broadcastToThread(threadId, {
+                    kind: "error",
+                    text: "interrupt failed: " + String(err?.message ?? err),
+                });
+            } finally {
+                const t = threadId ? threadRuntimes.get(threadId) : null;
+                if (t) t.busy = false;
+                bus.broadcastToThread(threadId, {
+                    kind: "working",
+                    busy: false,
+                });
+                broadcastThreads();
+            }
+        }
+        return { items };
     },
     /**
      * Toggle the persisted pi "hide thinking blocks" setting (Ctrl+T in the

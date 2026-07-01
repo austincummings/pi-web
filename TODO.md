@@ -70,32 +70,36 @@ Simple, line-based backlog. Check items off as they land.
       can `await` (`POST /ui-response` + `ui_request` SSE; see carried-over bridge) - [ ] `registerMessageRenderer` (folds in #19) - [x] `setTitle` web page-title hook (folds in #8 — `piweb.setTitle`; `ctx.ui` wiring still pending) - [ ] `setFooter` — footer replacement hook - [ ] `setWorkingMessage` / `setWorkingVisible` / `setWorkingIndicator` - [ ] `setEditorText` / `getEditorText` / `pasteToEditor` composer bridge - [ ] `addAutocompleteProvider` — extension-supplied completion - [ ] `getToolsExpanded` / `setToolsExpanded` programmatic control - [ ] theme API: `getAllThemes` / `getTheme` / `setTheme` / `theme.fg(...)` - [ ] `ctx.mode === "web"` so portable extensions can branch on the medium - [ ] N/A in a browser: `setEditorComponent` / `getEditorComponent` (TUI
       Component swap) — document as out of scope rather than implement
 
-- [ ] 23. Reach theme-palette parity with the pi TUI. `loadPiTheme()` in
+- [x] 23. Reach theme-palette parity with the pi TUI. `loadPiTheme()` in
       `src/host/server.ts` flattens only ~11 of the TUI theme's tokens into web UI
       CSS vars (`--bg`, `--panel`, `--line`, `--txt`, `--muted`, `--dim`, `--acc`,
       `--acc2`, `--ok`, `--warn`, `--err`); everything else in the theme JSON is
       dropped, so the web can't honor the full palette. See a matrix of the two
       palettes in the analysis behind this item. Gaps to close (port or decide N/A):
-    - [ ] tool-card status tints — consume the theme's literal `toolPendingBg` /
+    - [x] tool-card status tints — consume the theme's literal `toolPendingBg` /
           `toolSuccessBg` / `toolErrorBg` / `toolTitle` / `toolOutput` instead of the
           hard-coded `color-mix(...)` tints in `index.html` (AGENTS.md ethos)
-    - [ ] markdown styling — `mdHeading`, `mdLink`, `mdLinkUrl`, `mdCode`,
+    - [x] markdown styling — `mdHeading`, `mdLink`, `mdLinkUrl`, `mdCode`,
           `mdCodeBlock`, `mdCodeBlockBorder`, `mdQuote`, `mdQuoteBorder`, `mdHr`,
-          `mdListBullet`
-    - [ ] diff colors — `toolDiffAdded` / `toolDiffRemoved` / `toolDiffContext`
-    - [ ] syntax highlighting — the 9 `syntax*` slots (pairs with #19)
-    - [ ] thinking-level gradient — `thinkingOff/Minimal/Low/Medium/High/Xhigh`
-          (pairs with #9: color the focused composer/indicator by level)
-    - [ ] message styling — `selectedBg`, `userMessageBg/Text`,
-          `customMessageBg/Text/Label`
-    - [ ] misc raw slots — `hover`, `borderVariant`, `comment`, `cyan`,
+          `mdListBullet` (rendered body + composer backdrop tints)
+    - [x] diff colors — `toolDiffAdded` / `toolDiffRemoved` / `toolDiffContext`
+          (exposed as `--diff-*`; consumed when diff rendering lands with #19)
+    - [x] syntax highlighting — the 9 `syntax*` slots exposed as `--syn-*`
+          (consumed when highlighting lands with #19)
+    - [x] thinking-level gradient — `thinkingOff/Minimal/Low/Medium/High/Xhigh`
+          (already wired via `--think-*`)
+    - [x] message styling — `selectedBg`, `userMessageBg/Text`,
+          `customMessageBg/Text/Label` (user/custom bodies washed; `--selected-bg`
+          exposed)
+    - [x] misc raw slots — `hover`, `borderVariant`, `comment`, `cyan`,
           `brightCyan`, `dimBlue`, `bashMode`, plus the `export` block
-    - [ ] add `:root` fallbacks in `index.html` for `--muted` / `--ok` / `--warn`
-          (sent by the host today but have no default if a theme omits them)
-    - [ ] widen `frameThemeVars()` so sandboxed extension iframes get the full set
-          (currently only 7 vars; no `--err`/`--ok`/`--warn`/`--muted`)
+          (all surfaced as CSS vars)
+    - [x] `:root` fallbacks in `index.html` for every var (incl. `--muted` /
+          `--ok` / `--warn`) so a theme that omits a token degrades gracefully
+    - [x] widen `frameThemeVars()` so sandboxed extension iframes get the full set
+          (was 7 vars; now the whole palette)
 
-- [ ] 24. Reach steering-message-queue parity with the pi TUI (parity cluster
+- [x] 24. Reach steering-message-queue parity with the pi TUI (parity cluster
       alongside #21/#22/#23). While a turn is in flight (`thread.busy`), pi lets
       you keep typing: each submitted message is appended to a per-thread
       **steering queue** instead of being dropped or starting a second concurrent
@@ -104,20 +108,31 @@ Simple, line-based backlog. Check items off as they land.
       calls `s.prompt(text)` immediately regardless of `busy`, so a message sent
       mid-turn races the in-flight one. Port the TUI's queue semantics. What the
       pi TUI lets you do with the queue (the parity checklist):
-    - [ ] **Steer mid-turn** — inject the queued text into the running agent at
+    - [x] **Steer mid-turn** — inject the queued text into the running agent at
           the next message boundary so it adjusts course without an interrupt.
-    - [ ] **Auto-flush on completion** — when no steering hook applies, deliver
+          (`onPrompt` enqueues via `s.prompt(text, { streamingBehavior: "steer" })`
+          when `s.isStreaming`.)
+    - [x] **Auto-flush on completion** — when no steering hook applies, deliver
           the queued message(s) as the next turn the moment the current one ends.
-    - [ ] **Queue many** — stack multiple messages; they're delivered in order.
-    - [ ] **Show the pending queue** — render the queued messages in the UI
-          (above the composer) so you can see what's waiting.
-    - [ ] **Edit / remove before send** — pop a queued item back into the
-          composer to edit it, or delete it before it's delivered.
-    - [ ] **Esc interaction** — distinguish "interrupt the turn" from "clear the
-          queue"; mirror the TUI's precedence.
-          Needs: a per-thread queue on the host (drain on turn end / at steer points),
-          a `queue` SSE frame so viewers see pending items, and `/prompt` accepting an
-          `enqueue` flag (or the host enqueuing automatically when `busy`).
+          (Handled by the SDK's own steering queue; delivery emits the normal
+          `user`/`message_start` frames.)
+    - [x] **Queue many** — stack multiple messages; they're delivered in order.
+    - [x] **Show the pending queue** — render the queued messages in the UI
+          (above the composer) so you can see what's waiting. (`queue` SSE frame
+          from the host's `queue_update` event → `#queued` rows in `index.html`;
+          also sent on connect so a refreshing viewer sees the backlog.)
+    - [x] **Edit / remove before send** — pop a queued item back into the
+          composer to edit it, or delete it before it's delivered. (Click a row
+          or press Alt+↑ to restore the whole queue to the composer, mirroring
+          the TUI's `restoreQueuedMessagesToEditor` / `app.message.dequeue`.)
+    - [x] **Esc interaction** — distinguish "interrupt the turn" from "clear the
+          queue"; mirror the TUI's precedence. (Esc while working restores the
+          queue _and_ aborts — `restoreQueuedMessagesToEditor({ abort: true })`;
+          Alt+↑ restores without aborting.)
+          Done: a per-thread queue on the host (the SDK session's steering queue,
+          drained at steer points / turn end), a `queue` SSE frame so viewers see
+          pending items, `POST /dequeue` to restore+optionally-abort, and the host
+          enqueuing automatically while `busy`.
 
 - [ ] 25. Reach prompt-history navigation parity with the pi TUI (Up/Down in the
       composer). Today `src/web/app.ts` only special-cases Up/Down while the

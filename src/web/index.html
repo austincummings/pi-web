@@ -28,6 +28,53 @@
                 --think-high: #b294bb;
                 --think-xhigh: #d183e8;
                 --bash-mode: #4ec9a3;
+                /* tool-card status tints + title/output (literal theme slots,
+                   mirroring the pi TUI's toolPendingBg/toolSuccessBg/toolErrorBg
+                   rather than a hard-coded color-mix wash) */
+                --tool-pending-bg: #121821;
+                --tool-success-bg: #0c1c17;
+                --tool-error-bg: #23171a;
+                --tool-title: var(--acc);
+                --tool-output: var(--muted);
+                /* markdown styling */
+                --md-heading: var(--acc);
+                --md-link: var(--acc);
+                --md-link-url: #4fc4c4;
+                --md-code: var(--ok);
+                --md-code-block: var(--txt);
+                --md-code-block-border: var(--line);
+                --md-quote: var(--dim);
+                --md-quote-border: var(--dim);
+                --md-hr: var(--dim);
+                --md-list-bullet: var(--acc2);
+                /* diff colors (pairs with #19) */
+                --diff-added: var(--ok);
+                --diff-removed: var(--err);
+                --diff-context: var(--muted);
+                /* syntax highlighting slots (pairs with #19) */
+                --syn-comment: #4a5560;
+                --syn-keyword: var(--acc);
+                --syn-function: var(--txt);
+                --syn-variable: var(--txt);
+                --syn-string: var(--ok);
+                --syn-number: var(--warn);
+                --syn-type: #4fc4c4;
+                --syn-operator: var(--muted);
+                --syn-punctuation: var(--muted);
+                /* message styling */
+                --selected-bg: #243240;
+                --user-msg-bg: var(--panel);
+                --user-msg-text: var(--txt);
+                --custom-msg-bg: #162028;
+                --custom-msg-text: var(--txt);
+                --custom-msg-label: var(--acc);
+                /* misc raw palette slots (exposed for extensions / future use) */
+                --hover: #162028;
+                --border-variant: #243240;
+                --comment: #4a5560;
+                --cyan: #4fc4c4;
+                --bright-cyan: #88e5e5;
+                --dim-blue: #1f6b92;
             }
             *::selection {
                 background: var(--acc);
@@ -345,6 +392,24 @@
             .msg.assistant .body {
                 white-space: normal;
             }
+            /* User turns get the theme's userMessageBg/Text wash (the TUI tints
+               the whole user block); customMessage* + selectedBg vars are exposed
+               in :root for extension-rendered messages (folds toward #19). */
+            .msg.user .body {
+                background: var(--user-msg-bg);
+                color: var(--user-msg-text);
+                border-radius: 6px;
+                padding: 6px 10px;
+            }
+            .msg.custom .role {
+                color: var(--custom-msg-label);
+            }
+            .msg.custom .body {
+                background: var(--custom-msg-bg);
+                color: var(--custom-msg-text);
+                border-radius: 6px;
+                padding: 6px 10px;
+            }
             .msg .body p {
                 margin: 6px 0;
             }
@@ -354,14 +419,23 @@
             .msg .body h4 {
                 margin: 10px 0 4px;
                 line-height: 1.3;
+                color: var(--md-heading);
             }
             .msg .body ul,
             .msg .body ol {
                 margin: 6px 0;
                 padding-left: 20px;
             }
+            .msg .body ul li::marker {
+                color: var(--md-list-bullet);
+            }
             .msg .body a {
-                color: var(--acc);
+                color: var(--md-link);
+            }
+            .msg .body hr {
+                border: none;
+                border-top: 1px solid var(--md-hr);
+                margin: 10px 0;
             }
             .msg .body code {
                 background: #0c1117;
@@ -369,10 +443,11 @@
                 border-radius: 4px;
                 padding: 0 4px;
                 font-size: inherit;
+                color: var(--md-code);
             }
             .msg .body pre {
                 background: #0c1117;
-                border: 1px solid var(--line);
+                border: 1px solid var(--md-code-block-border);
                 border-radius: 6px;
                 padding: 8px 10px;
                 overflow: auto;
@@ -382,12 +457,13 @@
                 background: none;
                 border: none;
                 padding: 0;
+                color: var(--md-code-block);
             }
             .msg .body blockquote {
-                border-left: 2px solid var(--line);
+                border-left: 2px solid var(--md-quote-border);
                 margin: 6px 0;
                 padding-left: 10px;
-                color: var(--dim);
+                color: var(--md-quote);
             }
             /* Tables scroll within their own wrapper so a wide table can't
                overrun the transcript's right edge (see TODO #6). */
@@ -409,14 +485,15 @@
                 background: var(--panel);
                 font-weight: 600;
             }
-            /* The TUI conveys status by tinting the whole tool block (toolPendingBg /
-               toolSuccessBg / toolErrorBg) rather than using a glyph, so we wash the
-               entire card and match the left border to it. Default = success. */
+            /* The TUI conveys status by tinting the whole tool block with the
+               theme's literal toolPendingBg / toolSuccessBg / toolErrorBg colors
+               (no glyph), so we wash the entire card with those exact vars and
+               match the left border to the status accent. Default = success. */
             .tool {
                 display: block;
                 color: var(--dim);
                 border-left: 2px solid var(--ok);
-                background: color-mix(in srgb, var(--ok) 7%, #0c1117);
+                background: var(--tool-success-bg);
                 padding: 5px 8px;
                 margin: 6px 0;
                 font-size: 14px;
@@ -424,11 +501,11 @@
             }
             .tool.pending {
                 border-left-color: var(--acc);
-                background: color-mix(in srgb, var(--acc) 10%, #0c1117);
+                background: var(--tool-pending-bg);
             }
             .tool.error {
                 border-left-color: var(--err);
-                background: color-mix(in srgb, var(--err) 14%, #0c1117);
+                background: var(--tool-error-bg);
             }
             .tool-head {
                 display: flex;
@@ -444,7 +521,7 @@
                 color: var(--err);
             }
             .tool-name {
-                color: var(--acc);
+                color: var(--tool-title);
                 font-weight: 600;
                 margin-right: 6px;
             }
@@ -461,12 +538,13 @@
                 white-space: pre;
                 flex-shrink: 0;
             }
-            /* The card itself carries the status wash, so the body is transparent. */
+            /* The card itself carries the status wash, so the body is transparent.
+               Output text uses the theme's toolOutput slot (muted in the TUI). */
             .tool-body {
                 margin: 4px 0 0;
                 padding: 0;
                 background: none;
-                color: var(--txt);
+                color: var(--tool-output);
                 font-size: 14px;
                 white-space: pre-wrap;
                 word-break: break-word;
@@ -589,6 +667,48 @@
             .working.show {
                 display: flex;
             }
+            /* Pending steering/follow-up messages waiting while a turn is in
+               flight (mirrors the pi TUI's pending-messages display). Click a
+               row to pop the whole queue back into the composer to edit. */
+            .queued {
+                display: none;
+                flex-direction: column;
+                gap: 4px;
+                padding: 8px 14px 0;
+            }
+            .queued.show {
+                display: flex;
+            }
+            .queued .queued-item {
+                display: flex;
+                align-items: baseline;
+                gap: 8px;
+                font-size: 13px;
+                color: var(--dim);
+                background: color-mix(in srgb, var(--acc) 8%, transparent);
+                border-left: 2px solid var(--acc);
+                border-radius: 4px;
+                padding: 4px 8px;
+                cursor: pointer;
+            }
+            .queued .queued-item:hover {
+                color: var(--txt);
+            }
+            .queued .queued-badge {
+                color: var(--acc);
+                flex: 0 0 auto;
+            }
+            .queued .queued-text {
+                flex: 1 1 auto;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .queued .queued-hint {
+                flex: 0 0 auto;
+                font-size: 11px;
+                opacity: 0.7;
+            }
             .working .spin {
                 color: var(--acc);
                 display: inline-block;
@@ -655,14 +775,14 @@
             }
             /* markdown token tints (color / weight / style only — never metrics) */
             .backdrop .md-h {
-                color: var(--acc);
+                color: var(--md-heading);
                 font-weight: 700;
             }
             .backdrop .md-code {
-                color: var(--ok);
+                color: var(--md-code);
             }
             .backdrop .md-link {
-                color: var(--acc);
+                color: var(--md-link);
                 text-decoration: underline;
             }
             .backdrop .md-strong {
@@ -672,10 +792,10 @@
                 font-style: italic;
             }
             .backdrop .md-quote {
-                color: var(--dim);
+                color: var(--md-quote);
             }
             .backdrop .md-marker {
-                color: var(--acc2);
+                color: var(--md-list-bullet);
             }
             .backdrop .md-mention {
                 color: var(--acc2);
@@ -917,6 +1037,7 @@
             <div id="dock-bottom" class="dock bottom empty-dock"></div>
             <div class="composer">
                 <div id="ac" class="ac"></div>
+                <div id="queued" class="queued" aria-live="polite"></div>
                 <div id="working" class="working" aria-live="polite">
                     <span class="spin"></span
                     ><span class="label">Working…</span>

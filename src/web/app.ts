@@ -52,6 +52,77 @@ $prompt?.addEventListener("scroll", () => {
 const $ask = document.getElementById("ask") as HTMLFormElement;
 const $ac = document.getElementById("ac");
 const $working = document.getElementById("working");
+const $queued = document.getElementById("queued");
+
+// ---- steering queue (mirrors the pi TUI's pending-messages display) --------
+// While a turn is in flight the host appends each submitted message to this
+// thread's steering queue instead of starting a second turn. The authoritative
+// list arrives on `queue` SSE frames; we render it above the composer and let
+// the user pop the whole queue back into the composer to edit (click / Alt+Up),
+// or interrupt-and-restore with Esc.
+let queuedMessages: string[] = [];
+
+// Paint the pending-queue rows above the composer.
+function renderQueue() {
+    if (!$queued) return;
+    $queued.innerHTML = "";
+    if (!queuedMessages.length) {
+        $queued.classList.remove("show");
+        return;
+    }
+    queuedMessages.forEach((text, i) => {
+        const row = document.createElement("div");
+        row.className = "queued-item";
+        row.title = "Edit queued messages (Alt+\u2191)";
+        const badge = document.createElement("span");
+        badge.className = "queued-badge";
+        badge.textContent = `↑${i + 1}`;
+        const body = document.createElement("span");
+        body.className = "queued-text";
+        body.textContent = text.replace(/\s+/g, " ").trim();
+        const hint = document.createElement("span");
+        hint.className = "queued-hint";
+        hint.textContent = "queued";
+        row.append(badge, body, hint);
+        // Clicking any row restores the whole queue to the composer to edit,
+        // matching the TUI (dequeue restores all messages joined together).
+        row.addEventListener("click", () => restoreQueue({ abort: false }));
+        $queued.appendChild(row);
+    });
+    $queued.classList.add("show");
+}
+
+// Pop the queued messages back into the composer for editing. Clears the host
+// queue and, when `abort`, interrupts the in-flight turn — mirroring the pi
+// TUI's restoreQueuedMessagesToEditor({ abort }). Queued text is placed before
+// the current draft (queued \n\n draft), matching pi's ordering.
+async function restoreQueue({ abort }: { abort: boolean }) {
+    if (!activeThreadId) return;
+    let items = queuedMessages.slice();
+    try {
+        const r = await post("/dequeue", {
+            threadId: activeThreadId,
+            abort: !!abort,
+        });
+        const d = await r.json();
+        if (Array.isArray(d?.items)) items = d.items;
+    } catch {
+        /* fall back to the last-known queue */
+    }
+    queuedMessages = [];
+    renderQueue();
+    if (!items.length) return;
+    const draft = $prompt.value;
+    const combined = [items.join("\n\n"), draft]
+        .filter((t) => t.trim())
+        .join("\n\n");
+    $prompt.value = combined;
+    histIndex = null;
+    autoGrow();
+    $prompt.focus();
+    const at = $prompt.value.length;
+    $prompt.setSelectionRange(at, at);
+}
 
 // ---- "Working" spinner (mirrors pi-tui's Loader: braille frames @ 80ms) ----
 const SPIN_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -1473,7 +1544,11 @@ function showHotkeys() {
         ["↑ / ↓", "move through command suggestions"],
         ["↑ / ↓", "browse prompt history (at the draft's top / bottom line)"],
         ["Tab", "complete selected command"],
-        ["Esc", "dismiss menu / overlay · interrupt the working agent"],
+        [
+            "Esc",
+            "dismiss menu / overlay · interrupt the working agent (restores queued messages)",
+        ],
+        ["Alt+↑", "restore queued messages to the composer to edit"],
         ["Alt+T", "show / hide thinking blocks"],
         ["Shift+Tab", "cycle thinking level"],
         ["/resume", "switch threads"],
@@ -1513,6 +1588,14 @@ $prompt.addEventListener("keydown", (e) => {
     if (e.key === "Tab" && e.shiftKey) {
         e.preventDefault();
         postThread("/thinking-level", { op: "cycle" });
+        return;
+    }
+    // Alt+Up restores queued (steering/follow-up) messages back into the
+    // composer to edit, without interrupting the turn (mirrors the pi TUI's
+    // app.message.dequeue = alt+up). Esc is the interrupt-and-restore variant.
+    if (e.key === "ArrowUp" && e.altKey && queuedMessages.length) {
+        e.preventDefault();
+        restoreQueue({ abort: false });
         return;
     }
     if ($ac.classList.contains("show")) {
@@ -1631,8 +1714,13 @@ document.addEventListener("keydown", (e) => {
         return;
     }
     if (spinTimer) {
-        // agent is working → interrupt this thread's turn
-        postThread("/interrupt", {});
+        // agent is working → mirror the pi TUI's Esc: restore any queued
+        // (steering/follow-up) messages back into the composer *and* interrupt
+        // this thread's turn (restoreQueuedMessagesToEditor({ abort: true })).
+        restoreQueue({ abort: true });
+    } else if (queuedMessages.length) {
+        // not working but messages are still queued → restore them to edit
+        restoreQueue({ abort: false });
     }
 });
 
@@ -1734,11 +1822,18 @@ function onSseMessage(e) {
         case "working":
             setWorking(!!m.busy);
             break;
+        case "queue":
+            // pending steering/follow-up messages waiting for delivery
+            queuedMessages = Array.isArray(m.items) ? m.items : [];
+            renderQueue();
+            break;
         case "transcript_reset":
             $transcript.innerHTML = '<div class="empty">new thread</div>';
             promptHistory = []; // input history is per-thread
             histIndex = null;
             histDraft = "";
+            queuedMessages = []; // steering queue is per-thread
+            renderQueue();
             renderWelcome(); // re-pin the banner as the first transcript entry
             assistantEl = null;
             thinkingEl = null;

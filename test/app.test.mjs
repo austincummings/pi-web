@@ -382,6 +382,41 @@ test("/bash delegates to onBash with the exclude flag", async () => {
     }
 });
 
+test("/dequeue delegates to onDequeue and returns the restored items", async () => {
+    const calls = [];
+    const bus = createBus();
+    const piweb = createPiWebHost({
+        broadcast: () => {},
+        getPi: () => ({}),
+    });
+    const server = createApp({
+        web: "src/web",
+        bus,
+        piweb,
+        onDequeue: (threadId, abort) => {
+            calls.push({ threadId, abort });
+            return { items: ["first queued", "second queued"] };
+        },
+    });
+    const base = await new Promise((r) =>
+        server.listen(0, "127.0.0.1", () =>
+            r(`http://127.0.0.1:${server.address().port}`),
+        ),
+    );
+    try {
+        const res = await fetch(`${base}/dequeue`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ threadId: "t-1", abort: true }),
+        });
+        const body = await res.json();
+        expect(calls).toEqual([{ threadId: "t-1", abort: true }]);
+        expect(body.items).toEqual(["first queued", "second queued"]);
+    } finally {
+        server.close();
+    }
+});
+
 test("/thinking-level delegates to onThinkingLevel (cycle / set)", async () => {
     const calls = [];
     const bus = createBus();

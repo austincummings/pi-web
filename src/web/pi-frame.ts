@@ -29,13 +29,64 @@ export interface PiFrameNotifyDetail {
 // Theme vars copied into the frame so its baseline styling matches the active
 // pi theme (the frame is a separate document, so CSS variables don't inherit).
 const THEME_VARS = [
+    // base palette
     "--bg",
     "--panel",
     "--line",
     "--txt",
+    "--muted",
     "--dim",
     "--acc",
     "--acc2",
+    "--ok",
+    "--warn",
+    "--err",
+    // tool-card status tints + title/output
+    "--tool-pending-bg",
+    "--tool-success-bg",
+    "--tool-error-bg",
+    "--tool-title",
+    "--tool-output",
+    // markdown
+    "--md-heading",
+    "--md-link",
+    "--md-link-url",
+    "--md-code",
+    "--md-code-block",
+    "--md-code-block-border",
+    "--md-quote",
+    "--md-quote-border",
+    "--md-hr",
+    "--md-list-bullet",
+    // diff
+    "--diff-added",
+    "--diff-removed",
+    "--diff-context",
+    // syntax
+    "--syn-comment",
+    "--syn-keyword",
+    "--syn-function",
+    "--syn-variable",
+    "--syn-string",
+    "--syn-number",
+    "--syn-type",
+    "--syn-operator",
+    "--syn-punctuation",
+    // message styling
+    "--selected-bg",
+    "--user-msg-bg",
+    "--user-msg-text",
+    "--custom-msg-bg",
+    "--custom-msg-text",
+    "--custom-msg-label",
+    // misc raw palette slots
+    "--hover",
+    "--border-variant",
+    "--comment",
+    "--cyan",
+    "--bright-cyan",
+    "--dim-blue",
+    "--bash-mode",
 ];
 
 function frameThemeVars(): string {

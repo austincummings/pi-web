@@ -37,6 +37,10 @@ export interface AppOptions {
     theme?: Record<string, string>;
     bundleWeb?: () => Promise<string>;
     onPrompt?: (text: string, threadId?: string) => void;
+    onDequeue?: (
+        threadId: string | undefined,
+        abort: boolean,
+    ) => Promise<{ items: string[] }> | { items: string[] };
     onReload?: (threadId?: string) => void | Promise<void>;
     onInterrupt?: (threadId?: string) => void | Promise<void>;
     onBash?: (command: string, exclude: boolean, threadId?: string) => void;
@@ -155,6 +159,7 @@ export function createApp({
     bus,
     piweb,
     onPrompt,
+    onDequeue,
     onReload,
     threads,
     sessionApi,
@@ -294,6 +299,15 @@ export function createApp({
         const text = (body.text ?? "").trim();
         if (text) onPrompt?.(text, body.threadId || undefined);
         res.writeHead(202).end();
+    });
+    // Restore the thread's queued (steering/follow-up) messages back to the
+    // composer; with `abort`, also interrupt the in-flight turn (Esc parity).
+    router.post("/dequeue", async ({ res, body }) => {
+        const result = (await onDequeue?.(
+            body.threadId || undefined,
+            !!body.abort,
+        )) ?? { items: [] };
+        sendJson(res, 200, result);
     });
     router.post("/action", async ({ res, body }) => {
         await piweb.dispatch(
