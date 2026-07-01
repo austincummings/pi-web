@@ -27,6 +27,7 @@ export interface BashFrame {
     exitCode?: number | null;
     cancelled?: boolean;
     truncated?: boolean;
+    fullOutputPath?: string | null;
 }
 
 export class PiBash extends HTMLElement {
@@ -37,6 +38,7 @@ export class PiBash extends HTMLElement {
     private exitCode: number | null = null;
     private cancelled = false;
     private truncated = false;
+    private fullOutputPath: string | null = null;
     private expanded = false;
 
     private built = false;
@@ -68,6 +70,7 @@ export class PiBash extends HTMLElement {
             this.exitCode = m.exitCode ?? null;
             this.cancelled = !!m.cancelled;
             this.truncated = !!m.truncated;
+            this.fullOutputPath = m.fullOutputPath ?? null;
         }
         this.render();
         this.syncSpinner();
@@ -156,8 +159,13 @@ export class PiBash extends HTMLElement {
         } else if (this.exitCode != null && this.exitCode !== 0) {
             this.appendStatus(`(exit ${this.exitCode})`, "err");
         }
-        if (this.truncated) {
-            this.appendStatus("(output truncated)", "warn");
+        // Matches pi-tui: the truncation warning shows only when a full-output
+        // temp file exists (that's where the elided output can be recovered).
+        if (this.truncated && this.fullOutputPath) {
+            this.appendStatus(
+                `Output truncated. Full output: ${this.fullOutputPath}`,
+                "warn",
+            );
         }
     }
 

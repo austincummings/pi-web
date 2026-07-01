@@ -955,6 +955,7 @@ function replayTranscript(s, send) {
                     exitCode: m.exitCode ?? null,
                     cancelled: !!m.cancelled,
                     truncated: !!m.truncated,
+                    fullOutputPath: m.fullOutputPath ?? null,
                 });
                 break;
         }
@@ -1574,6 +1575,7 @@ async function runBash(command, excludeFromContext, threadId) {
             exitCode: result?.exitCode ?? null,
             cancelled: !!result?.cancelled,
             truncated: !!result?.truncated,
+            fullOutputPath: result?.fullOutputPath ?? null,
         });
     } catch (err) {
         emit({
