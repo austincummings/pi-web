@@ -447,7 +447,7 @@ spec adds the `render-surface` payload shape and the resize/input/focus verbs.
 
 | Phase  | Scope                                                                                                                     | Exit criterion                                                        |
 | ------ | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| **P0** | `AnsiBlock` node + `ansiToDom()` (SGR/OSC8/APC subset); host emits a whole `Component` as one AnsiBlock at a fixed width. | Any custom component renders (read-only) in the DOM transcript.       |
+| **P0** ✅ | `AnsiBlock` node + `ansiToHtml()` (SGR/OSC8/APC subset); `componentToNode` emits a whole `Component` as one AnsiBlock at a fixed width. | **Done.** `src/web/ansi.ts`, `renderNode` `AnsiBlock` case, `src/host/component-adapter.ts`; tests in `test/ansi.test.mjs` + `test/component-adapter.test.mjs`. |
 | **P1** | Width/reflow round-trip; `renderResult`/`renderCall` integration replacing tool cards.                                    | A tool's custom renderer paints its card in pi-web; resizes reflow.   |
 | **P2** | Structural adapter: `Box`/`Container` walk, `Spacer`, `Image` → native nodes.                                             | Nested/imaged components render as responsive DOM around ANSI leaves. |
 | **P3** | Interactivity: focus, key-encoding, `/ui-input`, `requestRender` loop; `ctx.ui.custom`.                                   | An interactive selector/dialog works end-to-end in the browser.       |

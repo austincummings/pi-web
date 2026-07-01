@@ -4,6 +4,7 @@ import { fuzzyFilter } from "./fuzzy.ts";
 import { renderMarkdown, highlightComposer } from "./markdown.ts";
 import { registerToolRenderer, type ToolInfo } from "./tools.ts";
 import { renderDiffHtml } from "./diff.ts";
+import { ansiToHtml } from "./ansi.ts";
 import {
     keyHintsLine,
     sectionSummary,
@@ -431,8 +432,14 @@ function renderCustomMessage(m) {
     role.textContent = m.customType || "custom";
     const body = document.createElement("div");
     body.className = "body";
-    if (m.tree) body.appendChild(renderNode(m.tree, null));
-    else body.innerHTML = renderMarkdown(m.text || "");
+    if (m.tree) {
+        // pi TUI parity: when a registered renderer supplies a component it
+        // owns its styling, so don't paint the customMessageBg wash over it
+        // (CustomMessageComponent.rebuild() returns before adding its
+        // background box when a custom renderer is present).
+        body.classList.add("bare");
+        body.appendChild(renderNode(m.tree, null));
+    } else body.innerHTML = renderMarkdown(m.text || "");
     el.append(role, body);
     $transcript.appendChild(el);
     followBottom();
@@ -762,6 +769,17 @@ function renderNode(node, surfaceId) {
             frame.frameHtml = node.html ?? "";
             if (node.height != null) frame.frameHeight = node.height;
             return frame;
+        }
+        // AnsiBlock: a block of ANSI-styled monospace lines produced by a pi TUI
+        // Component's render(width) (render-model parity, docs/render-model-parity.md).
+        // ansiToHtml parses the ANSI into escaped, whitelisted spans.
+        case "AnsiBlock": {
+            const pre = document.createElement("div");
+            pre.className = "ansi";
+            pre.innerHTML = ansiToHtml(
+                Array.isArray(node.lines) ? node.lines : [],
+            );
+            return pre;
         }
         default: {
             const d = document.createElement("div");

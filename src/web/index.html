@@ -585,6 +585,25 @@
                 overflow-x: auto;
                 max-width: 100%;
             }
+            /* AnsiBlock: a pi TUI Component's render(width) output painted into
+               the DOM (render-model parity). Monospace, non-wrapping so the
+               component's column alignment survives; colors come from ansi.ts
+               (theme CSS vars / rgb). One .ansi-line per rendered line. */
+            .ansi {
+                margin: 4px 0 0;
+                font-family: ui-monospace, Menlo, monospace;
+                font-size: 13px;
+                line-height: 1.5;
+                white-space: pre;
+                overflow-x: auto;
+                max-width: 100%;
+            }
+            .ansi-line {
+                min-height: 1.5em;
+            }
+            .ansi a {
+                color: var(--acc);
+            }
             /* Diff body (edit results): one span per line, colored by the
                theme's toolDiff* slots; changed tokens carry .inverse. Mirrors
                pi-tui's renderDiff. Kept monospace + non-wrapping so line numbers
