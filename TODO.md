@@ -18,7 +18,7 @@ Simple, line-based backlog. Check items off as they land.
 - [x] 12. Show a webified version of the TUI startup banner at the top of threads. Done as part of #5: the `#welcome` banner shows `pi v<version>` + a compact key-hint strip (`esc interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · alt+o more`, alt+o since ctrl+o is browser-reserved) and click-to-expand loaded resources.
 - [ ] 13. Render markdown tables in the transcript view.
 - [ ] 14. Add an "open project" modal overlay (à la Zed's folder picker) so daemon-hosted agents can be cd'd into a chosen working directory.
-- [ ] 15. Add the /model model picker that the TUI has.
+- [x] 15. Add the /model model picker that the TUI has. (Host `modelApi` lists selectable models via `ModelRegistry.getAvailable()` — active model pinned first, subscription/OAuth models tagged — over `GET /models`; `POST /model` switches the thread's model via `session.setModel()` and re-broadcasts the `thinking_level` + `footer` frames. Web `/model` opens a searchable, keyboard-navigable picker (fuzzy search mirrors the TUI's `getModelSelectorSearchText`) in the existing `#overlay`.)
 - [x] 16. Create a matrix of TUI extension points vs. our web UI counterparts, noting gaps; add as `docs/extension-points.md`. (Done — see `docs/extension-points.md`; the gaps it surfaces are tracked in #22.)
 - [ ] 17. Research whether to switch to HTMX for rendering the dynamic UI.
 - [ ] 18. Research rendering markdown in the composer text box.
@@ -47,11 +47,11 @@ Simple, line-based backlog. Check items off as they land.
       full spec.
 
 - [ ] 21. Reach slash-command parity with the pi TUI. The web UI (`src/web/app.ts`
-      `COMMANDS`) currently ships 10 of the TUI's 22 commands. Shared today:
+      `COMMANDS`) currently ships 11 of the TUI's 22 commands. Shared today:
       `/resume`, `/new`, `/name`, `/session`, `/compact`, `/copy`, `/export`,
-      `/reload`, `/hotkeys`, `/changelog`. Missing in web (port or decide N/A):
+      `/reload`, `/hotkeys`, `/changelog`, `/model`. Missing in web (port or decide N/A):
     - [ ] `/login`, `/logout` — manage OAuth or API-key credentials
-    - [ ] `/model` — switch models (see #15)
+    - [x] `/model` — switch models (see #15)
     - [ ] `/scoped-models` — enable/disable models for Ctrl+P cycling
     - [ ] `/settings` — thinking level, theme, message delivery, transport
     - [ ] `/tree` — jump to any point in the session and continue

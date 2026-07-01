@@ -1093,6 +1093,104 @@ const sessionApi = {
     },
 };
 
+// ---- model picker (/model) -----------------------------------------------
+// Mirror the pi TUI's /model selector: list selectable models (marking the
+// active one + subscription/OAuth models) and switch the thread's model. Model
+// changes ripple into the thinking-level border (available levels vary per
+// model) and the context bar (the `<model>` segment), so both are re-broadcast.
+const modelApi = {
+    /**
+     * List models for the picker. Prefers models with configured auth
+     * (getAvailable, matching the TUI selector); falls back to the full catalog
+     * if none resolve. The active model is pinned first, then provider/id order.
+     * @param {string} [threadId]
+     */
+    list(threadId) {
+        const s = sessionFor(threadId);
+        const current = s?.state?.model ?? null;
+        let models = [];
+        try {
+            models = modelRegistry.getAvailable();
+        } catch {
+            /* best-effort */
+        }
+        if (!models.length) {
+            try {
+                models = modelRegistry.getAll();
+            } catch {
+                models = [];
+            }
+        }
+        const isCurrent = (m) =>
+            !!current && m.provider === current.provider && m.id === current.id;
+        const sub = (m) => {
+            try {
+                return !!modelRegistry.isUsingOAuth(m);
+            } catch {
+                return false;
+            }
+        };
+        const items = models
+            .map((m) => ({
+                provider: m.provider,
+                id: m.id,
+                name: m.name ?? "",
+                reasoning: !!m.reasoning,
+                contextWindow: m.contextWindow ?? 0,
+                sub: sub(m),
+                current: isCurrent(m),
+            }))
+            .sort((a, b) => {
+                if (a.current !== b.current) return a.current ? -1 : 1;
+                return (
+                    a.provider.localeCompare(b.provider) ||
+                    a.id.localeCompare(b.id)
+                );
+            });
+        return {
+            current: current
+                ? { provider: current.provider, id: current.id }
+                : null,
+            items,
+        };
+    },
+    /**
+     * Switch the thread's active model (mirrors the TUI selecting a model).
+     * setModel validates auth and throws if none is configured; surface that
+     * as an error rather than silently no-op.
+     * @param {string} provider
+     * @param {string} id
+     * @param {string} [threadId]
+     */
+    async set(provider, id, threadId) {
+        const s = sessionFor(threadId);
+        if (!s) return { error: "no active session" };
+        const model = modelRegistry.find(provider, id);
+        if (!model) return { error: `model not found: ${provider}/${id}` };
+        try {
+            await s.setModel(model);
+        } catch (err) {
+            return { error: String(err?.message ?? err) };
+        }
+        const cwdOf = threadRuntimes.get(threadId)?.cwd;
+        // available thinking levels can change with the model → re-assert border
+        bus.broadcastToThread(threadId, thinkingLevelFrame(s));
+        // the context bar's `<model>` segment must reflect the new model
+        bus.broadcastToThread(threadId, footerFrame(s, cwdOf));
+        bus.broadcastToThread(threadId, {
+            kind: "notify",
+            level: "info",
+            message: `Model: ${model.provider}/${model.id}`,
+        });
+        return {
+            ok: true,
+            provider: model.provider,
+            id: model.id,
+            name: model.name ?? "",
+        };
+    },
+};
+
 // ---- shell execution (! adds output to context, !! keeps it local) -------
 /**
  * @param {string} command
@@ -1206,6 +1304,7 @@ const server = createApp({
     bundleWeb: makeWebBundler(WEB, process.env.PI_WEB_DEV === "1"),
     threads,
     sessionApi,
+    modelApi,
     // Project file list for the browser's `@` mention typeahead, scoped to the
     // viewing thread's working directory.
     listFiles: (threadId) =>

@@ -862,6 +862,25 @@
             .picker .item.new {
                 color: var(--acc2);
             }
+            /* /model picker: search box + scrollable list */
+            .picker .model-search {
+                display: block;
+                width: calc(100% - 28px);
+                margin: 10px 14px;
+                padding: 8px 10px;
+                background: var(--bg);
+                border: 1px solid var(--line);
+                border-radius: 6px;
+                color: var(--txt);
+                font: inherit;
+            }
+            .picker .model-search:focus {
+                outline: none;
+                border-color: var(--acc);
+            }
+            .picker .model-list {
+                border-top: 1px solid var(--line);
+            }
             /* per-directory section header when threads span multiple cwds */
             .picker .dir-head {
                 padding: 8px 14px 4px;

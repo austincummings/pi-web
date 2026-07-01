@@ -68,6 +68,10 @@ export interface AppOptions {
         switch?: (id: string) => Promise<void>;
     };
     sessionApi?: Record<string, (...args: any[]) => any>;
+    modelApi?: {
+        list: (threadId?: string) => any;
+        set: (provider: string, id: string, threadId?: string) => any;
+    };
 }
 
 /**
@@ -154,6 +158,7 @@ export function createApp({
     onReload,
     threads,
     sessionApi,
+    modelApi,
     onBash,
     onConnect,
     onInterrupt,
@@ -241,6 +246,12 @@ export function createApp({
         sendJson(res, 200, (await sessionApi?.changelog?.()) ?? { text: "" });
     });
 
+    // selectable models for the /model picker (read-only)
+    router.get("/models", async ({ res, url }) => {
+        const threadId = url.searchParams.get("thread") || undefined;
+        sendJson(res, 200, (await modelApi?.list?.(threadId)) ?? { items: [] });
+    });
+
     // project file list for the `@` mention typeahead (read-only). The client
     // caches this and fuzzy-filters locally as the user types.
     router.get("/files", async ({ res, url }) => {
@@ -300,6 +311,15 @@ export function createApp({
     router.post("/session/name", async ({ res, body }) => {
         await sessionApi?.setName?.(body.name, body.threadId || undefined);
         res.writeHead(202).end();
+    });
+    router.post("/model", async ({ res, body }) => {
+        const result =
+            (await modelApi?.set?.(
+                body.provider,
+                body.id,
+                body.threadId || undefined,
+            )) ?? {};
+        sendJson(res, 200, result);
     });
     router.post("/session/compact", ({ res, body }) => {
         sessionApi?.compact?.(body.threadId || undefined); // streamed over SSE

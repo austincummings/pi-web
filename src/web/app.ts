@@ -131,6 +131,11 @@ const COMMANDS = [
         description: "Set this thread's display name — /name <title>",
     },
     {
+        value: "/model",
+        label: "/model",
+        description: "Switch the active model",
+    },
+    {
         value: "/session",
         label: "/session",
         description: "Show session info and stats",
@@ -881,11 +886,13 @@ function openPicker() {
 }
 
 function closePicker() {
-    const wasNav = pickerNav;
+    const wasNav = pickerNav || modelNav;
     $overlay?.classList.remove("show");
     pickerNav = false;
     pickerItems = [];
     pickerIndex = -1;
+    modelNav = false;
+    modelRows = [];
     if (wasNav) $prompt?.focus(); // return focus to the composer
 }
 
@@ -1261,6 +1268,9 @@ function runCommand(cmd, arg) {
             if (!arg) notice("usage: /name <title>");
             else postThread("/session/name", { name: arg });
             return true;
+        case "/model":
+            openModelPicker(arg);
+            return true;
         case "/session":
             showSessionInfo();
             return true;
@@ -1325,6 +1335,136 @@ async function showChangelog() {
     showOverlay("Changelog", pre);
 }
 
+// ---- /model picker -------------------------------------------------------
+// A searchable model picker mirroring the pi TUI's /model selector: a search
+// box plus a keyboard-navigable list (the active model is marked, subscription
+// models tagged). Selecting one POSTs /model; the host switches the thread's
+// model and re-broadcasts the footer + thinking-level frames.
+let modelList: any[] = []; // all models from /models
+let modelRows: HTMLElement[] = []; // rendered rows (filtered)
+let modelFiltered: any[] = []; // data behind modelRows
+let modelIndex = 0;
+let modelNav = false; // gates the model picker's key handling
+
+function modelMeta(m) {
+    const parts = [];
+    if (m.contextWindow) parts.push(`${fmtTokens(m.contextWindow)} ctx`);
+    if (m.reasoning) parts.push("thinking");
+    if (m.sub) parts.push("subscription");
+    return parts.join(" · ");
+}
+
+// Fuzzy-search text mirroring the TUI's getModelSelectorSearchText (provider
+// first so provider-prefixed queries rank ahead of proxy-provider ids).
+function modelSearchText(m) {
+    const name = m.name ? ` ${m.name}` : "";
+    return `${m.provider} ${m.provider}/${m.id} ${m.provider} ${m.id}${name}`;
+}
+
+function setModelSel(i) {
+    if (!modelRows.length) return;
+    modelIndex = (i + modelRows.length) % modelRows.length;
+    modelRows.forEach((el, idx) =>
+        el.classList.toggle("sel", idx === modelIndex),
+    );
+    modelRows[modelIndex].scrollIntoView({ block: "nearest" });
+}
+
+function renderModelList(container, query) {
+    const ranked = query
+        ? fuzzyFilter(modelList, query, (m) => modelSearchText(m))
+        : modelList;
+    modelFiltered = ranked;
+    modelRows = [];
+    container.innerHTML = "";
+    if (!ranked.length) {
+        const empty = document.createElement("div");
+        empty.className = "item";
+        empty.innerHTML = '<span class="name hint">no matching models</span>';
+        container.appendChild(empty);
+        return;
+    }
+    ranked.forEach((m, i) => {
+        const item = document.createElement("div");
+        item.className = "item" + (m.current ? " active" : "");
+        const n = document.createElement("span");
+        n.className = "name";
+        n.textContent = `${m.provider}/${m.id}`;
+        const meta = document.createElement("span");
+        meta.className = "meta";
+        meta.textContent = modelMeta(m);
+        item.append(n, meta);
+        item.onclick = () => chooseModel(m);
+        container.appendChild(item);
+        modelRows.push(item);
+    });
+    // preselect the active model, else the first row
+    const activeIdx = ranked.findIndex((m) => m.current);
+    setModelSel(activeIdx >= 0 ? activeIdx : 0);
+}
+
+async function chooseModel(m) {
+    closePicker();
+    const r = await (
+        await postThread("/model", { provider: m.provider, id: m.id })
+    ).json();
+    if (r?.error) notice("model switch failed: " + r.error);
+}
+
+async function openModelPicker(query = "") {
+    if (!$overlay) return;
+    const data = await getJson(
+        "/models" +
+            (activeThreadId
+                ? "?thread=" + encodeURIComponent(activeThreadId)
+                : ""),
+    );
+    modelList = data?.items || [];
+    pickerNav = false; // this picker runs its own key handling
+    modelNav = true;
+    modelIndex = 0;
+
+    $picker.innerHTML = "";
+    const h = document.createElement("h3");
+    h.textContent = "Select model";
+    const search = document.createElement("input");
+    search.type = "text";
+    search.className = "model-search";
+    search.placeholder = "search models…";
+    search.value = query;
+    const list = document.createElement("div");
+    list.className = "model-list";
+    $picker.append(h, search, list);
+
+    renderModelList(list, query);
+    search.addEventListener("input", () => renderModelList(list, search.value));
+    search.addEventListener("keydown", (e) => {
+        switch (e.key) {
+            case "ArrowDown":
+                e.preventDefault();
+                setModelSel(modelIndex + 1);
+                break;
+            case "ArrowUp":
+                e.preventDefault();
+                setModelSel(modelIndex - 1);
+                break;
+            case "Enter": {
+                e.preventDefault();
+                const m = modelFiltered[modelIndex];
+                if (m) chooseModel(m);
+                break;
+            }
+            case "Escape":
+                e.preventDefault();
+                closePicker();
+                break;
+        }
+    });
+
+    $overlay.classList.add("show");
+    search.focus();
+}
+
 function showHotkeys() {
     const wrap = document.createElement("div");
     const keys = [
@@ -1338,6 +1478,7 @@ function showHotkeys() {
         ["Shift+Tab", "cycle thinking level"],
         ["/resume", "switch threads"],
         ["/new", "new thread — /new [dir] (prompts for a directory)"],
+        ["/model", "switch the active model"],
     ];
     wrap.innerHTML = keys
         .map(

@@ -281,6 +281,70 @@ test("session command routes delegate to sessionApi", async () => {
     }
 });
 
+test("model routes delegate to modelApi (list / set)", async () => {
+    const calls = [];
+    const bus = createBus();
+    const piweb = createPiWebHost({
+        broadcast: () => {},
+        getPi: () => ({}),
+    });
+    const server = createApp({
+        web: "src/web",
+        bus,
+        piweb,
+        modelApi: {
+            list: (threadId) => {
+                calls.push(`list:${threadId}`);
+                return {
+                    current: { provider: "meridian", id: "claude-opus-4-8" },
+                    items: [
+                        {
+                            provider: "meridian",
+                            id: "claude-opus-4-8",
+                            name: "Opus",
+                            reasoning: true,
+                            contextWindow: 200000,
+                            sub: true,
+                            current: true,
+                        },
+                    ],
+                };
+            },
+            set: (provider, id, threadId) => {
+                calls.push(`set:${provider}/${id}:${threadId}`);
+                return { ok: true, provider, id };
+            },
+        },
+    });
+    const base = await new Promise((r) =>
+        server.listen(0, "127.0.0.1", () =>
+            r(`http://127.0.0.1:${server.address().port}`),
+        ),
+    );
+    try {
+        const listed = await (await fetch(`${base}/models?thread=t1`)).json();
+        expect(listed.current.id).toBe("claude-opus-4-8");
+        expect(listed.items[0].sub).toBe(true);
+        expect(calls).toContain("list:t1");
+
+        const set = await (
+            await fetch(`${base}/model`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    provider: "openai",
+                    id: "gpt-5",
+                    threadId: "t1",
+                }),
+            })
+        ).json();
+        expect(set.ok).toBe(true);
+        expect(calls).toContain("set:openai/gpt-5:t1");
+    } finally {
+        server.close();
+    }
+});
+
 test("/bash delegates to onBash with the exclude flag", async () => {
     const calls = [];
     const bus = createBus();
