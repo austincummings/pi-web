@@ -803,11 +803,18 @@ function createThread(sm) {
                 },
             ],
         });
-        await resourceLoader.reload();
         thread.resourceLoader = resourceLoader;
-
-        bindingThread = thread; // route panel registration to this thread
+        // Route extension registration (setWidget/setStatus/registerMessage-
+        // Renderer/…) to this thread. Extensions register during
+        // `resourceLoader.reload()` — NOT during createAgentSession — so
+        // bindingThread must be set *before* reload(), matching the /reload
+        // path (onReload). Setting it only around createAgentSession dropped
+        // every first-load registration onto the null registry until an
+        // explicit /reload (the real cause of TODO #11). createThread is
+        // serialized via createChain, so this transient pointer is safe.
+        bindingThread = thread;
         try {
+            await resourceLoader.reload();
             const created = await createAgentSession({
                 cwd: threadCwd,
                 resourceLoader,
