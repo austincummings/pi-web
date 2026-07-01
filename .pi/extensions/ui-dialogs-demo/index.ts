@@ -23,24 +23,19 @@ import { piweb } from "../../../src/sdk/piweb.ts";
 
 export default function (pi: ExtensionAPI) {
     // A custom transcript-message renderer: messages of customType "demo-card"
-    // render as a titled Stack with a Code node instead of plain markdown.
+    // render as a titled Box with a Markdown code block (mirrors pi-tui's
+    // Text + Markdown components) instead of plain markdown.
     piweb.registerMessageRenderer("demo-card", (message, opts) => {
         const d = (message.details as any) || {};
+        const lang = d.lang ?? "ts";
         return {
-            type: "Stack",
+            type: "Box",
             children: [
                 { type: "Text", text: `⭐ ${d.title ?? "Card"}` },
                 { type: "Divider" },
                 {
-                    type: "Code",
-                    lang: d.lang ?? "txt",
-                    spans: [
-                        { token: "keyword", text: "const " },
-                        { token: "variable", text: "expanded" },
-                        { token: "operator", text: " = " },
-                        { token: "number", text: String(opts.expanded) },
-                        { token: "punctuation", text: ";" },
-                    ],
+                    type: "Markdown",
+                    text: `\`\`\`${lang}\nconst expanded = ${opts.expanded};\n\`\`\``,
                 },
                 { type: "Text", text: d.body ?? "" },
             ],

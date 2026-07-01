@@ -83,8 +83,9 @@ piweb.removeWidget(key: string): void;     // alias: setWidget(key, undefined)
 ```
 
 Where `Node` is the existing serializable component tree
-(`Stack | Row | Text | Divider | Button | Input | Frame | ...`, plus the
-proposed `Code` node from TODO #19), and `ActionContext` is the dispatch context
+(`Box | Row | Text | Markdown | Divider | Button | Input | Frame | ...`;
+`Box`/`Text`/`Markdown`/`Input` mirror the pi-tui components of the same name,
+`Stack` is a deprecated alias for `Box`), and `ActionContext` is the dispatch context
 the host already builds (`payload`, `state`, `setState`, `pi`, `openOverlay`,
 `closeOverlay`, `notify`).
 
@@ -110,7 +111,7 @@ When `content` is a `string[]`, the host wraps it into a default `render`:
 
 ```ts
 render: () => ({
-    type: "Stack",
+    type: "Box",
     children: lines.map((t) => ({ type: "Text", text: t })),
 });
 ```
@@ -195,7 +196,7 @@ piweb?.setWidget("counter", {
     title: "Counter",
     initialState: { n: 0 },
     render: (s) => ({
-        type: "Stack",
+        type: "Box",
         children: [
             { type: "Text", text: `count: ${s.n}` },
             { type: "Button", label: "increment", action: "inc" },

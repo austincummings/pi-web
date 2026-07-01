@@ -250,11 +250,11 @@ export function createPiWebHost({ broadcast, getPi }) {
                 if (surfaces.delete(key)) push();
                 return;
             }
-            // string[] -> a default Stack of Text rows (drop-in for plain pi).
+            // string[] -> a default Box of Text rows (drop-in for plain pi).
             const def = Array.isArray(content)
                 ? {
                       render: () => ({
-                          type: "Stack",
+                          type: "Box",
                           children: content.map((t) => ({
                               type: "Text",
                               text: String(t),

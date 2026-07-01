@@ -17,14 +17,14 @@ function makeHost() {
     return { host, frames, snap: () => host.snapshot() };
 }
 
-test("setWidget with string[] renders a Stack of Text rows at the default (aboveEditor->bottom) slot", () => {
+test("setWidget with string[] renders a Box of Text rows at the default (aboveEditor->bottom) slot", () => {
     const { host, snap } = makeHost();
     host.setWidget("hello", ["a", "b"]);
     const { docks } = snap();
     expect(docks.bottom.length).toBe(1);
     expect(docks.bottom[0].id).toBe("hello");
     expect(docks.bottom[0].tree).toEqual({
-        type: "Stack",
+        type: "Box",
         children: [
             { type: "Text", text: "a" },
             { type: "Text", text: "b" },

@@ -29,12 +29,15 @@ Simple, line-based backlog. Check items off as they land.
   messages (`pi.sendMessage({ customType })`, role `"custom"`) render via the
   returned serializable tree on live `message_end` + transcript replay
   (`customFrame` in `server.ts`), falling back to markdown text when no
-  renderer is registered or `display === false`. Added a `Code` node type
-  (`renderNode`) so highlighters can emit `{ token, text }` spans mapped to
-  the theme `--syn-*` palette. No-op under plain pi. **Remaining:** auto-route
-  fenced code blocks in assistant markdown through a synthetic `"code"`
-  renderer (needs `markdown.ts` language capture + per-block routing) — the
-  tree-sitter-highlighter forcing function.
+  renderer is registered or `display === false`. Renderers use the TUI-aligned
+  node vocabulary (`Box`/`Text`/`Markdown`/`Input` mirror the pi-tui components;
+  `Stack` is a deprecated alias for `Box`); a `Markdown` node renders via the
+  transcript's `renderMarkdown()` — mirroring pi-tui's `Markdown` component,
+  which is where code highlighting lives (no separate `Code` type). No-op under
+  plain pi. **Remaining:** highlight fenced code inside the markdown code-block
+  path (`markdown.ts` → `--syn-*` spans), serving both `Markdown` nodes and the
+  assistant transcript — the tree-sitter-highlighter forcing function (pi-tui's
+  `MarkdownTheme.highlightCode`).
 
       <sub>Original spec (kept for reference):</sub> override how a message / code block renders in the transcript
       (closely related to #10; the forcing function is a tree-sitter highlighter).

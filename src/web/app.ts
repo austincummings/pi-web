@@ -681,6 +681,9 @@ function renderNode(node, surfaceId) {
     if (!node || typeof node !== "object")
         return document.createTextNode(String(node ?? ""));
     switch (node.type) {
+        // Box: vertical child container (mirrors pi-tui's Box). `Stack` is the
+        // pre-rename alias, kept for one release.
+        case "Box":
         case "Stack": {
             const d = document.createElement("div");
             d.style.display = "flex";
@@ -738,25 +741,15 @@ function renderNode(node, surfaceId) {
                 });
             return i;
         }
-        case "Code": {
-            // a code block; a highlighter renderer emits `spans` ({text, token})
-            // mapped to the theme's --syn-* colors, else plain `text`.
-            const pre = document.createElement("pre");
-            pre.className = "code-block";
-            if (node.lang) pre.dataset.lang = node.lang;
-            const code = document.createElement("code");
-            if (Array.isArray(node.spans)) {
-                for (const sp of node.spans) {
-                    const s = document.createElement("span");
-                    if (sp.token) s.className = "syn-" + sp.token;
-                    s.textContent = sp.text ?? "";
-                    code.appendChild(s);
-                }
-            } else {
-                code.textContent = node.text ?? "";
-            }
-            pre.appendChild(code);
-            return pre;
+        // Markdown: rich text rendered via the same markdown pipeline as the
+        // transcript (mirrors pi-tui's Markdown component). Fenced code blocks
+        // are highlighted by markdown.ts using the theme --syn-* palette; this
+        // is where code highlighting lives (the TUI has no separate Code type).
+        case "Markdown": {
+            const d = document.createElement("div");
+            d.className = "md";
+            d.innerHTML = renderMarkdown(node.text ?? "");
+            return d;
         }
         case "Frame": {
             // arbitrary HTML/CSS/JS, isolated in a sandboxed <pi-frame>

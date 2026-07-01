@@ -459,23 +459,10 @@
                 padding: 0;
                 color: var(--md-code-block);
             }
-            /* Code node (extension message renderers / highlighters): a code
-               block whose spans map to the theme's --syn-* palette. */
-            .code-block {
-                background: #0c1117;
-                border: 1px solid var(--md-code-block-border);
-                border-radius: 6px;
-                padding: 8px 10px;
-                overflow: auto;
-                margin: 6px 0;
-                white-space: pre;
-            }
-            .code-block code {
-                background: none;
-                border: none;
-                padding: 0;
-                color: var(--md-code-block);
-            }
+            /* Syntax tokens for highlighted code inside markdown code blocks
+               (`Markdown` node + the assistant transcript). The markdown code
+               highlighter (TODO #19) emits <span class="syn-*"> inside
+               <pre><code>, mapped here to the theme --syn-* palette. */
             .syn-comment {
                 color: var(--syn-comment);
             }
