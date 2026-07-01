@@ -2,24 +2,50 @@
 // and a fuzzy command typeahead (ported from pi-tui's fuzzy matcher).
 import { fuzzyFilter } from "./fuzzy.ts";
 import { renderMarkdown, highlightComposer } from "./markdown.ts";
-import { registerToolRenderer } from "./tools.ts";
+import { registerToolRenderer, type ToolInfo } from "./tools.ts";
+import { renderDiffHtml } from "./diff.ts";
 import {
     keyHintsLine,
     sectionSummary,
     hasResources,
     type WelcomeInfo,
 } from "./welcome.ts";
-import {
+// NOTE: these two modules are imported only for their side effect —
+// registering the <pi-frame> / <pi-tool> custom elements via
+// customElements.define(). We reference their classes solely in type
+// positions (`as PiFrame`, `: PiTool | null`), so a plain `import { PiTool }`
+// gets elided as type-only by the bundler, which then tree-shakes the whole
+// module and drops the registration — leaving createElement("pi-tool") as an
+// inert element with no .apply() (tool cards silently fail to render). The
+// explicit bare `import "./x.ts"` forces module evaluation; `import type`
+// keeps the class names available for annotations.
+import "./pi-frame.ts";
+import "./pi-tool.ts";
+import type {
     PiFrame,
-    type PiFrameActionDetail,
-    type PiFrameNotifyDetail,
+    PiFrameActionDetail,
+    PiFrameNotifyDetail,
 } from "./pi-frame.ts";
-import { PiTool } from "./pi-tool.ts";
+import type { PiTool } from "./pi-tool.ts";
 
 // Expose the tool-renderer registry so client-side extensions can override how
 // a tool's result is displayed (web counterpart to pi-tui's renderResult).
 (window as any).piweb = Object.assign((window as any).piweb || {}, {
     registerToolRenderer,
+});
+
+// Render `edit` results as a colored diff, mirroring the pi TUI (which shows the
+// diff in place of the tool-result text). The diff string is computed host-side
+// by pi's `generateDiffString` and arrives in `details.diff`; while the tool is
+// still pending (or on error) there's no diff, so we fall back to the default
+// tool body by returning null.
+registerToolRenderer("edit", (info: ToolInfo) => {
+    const diff = info.details?.diff;
+    if (typeof diff !== "string" || !diff) return null;
+    const pre = document.createElement("pre");
+    pre.className = "tool-body diff";
+    pre.innerHTML = renderDiffHtml(diff);
+    return pre;
 });
 
 const $transcript = document.getElementById("transcript");
@@ -210,6 +236,31 @@ const COMMANDS = [
         value: "/session",
         label: "/session",
         description: "Show session info and stats",
+    },
+    {
+        value: "/tree",
+        label: "/tree",
+        description: "Jump to an earlier point in the session and continue",
+    },
+    {
+        value: "/fork",
+        label: "/fork",
+        description: "New thread branched from a previous user message",
+    },
+    {
+        value: "/clone",
+        label: "/clone",
+        description: "Duplicate the current thread into a new one",
+    },
+    {
+        value: "/import",
+        label: "/import",
+        description: "Import a session from a JSONL file — /import <file>",
+    },
+    {
+        value: "/share",
+        label: "/share",
+        description: "Share the session as a private GitHub gist",
     },
     {
         value: "/export",
@@ -1345,6 +1396,21 @@ function runCommand(cmd, arg) {
         case "/session":
             showSessionInfo();
             return true;
+        case "/tree":
+            openTreePicker();
+            return true;
+        case "/fork":
+            openForkPicker();
+            return true;
+        case "/clone":
+            doClone();
+            return true;
+        case "/import":
+            doImport(arg);
+            return true;
+        case "/share":
+            doShare();
+            return true;
         case "/export":
             doExport(arg);
             return true;
@@ -1379,6 +1445,160 @@ async function doExport(format) {
     ).json();
     if (r?.path) notice(`exported (${r.format}) → ${r.path}`);
     else notice("export failed" + (r?.error ? `: ${r.error}` : ""));
+}
+
+// Append `?thread=<id>` to a GET path so a read-only endpoint resolves the
+// thread the client is currently viewing (the POST helpers use postThread).
+function withThread(path) {
+    return (
+        path +
+        (activeThreadId ? "?thread=" + encodeURIComponent(activeThreadId) : "")
+    );
+}
+
+// Generic single-column selector that reuses the resume-picker chrome and its
+// shared keyboard navigation (Up/Down/Enter/Home/End via the pickerNav
+// listener). `rows` is ordered; each is { name, meta?, cls?, title?, onClick }.
+function openListPicker(title, rows, selectIndex = 0) {
+    if (!$overlay) return;
+    $picker.innerHTML = "";
+    const h = document.createElement("h3");
+    h.textContent = title;
+    $picker.appendChild(h);
+    pickerItems = [];
+    pickerNav = true;
+    if (!rows.length) {
+        const empty = document.createElement("div");
+        empty.className = "item";
+        empty.innerHTML = '<span class="name hint">nothing here</span>';
+        $picker.appendChild(empty);
+    }
+    for (const row of rows) {
+        const item = document.createElement("div");
+        item.className = "item" + (row.cls ? ` ${row.cls}` : "");
+        const n = document.createElement("span");
+        n.className = "name";
+        n.textContent = row.name;
+        const meta = document.createElement("span");
+        meta.className = "meta";
+        meta.textContent = row.meta || "";
+        item.append(n, meta);
+        if (row.title) item.title = row.title;
+        item.onclick = () => {
+            closePicker();
+            row.onClick();
+        };
+        $picker.appendChild(item);
+        pickerItems.push(item);
+    }
+    if (pickerItems.length)
+        setPickerSel(
+            Math.max(0, Math.min(selectIndex, pickerItems.length - 1)),
+        );
+    $prompt?.blur(); // don't let the composer's history keys fight the picker
+    $overlay.classList.add("show");
+}
+
+// ---- /tree: jump to an earlier point in the session ----------------------
+async function openTreePicker() {
+    const data = await getJson(withThread("/tree"));
+    const entries = data?.entries || [];
+    if (!entries.length) {
+        notice("no earlier points to jump to");
+        return;
+    }
+    const rows = entries.map((e) => {
+        const indent = "  ".repeat(Math.min(e.depth || 0, 6));
+        const role =
+            e.role === "user"
+                ? "▸ you"
+                : e.role === "assistant"
+                  ? "· pi"
+                  : e.role === "label"
+                    ? "⚑"
+                    : String(e.role);
+        return {
+            name: `${indent}${role}${e.current ? "  (current)" : ""}`,
+            meta: e.label ? `${e.label} — ${e.text}` : e.text,
+            cls: e.current ? "active" : "",
+            onClick: () => navigateTree(e.id),
+        };
+    });
+    const curIdx = entries.findIndex((e) => e.current);
+    openListPicker(
+        "Jump to a point in the session",
+        rows,
+        curIdx >= 0 ? curIdx : rows.length - 1,
+    );
+}
+
+async function navigateTree(entryId) {
+    const r = await (await postThread("/tree/navigate", { entryId })).json();
+    if (r?.error) notice("navigate failed: " + r.error);
+    else if (r?.cancelled) notice("navigation cancelled");
+    else {
+        notice("jumped to selected point");
+        // pi hands back the user message at the branch point so you can edit and
+        // resend it; drop it into an empty composer (never clobber a draft).
+        if (r?.editorText && $prompt && !$prompt.value.trim()) {
+            $prompt.value = r.editorText;
+            autoGrow();
+        }
+    }
+}
+
+// ---- /fork: new thread from a previous user message ----------------------
+async function openForkPicker() {
+    const data = await getJson(withThread("/fork-messages"));
+    const items = data?.items || [];
+    if (!items.length) {
+        notice("no messages to fork from");
+        return;
+    }
+    const rows = items.map((m) => ({
+        name: m.text || "(empty message)",
+        meta: "",
+        onClick: () => forkFrom(m.id),
+    }));
+    // preselect the most recent user message (matches the pi TUI default)
+    openListPicker("Fork from a message", rows, rows.length - 1);
+}
+
+async function forkFrom(entryId) {
+    const r = await (await postThread("/threads/fork", { entryId })).json();
+    if (r?.id) gotoThread(r.id);
+    else notice("fork failed" + (r?.error ? ": " + r.error : ""));
+}
+
+// ---- /clone: duplicate the current thread --------------------------------
+async function doClone() {
+    const r = await (await postThread("/threads/clone", {})).json();
+    if (r?.id) gotoThread(r.id);
+    else notice("clone failed" + (r?.error ? ": " + r.error : ""));
+}
+
+// ---- /import <file>: resume a session from a JSONL file ------------------
+async function doImport(file) {
+    const path = (file || "").trim();
+    if (!path) {
+        notice("usage: /import <file.jsonl>");
+        return;
+    }
+    const r = await (await postThread("/threads/import", { path })).json();
+    if (r?.id) gotoThread(r.id);
+    else notice("import failed" + (r?.error ? ": " + r.error : ""));
+}
+
+// ---- /share: upload as a private gist ------------------------------------
+async function doShare() {
+    notice("creating private gist…");
+    const r = await (await postThread("/session/share", {})).json();
+    if (r?.viewerUrl) {
+        notice("shared → " + r.viewerUrl);
+        navigator.clipboard?.writeText(r.viewerUrl).catch(() => {});
+    } else {
+        notice("share failed" + (r?.error ? ": " + r.error : ""));
+    }
 }
 
 async function showSessionInfo() {

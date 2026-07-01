@@ -136,6 +136,8 @@ export interface ToolInfo {
     pending: boolean;
     /** Whether the result view is expanded (ctrl+o / click). */
     expanded: boolean;
+    /** Structured tool details (e.g. edit's `diff`); pi-tui's renderResult input. */
+    details?: any;
 }
 
 /** A custom tool renderer returns a DOM node, or null to fall back to default. */

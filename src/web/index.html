@@ -551,6 +551,30 @@
                 overflow-x: auto;
                 max-width: 100%;
             }
+            /* Diff body (edit results): one span per line, colored by the
+               theme's toolDiff* slots; changed tokens carry .inverse. Mirrors
+               pi-tui's renderDiff. Kept monospace + non-wrapping so line numbers
+               and alignment survive. */
+            .tool-body.diff {
+                white-space: pre;
+                word-break: normal;
+            }
+            .tool-body.diff .diff-context {
+                color: var(--diff-context);
+            }
+            .tool-body.diff .diff-added {
+                color: var(--diff-added);
+            }
+            .tool-body.diff .diff-removed {
+                color: var(--diff-removed);
+            }
+            /* web analogue of theme.inverse(): swap fg/bg to highlight the
+               changed tokens within a single-line modification. `currentColor`
+               keeps it tied to the enclosing added/removed line color. */
+            .tool-body.diff .inverse {
+                background: currentColor;
+                color: var(--bg);
+            }
             .tool-more {
                 margin-top: 3px;
                 color: var(--acc2);

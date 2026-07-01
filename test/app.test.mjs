@@ -713,6 +713,157 @@ test("/app.js serves the bundled TS front-end (build-web)", async () => {
         // fuzzy.ts + markdown.ts are bundled into the single entrypoint
         expect(code).toContain("fuzzyMatch");
         expect(code).toContain("renderMarkdown");
+        // Regression guard: the <pi-tool> / <pi-frame> custom elements are
+        // registered via module side effects in pi-tool.ts / pi-frame.ts, but
+        // app.ts only references their classes in type positions. Without an
+        // explicit side-effect import the bundler elides the modules and drops
+        // customElements.define(), leaving createElement("pi-tool") inert so
+        // tool cards never render. Assert the registrations survive bundling.
+        expect(code).toContain('customElements.define("pi-tool"');
+        expect(code).toContain('customElements.define("pi-frame"');
+    } finally {
+        server.close();
+    }
+});
+
+// #21 slash-command parity: the session-navigation cluster (/tree, /fork,
+// /clone, /import, /share) is wired through sessionApi + threads callbacks the
+// same way as the older thread routes. Assert each route reaches its callback
+// with the forwarded threadId / args and returns the callback's result.
+test("session-navigation routes (/tree, /fork, /clone, /import, /share) are wired", async () => {
+    const calls = [];
+    const bus = createBus();
+    const piweb = createPiWebHost({ broadcast: () => {}, getPi: () => ({}) });
+    const server = createApp({
+        web: "src/web",
+        bus,
+        piweb,
+        sessionApi: {
+            tree: (threadId) => {
+                calls.push(`tree@${threadId}`);
+                return {
+                    entries: [{ id: "e1", role: "user", text: "hi" }],
+                    leafId: "e1",
+                };
+            },
+            navigateTree: (entryId, threadId) => {
+                calls.push(`navigate:${entryId}@${threadId}`);
+                return { ok: true, editorText: "draft" };
+            },
+            forkMessages: (threadId) => {
+                calls.push(`forkMessages@${threadId}`);
+                return { items: [{ id: "e1", text: "hi" }] };
+            },
+            share: (threadId) => {
+                calls.push(`share@${threadId}`);
+                return {
+                    viewerUrl: "https://pi.dev/session/#gist1",
+                    gistUrl: "u",
+                };
+            },
+        },
+        threads: {
+            list: async () => [],
+            clone: async (threadId) => {
+                calls.push(`clone@${threadId}`);
+                return { id: "cloned" };
+            },
+            fork: async (threadId, entryId) => {
+                calls.push(`fork:${entryId}@${threadId}`);
+                return { id: "forked" };
+            },
+            importJsonl: async (path, threadId) => {
+                calls.push(`import:${path}@${threadId}`);
+                return { id: "imported" };
+            },
+        },
+    });
+    const base = await new Promise((r) =>
+        server.listen(0, "127.0.0.1", () =>
+            r(`http://127.0.0.1:${server.address().port}`),
+        ),
+    );
+    const post = (path, body) =>
+        fetch(`${base}${path}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        });
+    try {
+        const tree = await (await fetch(`${base}/tree?thread=t1`)).json();
+        expect(tree.entries[0].id).toBe("e1");
+        expect(calls).toContain("tree@t1");
+
+        const fm = await (
+            await fetch(`${base}/fork-messages?thread=t1`)
+        ).json();
+        expect(fm.items[0].id).toBe("e1");
+        expect(calls).toContain("forkMessages@t1");
+
+        const nav = await (
+            await post("/tree/navigate", { entryId: "e1", threadId: "t1" })
+        ).json();
+        expect(nav.ok).toBe(true);
+        expect(calls).toContain("navigate:e1@t1");
+
+        const cloned = await (
+            await post("/threads/clone", { threadId: "t1" })
+        ).json();
+        expect(cloned.id).toBe("cloned");
+        expect(calls).toContain("clone@t1");
+
+        const forked = await (
+            await post("/threads/fork", { entryId: "e1", threadId: "t1" })
+        ).json();
+        expect(forked.id).toBe("forked");
+        expect(calls).toContain("fork:e1@t1");
+
+        const imported = await (
+            await post("/threads/import", { path: "s.jsonl", threadId: "t1" })
+        ).json();
+        expect(imported.id).toBe("imported");
+        expect(calls).toContain("import:s.jsonl@t1");
+
+        const shared = await (
+            await post("/session/share", { threadId: "t1" })
+        ).json();
+        expect(shared.viewerUrl).toContain("#gist1");
+        expect(calls).toContain("share@t1");
+    } finally {
+        server.close();
+    }
+});
+
+// A failing clone/fork/import (callback throws) surfaces as a 400 with the
+// error message rather than crashing the route.
+test("clone/fork/import errors return 400 with the message", async () => {
+    const bus = createBus();
+    const piweb = createPiWebHost({ broadcast: () => {}, getPi: () => ({}) });
+    const server = createApp({
+        web: "src/web",
+        bus,
+        piweb,
+        threads: {
+            list: async () => [],
+            clone: async () => {
+                throw new Error("nothing to clone yet");
+            },
+        },
+    });
+    const base = await new Promise((r) =>
+        server.listen(0, "127.0.0.1", () =>
+            r(`http://127.0.0.1:${server.address().port}`),
+        ),
+    );
+    try {
+        const res = await fetch(`${base}/threads/clone`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ threadId: "t1" }),
+        });
+        expect(res.status).toBe(400);
+        const body = await res.json();
+        expect(body.error).toContain("nothing to clone yet");
     } finally {
         server.close();
     }

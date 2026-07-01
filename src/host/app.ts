@@ -70,6 +70,9 @@ export interface AppOptions {
         list: () => Promise<any[]>;
         create?: (dir?: string) => Promise<any>;
         switch?: (id: string) => Promise<void>;
+        clone?: (threadId?: string) => Promise<any>;
+        fork?: (threadId: string | undefined, entryId: string) => Promise<any>;
+        importJsonl?: (path: string, threadId?: string) => Promise<any>;
     };
     sessionApi?: Record<string, (...args: any[]) => any>;
     modelApi?: {
@@ -247,6 +250,24 @@ export function createApp({
         const threadId = url.searchParams.get("thread") || undefined;
         sendJson(res, 200, (await sessionApi?.info?.(threadId)) ?? {});
     });
+    // session-tree jump points for the /tree selector (read-only)
+    router.get("/tree", async ({ res, url }) => {
+        const threadId = url.searchParams.get("thread") || undefined;
+        sendJson(
+            res,
+            200,
+            (await sessionApi?.tree?.(threadId)) ?? { entries: [] },
+        );
+    });
+    // user messages that can serve as /fork points (read-only)
+    router.get("/fork-messages", async ({ res, url }) => {
+        const threadId = url.searchParams.get("thread") || undefined;
+        sendJson(
+            res,
+            200,
+            (await sessionApi?.forkMessages?.(threadId)) ?? { items: [] },
+        );
+    });
     router.get("/changelog", async ({ res }) => {
         sendJson(res, 200, (await sessionApi?.changelog?.()) ?? { text: "" });
     });
@@ -339,6 +360,21 @@ export function createApp({
         sessionApi?.compact?.(body.threadId || undefined); // streamed over SSE
         res.writeHead(202).end();
     });
+    // jump to a point in the session tree (re-broadcasts the transcript)
+    router.post("/tree/navigate", async ({ res, body }) => {
+        const result =
+            (await sessionApi?.navigateTree?.(
+                body.entryId,
+                body.threadId || undefined,
+            )) ?? {};
+        sendJson(res, 200, result);
+    });
+    // share the session as a private gist, returning a shareable viewer URL
+    router.post("/session/share", async ({ res, body }) => {
+        const result =
+            (await sessionApi?.share?.(body.threadId || undefined)) ?? {};
+        sendJson(res, 200, result);
+    });
     router.post("/session/export", async ({ res, body }) => {
         const result =
             (await sessionApi?.export?.(
@@ -369,6 +405,41 @@ export function createApp({
             res.writeHead(202).end();
         } catch (err) {
             sendJson(res, 409, { error: String(err?.message ?? err) });
+        }
+    });
+    // /clone, /fork, /import all mint a new thread and return its id so the
+    // client can navigate to it (like /new, but seeded from existing history).
+    router.post("/threads/clone", async ({ res, body }) => {
+        try {
+            const result =
+                (await threads?.clone?.(body.threadId || undefined)) ?? {};
+            sendJson(res, 200, result);
+        } catch (err) {
+            sendJson(res, 400, { error: String(err?.message ?? err) });
+        }
+    });
+    router.post("/threads/fork", async ({ res, body }) => {
+        try {
+            const result =
+                (await threads?.fork?.(
+                    body.threadId || undefined,
+                    body.entryId,
+                )) ?? {};
+            sendJson(res, 200, result);
+        } catch (err) {
+            sendJson(res, 400, { error: String(err?.message ?? err) });
+        }
+    });
+    router.post("/threads/import", async ({ res, body }) => {
+        try {
+            const result =
+                (await threads?.importJsonl?.(
+                    body.path,
+                    body.threadId || undefined,
+                )) ?? {};
+            sendJson(res, 200, result);
+        } catch (err) {
+            sendJson(res, 400, { error: String(err?.message ?? err) });
         }
     });
     router.post("/reload", async ({ res, body }) => {

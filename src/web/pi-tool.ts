@@ -26,6 +26,7 @@ export interface ToolFrame {
     status?: "start" | "end" | string;
     result?: unknown;
     isError?: boolean;
+    details?: unknown;
 }
 
 export class PiTool extends HTMLElement {
@@ -41,6 +42,7 @@ export class PiTool extends HTMLElement {
         isError: false,
         pending: true,
         expanded: false,
+        details: undefined,
     };
 
     private built = false;
@@ -63,6 +65,7 @@ export class PiTool extends HTMLElement {
             this.info.pending = false;
             this.info.isError = !!m.isError;
             if (m.result != null) this.info.result = String(m.result);
+            if (m.details != null) this.info.details = m.details;
         }
         this.render();
     }

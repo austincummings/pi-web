@@ -25,7 +25,7 @@
  * request (`/prompt`, `/bash`, `/action`, `/session/*`, `/reload`) carries the
  * thread id it targets.
  */
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, unlink } from "node:fs/promises";
 import { readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
@@ -37,7 +37,7 @@ import {
     resolve,
     sep,
 } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -633,6 +633,9 @@ function subscribe(thread) {
                     status: "end",
                     isError: ev.isError,
                     result: textOf(ev.result?.content),
+                    // structured tool details for rich rendering (e.g. edit's
+                    // `diff` string) — the web counterpart to pi-tui renderResult
+                    details: ev.result?.details,
                 });
                 break;
             case "queue_update":
@@ -824,6 +827,7 @@ function replayTranscript(s, send) {
                     status: "end",
                     isError: !!m.isError,
                     result: textOf(m.content),
+                    details: m.details,
                 });
                 break;
             case "bashExecution":
@@ -1036,7 +1040,73 @@ const threads = {
         const t = await ensureLoaded(id);
         if (!t) throw new Error(`unknown thread: ${id}`);
     },
+    /**
+     * Duplicate the current active branch into a brand-new thread (/clone),
+     * copying the full history and staying at the current position. The client
+     * navigates to the returned id.
+     * @param {string} threadId
+     */
+    async clone(threadId) {
+        const rt = threadRuntimes.get(threadId);
+        const file = rt?.session?.sessionManager?.getSessionFile?.();
+        if (!file) throw new Error("nothing to clone yet");
+        const t = await createThread(SessionManager.forkFrom(file, rt.cwd));
+        return { id: t.id, cwd: t.cwd };
+    },
+    /**
+     * Start a new thread forked from a previous user message (/fork): copy the
+     * history into a new session file, then move its leaf to `entryId` so the
+     * next turn branches from that point. forkFrom preserves entry ids, so the
+     * branch target resolves in the copy.
+     * @param {string} threadId
+     * @param {string} entryId
+     */
+    async fork(threadId, entryId) {
+        const rt = threadRuntimes.get(threadId);
+        const file = rt?.session?.sessionManager?.getSessionFile?.();
+        if (!file) throw new Error("nothing to fork yet");
+        if (!entryId) throw new Error("missing entryId");
+        const sm = SessionManager.forkFrom(file, rt.cwd);
+        sm.branch(entryId);
+        const t = await createThread(sm);
+        return { id: t.id, cwd: t.cwd };
+    },
+    /**
+     * Import a session JSONL file into a new thread (/import), resuming it in
+     * the calling thread's working directory. forkFrom copies the history into
+     * a fresh session file so the original file is left untouched.
+     * @param {string} path
+     * @param {string} [threadId]
+     */
+    async importJsonl(path, threadId) {
+        const p = (path ?? "").trim();
+        if (!p) throw new Error("missing file path");
+        const abs = isAbsolute(p) ? p : resolve(cwd, p);
+        const targetCwd = threadRuntimes.get(threadId)?.cwd || cwd;
+        const t = await createThread(SessionManager.forkFrom(abs, targetCwd));
+        return { id: t.id, cwd: t.cwd };
+    },
 };
+
+// Describe one session-tree node as a navigable jump point for /tree. Returns
+// null for entries that aren't useful to jump to (model/thinking changes, tool
+// noise) so the web tree selector stays readable. Mirrors the pi TUI, which
+// lets you navigate to any earlier point and continue from there.
+function treeEntryInfo(node) {
+    const e = node?.entry;
+    if (!e) return null;
+    const label = node.label || null;
+    if (e.type === "message") {
+        const role = e.message?.role;
+        if (role !== "user" && role !== "assistant") return null;
+        let text = textOf(e.message?.content).replace(/\s+/g, " ").trim();
+        if (!text) text = role === "assistant" ? "(tool calls)" : "";
+        return { role, text: text.slice(0, 140), label };
+    }
+    // non-message entries only surface when explicitly labeled
+    if (label) return { role: "label", text: label.slice(0, 140), label };
+    return null;
+}
 
 // ---- session commands (/session, /name, /compact, /export, /changelog) ----
 // All operate on the thread named by the calling client (threadId).
@@ -1118,6 +1188,121 @@ const sessionApi = {
             return { text: text.slice(0, 20000) };
         } catch (err) {
             return { text: "", error: String(err?.message ?? err) };
+        }
+    },
+    // ---- session tree navigation (/tree) ---------------------------------
+    /**
+     * The navigable points in this thread's session tree, flattened depth-first
+     * with the current leaf marked. Powers the web /tree selector.
+     * @param {string} [threadId]
+     */
+    tree(threadId) {
+        const s = sessionFor(threadId);
+        const sm = s?.sessionManager;
+        if (!sm) return { entries: [], leafId: null };
+        const leafId = sm.getLeafId?.() ?? null;
+        const entries = [];
+        const visit = (nodes, depth) => {
+            for (const node of nodes ?? []) {
+                const info = treeEntryInfo(node);
+                if (info)
+                    entries.push({
+                        id: node.entry.id,
+                        depth,
+                        current: node.entry.id === leafId,
+                        ...info,
+                    });
+                visit(node?.children, depth + 1);
+            }
+        };
+        visit(sm.getTree?.() ?? [], 0);
+        return { entries, leafId };
+    },
+    /**
+     * Jump the thread's leaf to `entryId` and continue from there (stays in the
+     * same session file, unlike /fork). Re-broadcasts the transcript so every
+     * viewer of the thread re-renders at the new point.
+     * @param {string} entryId
+     * @param {string} [threadId]
+     */
+    async navigateTree(entryId, threadId) {
+        const s = sessionFor(threadId);
+        if (!s) return { error: "no active session" };
+        if (!entryId) return { error: "missing entryId" };
+        try {
+            const result = await s.navigateTree(entryId);
+            if (result?.cancelled) return { cancelled: true };
+            const emit = (msg) => bus.broadcastToThread(threadId, msg);
+            replayTranscript(s, emit);
+            emit(footerFrame(s, threadRuntimes.get(threadId)?.cwd));
+            broadcastThreads();
+            return { ok: true, editorText: result?.editorText ?? "" };
+        } catch (err) {
+            return { error: String(err?.message ?? err) };
+        }
+    },
+    /**
+     * User messages that can serve as fork points (/fork), newest last.
+     * @param {string} [threadId]
+     */
+    forkMessages(threadId) {
+        const s = sessionFor(threadId);
+        try {
+            const items = s?.getUserMessagesForForking?.() ?? [];
+            return {
+                items: items.map((m) => ({
+                    id: m.entryId,
+                    text: String(m.text ?? "")
+                        .replace(/\s+/g, " ")
+                        .trim()
+                        .slice(0, 140),
+                })),
+            };
+        } catch {
+            return { items: [] };
+        }
+    },
+    // ---- share as a secret GitHub gist (/share) --------------------------
+    /**
+     * Export the session to HTML and upload it as a private gist via the GitHub
+     * CLI, returning a shareable viewer URL (mirrors the pi TUI /share). Needs
+     * `gh` installed + authenticated on the host.
+     * @param {string} [threadId]
+     */
+    async share(threadId) {
+        const s = sessionFor(threadId);
+        if (!s) return { error: "no active session" };
+        try {
+            await execFileP("gh", ["auth", "status"]);
+        } catch (err) {
+            const missing = /not found|ENOENT/i.test(
+                String(err?.message ?? err),
+            );
+            return {
+                error: missing
+                    ? "GitHub CLI (gh) is not installed \u2014 https://cli.github.com/"
+                    : "GitHub CLI is not logged in \u2014 run: gh auth login",
+            };
+        }
+        const tmpFile = join(tmpdir(), `pi-session-${Date.now()}.html`);
+        try {
+            await s.exportToHtml(tmpFile);
+            const { stdout } = await execFileP("gh", [
+                "gist",
+                "create",
+                "--public=false",
+                tmpFile,
+            ]);
+            const gistUrl = String(stdout).trim();
+            const gistId = gistUrl.split("/").pop();
+            if (!gistId) return { error: "could not parse gist id from gh" };
+            const base =
+                process.env.PI_SHARE_VIEWER_URL || "https://pi.dev/session/";
+            return { gistUrl, viewerUrl: `${base}#${gistId}` };
+        } catch (err) {
+            return { error: String(err?.message ?? err) };
+        } finally {
+            unlink(tmpFile).catch(() => {});
         }
     },
 };

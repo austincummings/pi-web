@@ -47,20 +47,46 @@ Simple, line-based backlog. Check items off as they land.
       full spec.
 
 - [ ] 21. Reach slash-command parity with the pi TUI. The web UI (`src/web/app.ts`
-      `COMMANDS`) currently ships 11 of the TUI's 22 commands. Shared today:
+      `COMMANDS`) now ships 16 of the TUI's 22 commands. Shared today:
       `/resume`, `/new`, `/name`, `/session`, `/compact`, `/copy`, `/export`,
-      `/reload`, `/hotkeys`, `/changelog`, `/model`. Missing in web (port or decide N/A):
-    - [ ] `/login`, `/logout` — manage OAuth or API-key credentials
+      `/reload`, `/hotkeys`, `/changelog`, `/model`, `/tree`, `/fork`, `/clone`,
+      `/import`, `/share`. Status of the rest (port or decide N/A):
+    - [ ] `/login`, `/logout` — manage OAuth or API-key credentials.
+          **Deferred:** interactive OAuth device flows + credential writes are
+          security-sensitive and browser-hostile; credentials stay managed via
+          the pi TUI / `~/.pi/agent/auth.json`. A read-only auth-status surface
+          could land later without the mutating flows.
     - [x] `/model` — switch models (see #15)
-    - [ ] `/scoped-models` — enable/disable models for Ctrl+P cycling
-    - [ ] `/settings` — thinking level, theme, message delivery, transport
-    - [ ] `/tree` — jump to any point in the session and continue
-    - [ ] `/trust` — save project trust decision
-    - [ ] `/fork` — new session from a previous user message
-    - [ ] `/clone` — duplicate the current active branch into a new session
-    - [ ] `/import <file>` — import and resume a session from a JSONL file
-    - [ ] `/share` — upload as private GitHub gist with shareable HTML link
-    - [ ] `/quit` — quit pi (likely N/A in a browser tab)
+    - [ ] `/scoped-models` — enable/disable models for Ctrl+P cycling.
+          **Deferred:** blocked on a web equivalent of Ctrl+P model cycling —
+          there's nothing for the scope to gate yet. Revisit when cycling lands.
+    - [ ] `/settings` — thinking level, theme, message delivery, transport.
+          **Deferred:** thinking level (Shift+Tab / border) and theme (`/reload`)
+          are already adjustable; message-delivery + transport are TUI-only
+          concepts (the web transport is always SSE+POST). A consolidated
+          settings overlay is low-value polish, not parity.
+    - [x] `/tree` — jump to any point in the session and continue.
+          `GET /tree` flattens `sessionManager.getTree()` to navigable points;
+          `POST /tree/navigate` calls `session.navigateTree()` and re-broadcasts
+          the transcript. Web selector reuses the resume-picker chrome.
+    - [ ] `/trust` — save project trust decision.
+          **Deferred:** project trust gates tool execution at TUI startup; the
+          web host already runs tools for a launched session, so there's no
+          trust gate to satisfy. Would only matter if the web grew a startup
+          trust prompt.
+    - [x] `/fork` — new session from a previous user message.
+          `GET /fork-messages` lists fork points; `POST /threads/fork`
+          `forkFrom`s the session file and `branch()`es to the chosen entry
+          (ids are preserved across forkFrom), minting a new thread.
+    - [x] `/clone` — duplicate the current active branch into a new session.
+          `POST /threads/clone` → `SessionManager.forkFrom` at the current leaf.
+    - [x] `/import <file>` — import and resume a session from a JSONL file.
+          `POST /threads/import` → `forkFrom(file, cwd)` into a new thread.
+    - [x] `/share` — upload as private GitHub gist with shareable HTML link.
+          `POST /session/share` exports HTML + `gh gist create --public=false`,
+          returns `<PI_SHARE_VIEWER_URL>#<gistId>` (copied to the clipboard).
+    - [x] `/quit` — quit pi. **N/A in a browser tab** (no process to quit; the
+          user closes the tab). Deliberately not added to `COMMANDS`.
 
 - [ ] 22. Reach `ctx.ui` extension-point parity with the pi TUI (gaps from
       `docs/extension-points.md`). Extensions inherit pi's event/tool/session/model
