@@ -9,14 +9,14 @@ Simple, line-based backlog. Check items off as they land.
 - [x] 3. Style the composer scrollbar; make all scrollbars match the transcript view styling. (Promoted the transcript's `::-webkit-scrollbar` + Firefox `scrollbar-*` treatment to a global `*` rule in index.html.)
 - [x] 4. Render tool calls neatly: per-call cards with arg summary + collapsed result body (expand via click or **alt+o** — ctrl+o is browser-reserved), error/pending states. Host now emits tool result text (live + replay). Client `window.piweb.registerToolRenderer(name, fn)` allows overrides (host->browser bridge tracked in #10).
 - [x] 5. Add the starting/reload context intro view (pi calls it the startup header + "loaded resources"). Host emits a `welcome` frame (version + Context/Skills/Prompts/Extensions/Themes from the session resourceLoader, on connect and after /reload); client renders a collapsible banner above the transcript (`src/web/welcome.ts` + `#welcome`). Folded together with #12.
-- [ ] 6. Stop the transcript area from scrolling horizontally; tool-call output currently overruns the right edge.
+- [x] 6. Stop the transcript area from scrolling horizontally; tool-call output currently overruns the right edge. (Message/tool bodies wrap via `white-space: pre-wrap` + `word-break: break-word` with `max-width: 100%`; things that legitimately can't wrap — `<pre>` code blocks and GFM tables (`.table-wrap`) — scroll inside their own `overflow-x: auto` box, and `min-width: 0` lets flex children shrink instead of pushing the column wide.)
 - [ ] 7. Clean up the code: add tests, tidy interfaces and walk through them, remove unused styles/styling.
 - [x] 8. Set the web page title dynamically as an extension point, mirroring how the pi TUI sets the terminal title. (`piweb.setTitle(text)` on the host registry broadcasts a `title` SSE frame; the client sets `document.title`. By default (no override) the tab tracks the session as `π web - <thread name> - <cwd>` (mirroring the TUI's `π - <session> - <cwd>`, dropping absent segments); `""`/undefined clears the override and falls back to that. No-ops under plain pi via the SDK stub. Reaching it through `ctx.ui` is folded into #22.)
 - [x] 9. Highlight the focused composer border based on the current thinking mode. (Host emits a per-session `thinking_level` SSE frame on connect + on cycle/set; web tints the focused composer border per level via `.composer[data-think]` CSS (mirrors pi-tui `theme.getThinkingBorderColor`), with a green `data-bash` override for `!` shell input. Shift+Tab cycles the level via `POST /thinking-level`, with a "Thinking level: <x>" toast. The `#contextbar` footer mirrors the TUI FooterComponent: a host `footer` SSE frame (emitted on connect, turn end, thinking-level change, rename, compact) drives a pwd/session line plus a token-stats / `<model> • thinking <level>` line (`• thinking off` when reasoning is supported but off; context% colored at >70/>90), rendered below the composer. `--think-*`/`--bash-mode` are theme-aware via the `theme` frame; `/reload` re-asserts the border.)
 - [ ] 10. Explore what the pi TUI exposes to extensions for the transcript view (custom message/tool-output rendering) and expose similar in pi-web: custom HTML/canvas in place of a message, ideally interactive.
-- [ ] 11. Fix extensions not loading on first app load (only load after /reload).
+- [x] 11. Fix extensions not loading on first app load (only load after /reload). (`createThread` now runs `resourceLoader.reload()` and binds panel registration via `bindingThread` during the initial `createAgentSession`, so extensions register on the first `ensureLoaded` (SSE connect / deep-linked `?thread`), not only after an explicit `/reload`.)
 - [x] 12. Show a webified version of the TUI startup banner at the top of threads. Done as part of #5: the `#welcome` banner shows `pi v<version>` + a compact key-hint strip (`esc interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · alt+o more`, alt+o since ctrl+o is browser-reserved) and click-to-expand loaded resources.
-- [ ] 13. Render markdown tables in the transcript view.
+- [x] 13. Render markdown tables in the transcript view. (`src/web/markdown.ts` detects GFM tables via `isTableStart` — a header row containing `|` immediately followed by a `---|---` delimiter row — and emits `<div class="table-wrap"><table><thead>…</tbody></table></div>`; the `.table-wrap` wraps the table in an `overflow-x: auto` box so a wide table scrolls itself instead of overrunning the transcript (see #6).)
 - [ ] 14. Add an "open project" modal overlay (à la Zed's folder picker) so daemon-hosted agents can be cd'd into a chosen working directory.
 - [x] 15. Add the /model model picker that the TUI has. (Host `modelApi` lists selectable models via `ModelRegistry.getAvailable()` — active model pinned first, subscription/OAuth models tagged — over `GET /models`; `POST /model` switches the thread's model via `session.setModel()` and re-broadcasts the `thinking_level` + `footer` frames. Web `/model` opens a searchable, keyboard-navigable picker (fuzzy search mirrors the TUI's `getModelSelectorSearchText`) in the existing `#overlay`.)
 - [x] 16. Create a matrix of TUI extension points vs. our web UI counterparts, noting gaps; add as `docs/extension-points.md`. (Done — see `docs/extension-points.md`; the gaps it surfaces are tracked in #22.)
@@ -97,8 +97,15 @@ Simple, line-based backlog. Check items off as they land.
       `docs/extension-points.md`). Extensions inherit pi's event/tool/session/model
       layers unchanged; only the UI layer needs a web bridge. Already at parity:
       `notify`, `setStatus`, custom tool rendering (`registerToolRenderer`), and the
-      host-presence/no-op guard. To build: - [x] `setWidget` rename + widened placement (folds in #20) — replaces `dock` - [ ] blocking dialog request/response so `select`/`confirm`/`input`/`editor`
-      can `await` (`POST /ui-response` + `ui_request` SSE; see carried-over bridge) - [ ] `registerMessageRenderer` (folds in #19) - [x] `setTitle` web page-title hook (folds in #8 — `piweb.setTitle`; `ctx.ui` wiring still pending) - [ ] `setFooter` — footer replacement hook - [ ] `setWorkingMessage` / `setWorkingVisible` / `setWorkingIndicator` - [ ] `setEditorText` / `getEditorText` / `pasteToEditor` composer bridge - [ ] `addAutocompleteProvider` — extension-supplied completion - [ ] `getToolsExpanded` / `setToolsExpanded` programmatic control - [ ] theme API: `getAllThemes` / `getTheme` / `setTheme` / `theme.fg(...)` - [ ] `ctx.mode === "web"` so portable extensions can branch on the medium - [ ] N/A in a browser: `setEditorComponent` / `getEditorComponent` (TUI
+      host-presence/no-op guard. To build: - [x] `setWidget` rename + widened placement (folds in #20) — replaces `dock` - [x] blocking dialog request/response so `select`/`confirm`/`input`/`editor`
+      can `await`. Done: `piweb.select/confirm/input/editor(...)` (same pi-tui
+      signatures + `{signal, timeout}`) open a modal in the browser and return a
+      promise that settles on `POST /ui-response`. The open dialog rides the
+      surfaces snapshot (so a refresh replays it); `resolveUiRequest(id, value)`
+      on the per-thread host settles it (confirm→boolean, others→string|undef,
+      cancel/timeout/abort→undef). Stubbed no-op under plain pi in
+      `sdk/piweb.ts`. Web renders a `#dialog` modal (arrow/Enter select nav,
+      Esc/backdrop cancel). - [ ] `registerMessageRenderer` (folds in #19) - [x] `setTitle` web page-title hook (folds in #8 — `piweb.setTitle`; `ctx.ui` wiring still pending) - [ ] `setFooter` — footer replacement hook - [ ] `setWorkingMessage` / `setWorkingVisible` / `setWorkingIndicator` - [ ] `setEditorText` / `getEditorText` / `pasteToEditor` composer bridge - [ ] `addAutocompleteProvider` — extension-supplied completion - [ ] `getToolsExpanded` / `setToolsExpanded` programmatic control - [ ] theme API: `getAllThemes` / `getTheme` / `setTheme` / `theme.fg(...)` - [ ] `ctx.mode === "web"` so portable extensions can branch on the medium - [ ] N/A in a browser: `setEditorComponent` / `getEditorComponent` (TUI
       Component swap) — document as out of scope rather than implement
 
 - [x] 23. Reach theme-palette parity with the pi TUI. `loadPiTheme()` in
@@ -206,6 +213,16 @@ Simple, line-based backlog. Check items off as they land.
     - [x] **Light DOM** — carries the existing `.thinking-block` classes so the
           shared stylesheet applies unchanged (`.thinking-block` gains
           `display:block` since a custom element is inline by default).
+
+- [x] 27. Reach image-input parity with the pi TUI (multimodal composer). Images
+      pasted (Ctrl+V) or dropped into the composer are read client-side, downscaled
+      to `MAX_IMAGE_DIM` (2000px, mirroring the pi CLI cap) via a canvas, and held
+      as base64 `pendingImages` rendered as removable thumbnail chips under the
+      composer (`#attachments`). On send, `runInput(text, images)` posts them in the
+      `/prompt` body's `images[]`; the host turns them into
+      `{ type:"image", data, mimeType }` content blocks and re-extracts them on
+      replay (`textOf` / image-block helper) so they render as inline transcript
+      thumbnails. Mirrors the TUI's `app.clipboard.pasteImage` + file processor.
 
 ## Docs
 
