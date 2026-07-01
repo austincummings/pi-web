@@ -569,11 +569,18 @@
                 color: var(--diff-removed);
             }
             /* web analogue of theme.inverse(): swap fg/bg to highlight the
-               changed tokens within a single-line modification. `currentColor`
-               keeps it tied to the enclosing added/removed line color. */
+               changed tokens within a single-line modification. The background
+               must reference the enclosing line color explicitly: `currentColor`
+               here would resolve to this element's own `color` (var(--bg)),
+               producing a solid block with invisible text. */
             .tool-body.diff .inverse {
-                background: currentColor;
                 color: var(--bg);
+            }
+            .tool-body.diff .diff-added .inverse {
+                background: var(--diff-added);
+            }
+            .tool-body.diff .diff-removed .inverse {
+                background: var(--diff-removed);
             }
             .tool-more {
                 margin-top: 3px;
