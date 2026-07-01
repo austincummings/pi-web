@@ -18,6 +18,7 @@ import {
     formatDuration,
     type ToolInfo,
 } from "./tools.ts";
+import { ansiToHtml } from "./ansi.ts";
 
 // The shape of an SSE `tool` frame (start = name+args; end = result+isError).
 export interface ToolFrame {
@@ -30,6 +31,12 @@ export interface ToolFrame {
     details?: unknown;
     /** How long the tool ran, in ms (host-stamped; live turns only). */
     durationMs?: number;
+    /**
+     * A host-adapted serializable node tree for a tool's custom renderResult
+     * (render-model parity P1). Currently an `AnsiBlock` node; painted in place
+     * of the default body when no registered client renderer applies.
+     */
+    tree?: unknown;
 }
 
 export class PiTool extends HTMLElement {
@@ -49,6 +56,8 @@ export class PiTool extends HTMLElement {
     };
 
     private built = false;
+    /** Host-adapted renderResult tree (Parity P1); see ToolFrame.tree. */
+    private tree: any = null;
 
     connectedCallback(): void {
         if (!this.built) {
@@ -70,6 +79,7 @@ export class PiTool extends HTMLElement {
             if (m.result != null) this.info.result = String(m.result);
             if (m.details != null) this.info.details = m.details;
             if (m.durationMs != null) this.info.durationMs = m.durationMs;
+            if (m.tree != null) this.tree = m.tree;
         }
         this.render();
     }
@@ -117,6 +127,21 @@ export class PiTool extends HTMLElement {
             } catch {
                 /* fall through to the default rendering */
             }
+        }
+
+        // Render-model parity P1: a tool's custom renderResult arrives as a
+        // host-adapted AnsiBlock tree. Paint it (unless a registered renderer
+        // above already handled the body). Falls through if absent/unknown.
+        if (this.tree && (this.tree as any).type === "AnsiBlock") {
+            const pre = document.createElement("div");
+            pre.className = "ansi";
+            pre.innerHTML = ansiToHtml(
+                Array.isArray((this.tree as any).lines)
+                    ? (this.tree as any).lines
+                    : [],
+            );
+            this.appendChild(pre);
+            return;
         }
 
         if (!info.result) return;

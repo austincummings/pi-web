@@ -445,13 +445,13 @@ spec adds the `render-surface` payload shape and the resize/input/focus verbs.
 
 ## 15. Phased plan
 
-| Phase  | Scope                                                                                                                     | Exit criterion                                                        |
-| ------ | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Phase     | Scope                                                                                                                                   | Exit criterion                                                                                                                                                  |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **P0** ✅ | `AnsiBlock` node + `ansiToHtml()` (SGR/OSC8/APC subset); `componentToNode` emits a whole `Component` as one AnsiBlock at a fixed width. | **Done.** `src/web/ansi.ts`, `renderNode` `AnsiBlock` case, `src/host/component-adapter.ts`; tests in `test/ansi.test.mjs` + `test/component-adapter.test.mjs`. |
-| **P1** | Width/reflow round-trip; `renderResult`/`renderCall` integration replacing tool cards.                                    | A tool's custom renderer paints its card in pi-web; resizes reflow.   |
-| **P2** | Structural adapter: `Box`/`Container` walk, `Spacer`, `Image` → native nodes.                                             | Nested/imaged components render as responsive DOM around ANSI leaves. |
-| **P3** | Interactivity: focus, key-encoding, `/ui-input`, `requestRender` loop; `ctx.ui.custom`.                                   | An interactive selector/dialog works end-to-end in the browser.       |
-| **P4** | `Focusable`/`CURSOR_MARKER` caret + IME; perf (line-diff, virtualization); theme derivation.                              | Editors position a caret; large/animated blocks stay smooth.          |
+| **P1**    | `renderResult` integration replacing **extension**-tool cards ✅ (built-ins keep native rendering); width/reflow round-trip pending.    | **Done (core):** an extension tool's `renderResult` paints its card via AnsiBlock + web-palette Theme shim. Resize reflow: follow-up.                           |
+| **P2**    | Structural adapter: `Box`/`Container` walk, `Spacer`, `Image` → native nodes.                                                           | Nested/imaged components render as responsive DOM around ANSI leaves.                                                                                           |
+| **P3**    | Interactivity: focus, key-encoding, `/ui-input`, `requestRender` loop; `ctx.ui.custom`.                                                 | An interactive selector/dialog works end-to-end in the browser.                                                                                                 |
+| **P4**    | `Focusable`/`CURSOR_MARKER` caret + IME; perf (line-diff, virtualization); theme derivation.                                            | Editors position a caret; large/animated blocks stay smooth.                                                                                                    |
 
 Out of scope throughout: alt-screen/cursor-addressed TUIs, mouse tracking, Kitty
 keyboard (§2, §8.5).

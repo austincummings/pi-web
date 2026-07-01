@@ -52,6 +52,27 @@ import {
     AuthStorage,
     ModelRegistry,
 } from "@earendil-works/pi-coding-agent";
+import { renderToolResultToNode } from "./component-adapter.ts";
+import { webPaletteTheme } from "./tui-theme.ts";
+
+// Built-in tools pi-web renders natively (client renderers / default body). We
+// only attach a component-adapter `tree` (render-model parity P1) for
+// *extension* tools with a custom renderResult, so built-in rendering is
+// unchanged; the client also prefers its own registered renderer over the tree.
+const WEB_BUILTIN_TOOLS = new Set([
+    "bash",
+    "shell",
+    "edit",
+    "read",
+    "write",
+    "ls",
+    "grep",
+    "find",
+    "apply_patch",
+    "multiedit",
+    "todo_write",
+    "task",
+]);
 
 import { createPiWebHost } from "./piweb-host.ts";
 import { makeWebBundler } from "./build-web.ts";
@@ -651,6 +672,7 @@ function subscribe(thread) {
     // how long a tool/command took). Only live turns are timed; replayed
     // transcripts have no stored timing and simply omit the duration.
     const toolStart = new Map();
+    const toolArgs = new Map();
     /** @param {ServerMessage} msg */
     const emit = (msg) => bus.broadcastToThread(thread.id, msg);
     return thread.session.subscribe((ev) => {
@@ -731,6 +753,9 @@ function subscribe(thread) {
             }
             case "tool_execution_start":
                 toolStart.set(ev.toolCallId, Date.now());
+                // Keep args around for the end event, which omits them; the
+                // tool's renderResult context wants them (Parity P1).
+                toolArgs.set(ev.toolCallId, ev.args);
                 emit({
                     kind: "tool",
                     id: ev.toolCallId,
@@ -742,7 +767,9 @@ function subscribe(thread) {
             case "tool_execution_end": {
                 const t0 = toolStart.get(ev.toolCallId);
                 if (t0 != null) toolStart.delete(ev.toolCallId);
-                emit({
+                const args = toolArgs.get(ev.toolCallId);
+                toolArgs.delete(ev.toolCallId);
+                const frame: Record<string, unknown> = {
                     kind: "tool",
                     id: ev.toolCallId,
                     name: ev.toolName,
@@ -754,7 +781,39 @@ function subscribe(thread) {
                     details: ev.result?.details,
                     // how long the tool ran (live turns only; see toolStart)
                     durationMs: t0 != null ? Date.now() - t0 : undefined,
-                });
+                };
+                // Parity P1: extension tools with a custom renderResult render
+                // their pi TUI Component as an AnsiBlock `tree`. Built-ins keep
+                // pi-web's native rendering; the client prefers its own
+                // registered renderer over the tree when present.
+                if (!WEB_BUILTIN_TOOLS.has(ev.toolName)) {
+                    try {
+                        const def = thread.session.getToolDefinition?.(
+                            ev.toolName,
+                        );
+                        if (def?.renderResult) {
+                            const node = renderToolResultToNode(
+                                def,
+                                {
+                                    toolName: ev.toolName,
+                                    toolCallId: ev.toolCallId,
+                                    args: args ?? {},
+                                    cwd: thread.cwd,
+                                    content: ev.result?.content,
+                                    details: ev.result?.details,
+                                    isError: ev.isError,
+                                    expanded: false,
+                                },
+                                webPaletteTheme,
+                                100,
+                            );
+                            if (node) frame.tree = node;
+                        }
+                    } catch {
+                        /* fall back to default rendering */
+                    }
+                }
+                emit(frame);
                 break;
             }
             case "queue_update":
