@@ -48,6 +48,7 @@ export interface AppOptions {
     onReload?: (threadId?: string) => void | Promise<void>;
     onInterrupt?: (threadId?: string) => void | Promise<void>;
     onBash?: (command: string, exclude: boolean, threadId?: string) => void;
+    onAbortBash?: (threadId?: string) => void | Promise<void>;
     onSurface?: (
         threadId: string | undefined,
         op: "open" | "close",
@@ -162,6 +163,7 @@ function sendJson(res, code, obj) {
  * @param {(threadId?:string)=>Promise<void>} [o.onReload]
  * @param {(threadId?:string)=>Promise<void>} [o.onInterrupt]
  * @param {(command:string, exclude:boolean, threadId?:string)=>void} [o.onBash]
+ * @param {(threadId?:string)=>void|Promise<void>} [o.onAbortBash]  cancel the thread's running shell command
  * @param {object} [o.sessionApi]
  * @param {{ list:()=>Promise<any[]>, create:()=>Promise<any>, switch:(id:string)=>Promise<void> }} [o.threads]
  * @param {(send:(msg:any)=>void, ctx:{threadId?:string})=>(string|undefined)|Promise<string|undefined>} [o.onConnect]
@@ -183,6 +185,7 @@ export function createApp({
     modelApi,
     commandsApi,
     onBash,
+    onAbortBash,
     onConnect,
     onInterrupt,
     onSurface,
@@ -422,6 +425,11 @@ export function createApp({
             body.excludeFromContext,
             body.threadId || undefined,
         );
+        res.writeHead(202).end();
+    });
+    // Cancel a running user-run shell command (Esc in the web UI).
+    router.post("/bash/abort", ({ res, body }) => {
+        onAbortBash?.(body.threadId || undefined);
         res.writeHead(202).end();
     });
     router.post("/threads", async ({ res, body }) => {

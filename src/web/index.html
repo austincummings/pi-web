@@ -557,13 +557,6 @@
                 white-space: nowrap;
                 overflow: hidden;
             }
-            .tool-mark:not(:empty) {
-                color: var(--acc2);
-                margin-right: 4px;
-            }
-            .tool.error .tool-mark {
-                color: var(--err);
-            }
             .tool-name {
                 color: var(--tool-title);
                 font-weight: 600;
@@ -674,11 +667,16 @@
             }
             .bash {
                 margin: 8px 0;
-                border-left: 2px solid var(--acc2);
-                padding-left: 8px;
+                border-top: 1px solid var(--bash-mode);
+                border-bottom: 1px solid var(--bash-mode);
+                padding: 4px 8px;
+            }
+            .bash.excluded {
+                border-color: var(--dim);
             }
             .bash-cmd {
-                color: var(--acc2);
+                color: var(--bash-mode);
+                font-weight: 700;
                 font-size: 14px;
                 white-space: pre-wrap;
                 word-break: break-word;
@@ -688,7 +686,38 @@
                 white-space: pre-wrap;
                 word-break: break-word;
                 font-size: 14px;
+                color: var(--muted);
+            }
+            .bash-run {
+                margin-top: 4px;
+                font-size: 14px;
+                color: var(--muted);
+            }
+            .bash-run .spin {
+                color: var(--bash-mode);
+                margin-right: 6px;
+            }
+            .bash.excluded .bash-run .spin {
+                color: var(--dim);
+            }
+            .bash-more {
+                margin-top: 4px;
+                font-size: 14px;
+                color: var(--muted);
+                cursor: pointer;
+            }
+            .bash-more:hover {
                 color: var(--txt);
+            }
+            .bash-status {
+                margin-top: 4px;
+                font-size: 14px;
+            }
+            .bash-status.err {
+                color: var(--err);
+            }
+            .bash-status.warn {
+                color: var(--warn);
             }
             .panel {
                 background: var(--panel);

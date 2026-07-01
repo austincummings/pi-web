@@ -1714,6 +1714,14 @@ const server = createApp({
      */
     onBash: (command, exclude, threadId) => runBash(command, exclude, threadId),
     /**
+     * Cancel a running user-run shell command (Esc in the web UI).
+     * @param {string} [threadId]
+     */
+    onAbortBash: (threadId) => {
+        const s = sessionFor(threadId);
+        if (s?.isBashRunning) s.abortBash();
+    },
+    /**
      * Client-driven overlay control (Esc / backdrop close).
      * @param {string} [threadId]
      * @param {"open"|"close"} op

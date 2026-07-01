@@ -22,6 +22,7 @@ import {
 import "./pi-frame.ts";
 import "./pi-tool.ts";
 import "./pi-thinking.ts";
+import "./pi-bash.ts";
 import type {
     PiFrame,
     PiFrameActionDetail,
@@ -29,6 +30,7 @@ import type {
 } from "./pi-frame.ts";
 import type { PiTool } from "./pi-tool.ts";
 import type { PiThinking } from "./pi-thinking.ts";
+import type { PiBash } from "./pi-bash.ts";
 
 // Expose the tool-renderer registry so client-side extensions can override how
 // a tool's result is displayed (web counterpart to pi-tui's renderResult).
@@ -398,16 +400,10 @@ function bubble(role, text = "", images = []) {
     return el;
 }
 
-function bashBubble(command, excluded) {
+function bashBubble(command, excluded): PiBash {
     clearEmpty();
-    const el = document.createElement("div");
-    el.className = "bash";
-    const head = document.createElement("div");
-    head.className = "bash-cmd";
-    head.textContent = (excluded ? "!! " : "! ") + command;
-    const body = document.createElement("pre");
-    body.className = "body";
-    el.append(head, body);
+    const el = document.createElement("pi-bash") as PiBash;
+    el.apply({ status: "start", command, excludeFromContext: excluded });
     $transcript.appendChild(el);
     followBottom();
     return el;
@@ -2302,7 +2298,8 @@ document.addEventListener("keydown", (e) => {
 });
 
 // Escape precedence: close the command typeahead, else close an open overlay,
-// else interrupt the working agent on the focused thread.
+// else interrupt the working agent, else cancel a running shell command, else
+// restore any queued messages (mirrors the pi TUI's Esc handling).
 document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     if ($ac.classList.contains("show")) return; // handled by the prompt keydown
@@ -2319,6 +2316,10 @@ document.addEventListener("keydown", (e) => {
         // (steering/follow-up) messages back into the composer *and* interrupt
         // this thread's turn (restoreQueuedMessagesToEditor({ abort: true })).
         restoreQueue({ abort: true });
+    } else if (bashEl) {
+        // a user-run shell command is in flight → cancel it (TUI Esc parity:
+        // isBashRunning → session.abortBash()).
+        postThread("/bash/abort");
     } else if (queuedMessages.length) {
         // not working but messages are still queued → restore them to edit
         restoreQueue({ abort: false });
@@ -2497,18 +2498,11 @@ function onSseMessage(e) {
         case "bash":
             if (m.status === "start") {
                 bashEl = bashBubble(m.command, m.excludeFromContext);
-            } else if (m.status === "chunk") {
+            } else {
                 if (!bashEl) bashEl = bashBubble("", false);
-                bashEl.querySelector(".body").textContent += m.text;
-                followBottom();
-            } else if (m.status === "end") {
-                if (bashEl && m.exitCode != null && m.exitCode !== 0) {
-                    const code = document.createElement("div");
-                    code.className = "bash-cmd";
-                    code.textContent = `exit ${m.exitCode}`;
-                    bashEl.appendChild(code);
-                }
-                bashEl = null;
+                bashEl.apply(m);
+                if (m.status === "chunk") followBottom();
+                if (m.status === "end") bashEl = null;
             }
             break;
         case "tool":

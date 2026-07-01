@@ -87,10 +87,8 @@ export class PiTool extends HTMLElement {
         const head = document.createElement("div");
         head.className = "tool-head";
         head.innerHTML =
-            '<span class="tool-mark"></span><span class="tool-name"></span> ' +
+            '<span class="tool-name"></span> ' +
             '<span class="tool-args"></span><span class="tool-dim"></span>';
-        (head.querySelector(".tool-mark") as HTMLElement).textContent =
-            info.pending ? "\u23F5" : "";
         const title = toolTitle(info.name, info.args, this.cwd);
         (head.querySelector(".tool-name") as HTMLElement).textContent =
             title.name;
