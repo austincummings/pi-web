@@ -22,6 +22,7 @@ import {
 import "./pi-frame.ts";
 import "./pi-tool.ts";
 import "./pi-thinking.ts";
+import { setThinkingLabel } from "./pi-thinking.ts";
 import "./pi-bash.ts";
 import type {
     PiFrame,
@@ -2455,6 +2456,10 @@ function onSseMessage(e) {
             break;
         case "thinking_visibility":
             setThinkingHidden(!!m.hidden, false);
+            break;
+        case "thinking_label":
+            // pi-tui ui.setHiddenThinkingLabel: relabel the collapsed trace.
+            setThinkingLabel(m.label);
             break;
         case "user":
             bubble("user", m.text, m.images);

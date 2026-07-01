@@ -618,12 +618,15 @@
                 color: var(--dim);
                 font-size: 14px;
             }
+            /* The TUI shows no header while the trace is expanded — just the
+               dim, italic reasoning text. The header only appears once the
+               block is collapsed, where pi renders a static italic
+               "Thinking..." label in the thinking color (hiddenThinkingLabel). */
             .thinking-block .think-head {
-                color: var(--acc2);
+                display: none;
+                color: var(--dim);
                 font-size: 14px;
-                text-transform: uppercase;
-                letter-spacing: 0.04em;
-                opacity: 0.85;
+                font-style: italic;
                 cursor: pointer;
                 user-select: none;
             }
@@ -635,16 +638,40 @@
             .thinking-block .think-body p {
                 margin: 4px 0;
             }
-            /* Ctrl+T (or clicking the header) collapses the trace, keeping
-               just the label visible. Mirrors pi's hidden-thinking behavior. */
+            /* Inline code / fenced blocks keep their highlight even inside the
+               dimmed reasoning text, mirroring how the TUI tints backticked
+               spans (matches `.msg .body code`). */
+            .thinking-block .think-body code {
+                font-style: normal;
+                background: #0c1117;
+                border: 1px solid var(--line);
+                border-radius: 4px;
+                padding: 0 4px;
+                font-size: inherit;
+                color: var(--md-code);
+            }
+            .thinking-block .think-body pre {
+                font-style: normal;
+                background: #0c1117;
+                border: 1px solid var(--md-code-block-border);
+                border-radius: 6px;
+                padding: 8px 10px;
+                overflow: auto;
+                margin: 6px 0;
+            }
+            .thinking-block .think-body pre code {
+                background: none;
+                border: none;
+                padding: 0;
+                color: var(--md-code-block);
+            }
+            /* Alt+T collapses the trace: hide the body and surface the header
+               as pi's sole italic "Thinking..." label. Mirrors pi's behavior. */
+            body.hide-thinking .thinking-block .think-head {
+                display: block;
+            }
             body.hide-thinking .thinking-block .think-body {
                 display: none;
-            }
-            body.hide-thinking .thinking-block .think-head::after {
-                content: " (hidden)";
-                opacity: 0.6;
-                text-transform: none;
-                letter-spacing: 0;
             }
             .bash {
                 display: block;

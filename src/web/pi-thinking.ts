@@ -1,9 +1,13 @@
 // <pi-thinking> — the streaming thinking/reasoning trace in the transcript.
 //
-// Mirrors pi-tui's collapsible reasoning block: an uppercase "thinking" header
-// over a markdown-rendered body. The element owns its own raw text and
-// re-renders markdown internally, throttling streamed deltas to one paint per
-// animation frame so a burst of tokens doesn't thrash innerHTML.
+// Mirrors pi-tui's collapsible reasoning block: while expanded there is NO
+// header — just the dim, italic markdown trace (pi renders it with the
+// `thinkingText` color + italic; inline code keeps its normal code color). When
+// collapsed, pi-tui shows a single static italic "Thinking..." label
+// (`hiddenThinkingLabel`), which here is the header surfaced under
+// `body.hide-thinking`. The element owns its own raw text and re-renders
+// markdown internally, throttling streamed deltas to one paint per animation
+// frame so a burst of tokens doesn't thrash innerHTML.
 //
 // Visibility stays app-global: the show/hide toggle lives at the app level
 // (`body.hide-thinking` CSS, persisted to pi's `hideThinkingBlock` setting), so
@@ -22,6 +26,13 @@ export interface ThinkingFrame {
 }
 
 export class PiThinking extends HTMLElement {
+    /**
+     * Shared collapsed-state label (pi-tui's `hiddenThinkingLabel`, default
+     * "Thinking..."). Extensions can override it via `ui.setHiddenThinkingLabel`,
+     * which the host relays as a `thinking_label` frame; `setThinkingLabel`
+     * updates this and re-labels every mounted trace.
+     */
+    static label = "Thinking...";
     /** Accumulated thinking text (rendered as markdown). */
     private raw = "";
     private body: HTMLElement | null = null;
@@ -38,10 +49,17 @@ export class PiThinking extends HTMLElement {
     private build(): void {
         this.className = "thinking-block";
         this.innerHTML =
-            '<div class="think-head">thinking</div><div class="think-body"></div>';
+            '<div class="think-head"></div><div class="think-body"></div>';
         this.body = this.querySelector(".think-body");
-        (this.querySelector(".think-head") as HTMLElement).onclick = () =>
-            this.emit("pithinking-toggle");
+        const head = this.querySelector(".think-head") as HTMLElement;
+        head.textContent = PiThinking.label;
+        head.onclick = () => this.emit("pithinking-toggle");
+    }
+
+    /** Re-apply the shared collapsed label after a `thinking_label` frame. */
+    refreshLabel(): void {
+        const head = this.querySelector(".think-head");
+        if (head) head.textContent = PiThinking.label;
     }
 
     /** Apply one SSE `thinking` frame (`start`/`delta`/`end`/`full`). */
@@ -87,6 +105,18 @@ export class PiThinking extends HTMLElement {
             new CustomEvent(type, { bubbles: true, composed: true }),
         );
     }
+}
+
+/**
+ * Update the shared collapsed-thinking label (from a host `thinking_label`
+ * frame) and re-label every mounted trace. Mirrors pi-tui's
+ * `ui.setHiddenThinkingLabel`; an empty/undefined label restores the default.
+ */
+export function setThinkingLabel(label?: string): void {
+    PiThinking.label = label && label.trim() ? label : "Thinking...";
+    document
+        .querySelectorAll("pi-thinking")
+        .forEach((el) => (el as PiThinking).refreshLabel());
 }
 
 if (!customElements.get("pi-thinking")) {

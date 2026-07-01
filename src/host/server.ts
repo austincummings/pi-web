@@ -284,6 +284,10 @@ const nullRegistry = {
     closeOverlay() {},
     notify() {},
     setStatus() {},
+    setHiddenThinkingLabel() {},
+    getHiddenThinkingLabel() {
+        return "Thinking...";
+    },
     registerMessageRenderer() {},
     hasMessageRenderer() {
         return false;
@@ -331,6 +335,8 @@ const piweb = {
     closeOverlay: (...a) => activeRegistry().closeOverlay(...a),
     notify: (...a) => activeRegistry().notify(...a),
     setStatus: (...a) => activeRegistry().setStatus(...a),
+    setHiddenThinkingLabel: (...a) =>
+        activeRegistry().setHiddenThinkingLabel(...a),
     // custom transcript-message renderers (customType -> serializable tree)
     registerMessageRenderer: (...a) =>
         activeRegistry().registerMessageRenderer(...a),
@@ -1061,6 +1067,11 @@ async function handleConnect(send, threadId) {
     send({ kind: "surfaces", surfaces: t.piweb.snapshot() });
     // reflect the persisted pi "hide thinking blocks" setting
     send({ kind: "thinking_visibility", hidden: thinkingHidden(t.session) });
+    // reflect the current collapsed-thinking label (pi ui.setHiddenThinkingLabel)
+    send({
+        kind: "thinking_label",
+        label: t.piweb.getHiddenThinkingLabel?.() ?? "Thinking...",
+    });
     // reflect the per-session reasoning level (focused composer border color)
     send(thinkingLevelFrame(t.session));
     // default below-composer context bar (pwd/session + tokens + model•thinking)

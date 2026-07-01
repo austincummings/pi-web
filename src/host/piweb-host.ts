@@ -84,6 +84,11 @@ export function createPiWebHost({ broadcast, getPi }) {
     const messageRenderers = new Map();
     let orderSeq = 0;
     let uiSeq = 0;
+    // pi's runtime label shown in place of a collapsed thinking block
+    // (pi-tui `ui.setHiddenThinkingLabel`, default "Thinking..."). Host-global
+    // like the page title; broadcast so every viewer renders the same text and
+    // replayed on (re)connect from getHiddenThinkingLabel().
+    let hiddenThinkingLabel = "Thinking...";
 
     /** @param {Surface} s @returns {SurfaceCard} */
     const renderCard = (s) => {
@@ -463,6 +468,25 @@ export function createPiWebHost({ broadcast, getPi }) {
                 kind: "title",
                 text: text == null ? "" : String(text),
             });
+        },
+
+        /**
+         * Set the label shown in place of a collapsed thinking block (mirrors
+         * pi-tui ui.setHiddenThinkingLabel). Pass undefined/"" to restore pi's
+         * default ("Thinking...").
+         * @param {string} [label]
+         */
+        setHiddenThinkingLabel(label) {
+            hiddenThinkingLabel =
+                label == null || String(label).trim() === ""
+                    ? "Thinking..."
+                    : String(label);
+            broadcast({ kind: "thinking_label", label: hiddenThinkingLabel });
+        },
+
+        /** Current collapsed-thinking label (for connection replay). */
+        getHiddenThinkingLabel() {
+            return hiddenThinkingLabel;
         },
 
         /**

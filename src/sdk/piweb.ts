@@ -40,6 +40,11 @@ export interface PiWebSurface {
         opts?: { align?: "right"; tone?: "warning" | "error" },
     ): void;
     setTitle(text?: string): void;
+    /**
+     * Label rendered in place of a collapsed thinking block (mirrors pi-tui
+     * `ui.setHiddenThinkingLabel`). Empty/undefined restores the default.
+     */
+    setHiddenThinkingLabel(label?: string): void;
     // --- custom transcript-message renderers ---
     /** Register a serializable-tree renderer for messages of `customType`. */
     registerMessageRenderer(
@@ -91,6 +96,7 @@ const stub = {
     notify: noop,
     setTitle: noop,
     setStatus: noop,
+    setHiddenThinkingLabel: noop,
     registerMessageRenderer: noop,
     hasMessageRenderer: () => false,
     renderMessage: () => null,
