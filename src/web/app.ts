@@ -1,7 +1,7 @@
 // pi-web web client: transcript stream, extension panels, thread switching,
 // and a fuzzy command typeahead (ported from pi-tui's fuzzy matcher).
 import { fuzzyFilter } from "./fuzzy.ts";
-import { renderMarkdown } from "./markdown.ts";
+import { renderMarkdown, highlightComposer } from "./markdown.ts";
 import { registerToolRenderer } from "./tools.ts";
 import {
     keyHintsLine,
@@ -36,6 +36,19 @@ const $threadTitle = document.getElementById("threadTitle");
 const $overlay = document.getElementById("overlay");
 const $picker = document.getElementById("picker");
 const $prompt = document.getElementById("prompt") as HTMLTextAreaElement;
+const $backdrop = document.getElementById("backdrop") as HTMLElement;
+
+// Repaint the markdown-highlight backdrop behind the composer to mirror the
+// textarea's current value (see .backdrop in index.html).
+function syncHighlight() {
+    if ($backdrop) $backdrop.innerHTML = highlightComposer($prompt.value);
+}
+// Keep the backdrop's scroll locked to the textarea once content overflows.
+$prompt?.addEventListener("scroll", () => {
+    if (!$backdrop) return;
+    $backdrop.scrollTop = $prompt.scrollTop;
+    $backdrop.scrollLeft = $prompt.scrollLeft;
+});
 const $ask = document.getElementById("ask") as HTMLFormElement;
 const $ac = document.getElementById("ac");
 const $working = document.getElementById("working");
@@ -603,14 +616,16 @@ function renderFooter(f) {
     const auto = f.autoCompact ? " (auto)" : "";
     const ctx = document.createElement("span");
     ctx.textContent =
-        (pct == null ? "?" : `${pct.toFixed(1)}%`) + `/${fmtTokens(win)}${auto}`;
+        (pct == null ? "?" : `${pct.toFixed(1)}%`) +
+        `/${fmtTokens(win)}${auto}`;
     if (pct != null && pct > 90) ctx.className = "ctx-err";
     else if (pct != null && pct > 70) ctx.className = "ctx-warn";
 
     const right = document.createElement("span");
     right.className = "spacer";
     let r = f.model || "no-model";
-    if (f.reasoning) r += f.level === "off" ? " • thinking off" : ` • ${f.level}`;
+    if (f.reasoning)
+        r += f.level === "off" ? " • thinking off" : ` • ${f.level}`;
     right.textContent = r;
 
     l2.append(left, ctx, right);
@@ -1339,6 +1354,10 @@ function autoGrow() {
     if (!$prompt) return;
     $prompt.style.height = "auto";
     $prompt.style.height = Math.min($prompt.scrollHeight, 200) + "px";
+    // autoGrow() runs after every value change (typing, history recall,
+    // autocomplete insert, clear), so repaint the highlight backdrop here too.
+    syncHighlight();
+    if ($backdrop) $backdrop.scrollTop = $prompt.scrollTop;
 }
 
 $prompt.addEventListener("input", () => {

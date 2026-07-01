@@ -602,42 +602,113 @@
                 border-top: 1px solid var(--line);
                 align-items: flex-end;
             }
-            form#ask #prompt {
+            /* The composer is a backdrop-highlight editor: a real <textarea>
+               (transparent text, visible caret) stacked over a #backdrop <div>
+               that mirrors the text glyph-for-glyph with markdown tints. The
+               box chrome (bg + border) lives on .input-wrap so the backdrop
+               shows through. Monospace font keeps bold/italic metrics identical
+               to the textarea, so the caret stays aligned. */
+            .input-wrap {
+                position: relative;
                 flex: 1;
-                font: inherit;
+                display: flex;
                 background: #0c1117;
                 border: 1px solid var(--line);
-                color: var(--txt);
                 border-radius: 6px;
+                overflow: hidden;
+            }
+            .backdrop {
+                position: absolute;
+                inset: 0;
+                margin: 0;
+                padding: 6px 8px;
+                font: inherit;
+                line-height: 1.4;
+                color: var(--txt);
+                white-space: pre-wrap;
+                overflow-wrap: break-word;
+                word-break: break-word;
+                pointer-events: none;
+                overflow: hidden;
+                box-sizing: border-box;
+            }
+            form#ask #prompt {
+                flex: 1;
+                position: relative;
+                z-index: 1;
+                width: 100%;
+                box-sizing: border-box;
+                font: inherit;
+                background: transparent;
+                border: 0;
+                margin: 0;
+                color: transparent;
+                caret-color: var(--txt);
                 padding: 6px 8px;
                 resize: none;
                 overflow-y: auto;
                 max-height: 200px;
                 line-height: 1.4;
+                white-space: pre-wrap;
+                overflow-wrap: break-word;
+                word-break: break-word;
+            }
+            /* markdown token tints (color / weight / style only — never metrics) */
+            .backdrop .md-h {
+                color: var(--acc);
+                font-weight: 700;
+            }
+            .backdrop .md-code {
+                color: var(--ok);
+            }
+            .backdrop .md-link {
+                color: var(--acc);
+                text-decoration: underline;
+            }
+            .backdrop .md-strong {
+                font-weight: 700;
+            }
+            .backdrop .md-em {
+                font-style: italic;
+            }
+            .backdrop .md-quote {
+                color: var(--dim);
+            }
+            .backdrop .md-marker {
+                color: var(--acc2);
+            }
+            .backdrop .md-mention {
+                color: var(--acc2);
+            }
+            .backdrop .md-cmd {
+                color: var(--bash-mode);
+                font-weight: 700;
             }
             /* Focused composer border reflects the reasoning level (set on the
                parent .composer via data-think); data-bash overrides it while
                the input is a `!` shell command. Only tinted while focused. */
             form#ask #prompt:focus {
                 outline: none;
+            }
+            form#ask .input-wrap:focus-within {
                 border-color: var(--think-off);
             }
-            .composer[data-think="minimal"] form#ask #prompt:focus {
+            .composer[data-think="minimal"] form#ask .input-wrap:focus-within {
                 border-color: var(--think-minimal);
             }
-            .composer[data-think="low"] form#ask #prompt:focus {
+            .composer[data-think="low"] form#ask .input-wrap:focus-within {
                 border-color: var(--think-low);
             }
-            .composer[data-think="medium"] form#ask #prompt:focus {
+            .composer[data-think="medium"] form#ask .input-wrap:focus-within {
                 border-color: var(--think-medium);
             }
-            .composer[data-think="high"] form#ask #prompt:focus {
+            .composer[data-think="high"] form#ask .input-wrap:focus-within {
                 border-color: var(--think-high);
             }
-            .composer[data-think="xhigh"] form#ask #prompt:focus {
+            .composer[data-think="xhigh"] form#ask .input-wrap:focus-within {
                 border-color: var(--think-xhigh);
             }
-            .composer[data-bash] form#ask #prompt:focus {
+            .composer[data-bash] form#ask .input-wrap:focus-within {
                 border-color: var(--bash-mode);
             }
             .empty {
@@ -832,13 +903,20 @@
                     ><span class="label">Working…</span>
                 </div>
                 <form id="ask">
-                    <textarea
-                        id="prompt"
-                        rows="1"
-                        placeholder="message pi…  (/ commands · ! shell · @ files)"
-                        autocomplete="off"
-                        autofocus
-                    ></textarea>
+                    <div class="input-wrap">
+                        <div
+                            id="backdrop"
+                            class="backdrop"
+                            aria-hidden="true"
+                        ></div>
+                        <textarea
+                            id="prompt"
+                            rows="1"
+                            placeholder="message pi…  (/ commands · ! shell · @ files)"
+                            autocomplete="off"
+                            autofocus
+                        ></textarea>
+                    </div>
                 </form>
             </div>
             <div id="dock-footer" class="dock footer empty-dock"></div>

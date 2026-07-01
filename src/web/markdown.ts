@@ -208,3 +208,78 @@ export function renderMarkdown(src) {
     closeList();
     return html.join("\n");
 }
+
+/**
+ * Layout-preserving syntax highlighter for the composer textarea backdrop.
+ *
+ * Unlike renderMarkdown (which produces structural HTML), this keeps EVERY
+ * source character — including the markdown markers themselves — so the output
+ * lays out glyph-for-glyph identically to the underlying <textarea>. Tokens are
+ * merely wrapped in <span> tints. Because the composer font is monospace,
+ * bold/italic keep the same advance width, so the caret stays aligned.
+ *
+ * Input is HTML-escaped first; only <span class> wrappers are ever emitted, so
+ * this can never inject markup.
+ */
+function highlightInline(s) {
+    // Stash each matched token as a placeholder so later passes can't re-match
+    // inside an already-wrapped span. NUL delimiters never occur in real input.
+    const stash = [];
+    const keep = (cls, str) => {
+        stash.push(`<span class="${cls}">${str}</span>`);
+        return `\u0000${stash.length - 1}\u0000`;
+    };
+    s = s.replace(/(`+)([^`]*?)\1/g, (m) => keep("md-code", m)); // inline code
+    s = s.replace(/\[[^\]]*\]\([^)\s]*\)/g, (m) => keep("md-link", m)); // links
+    s = s.replace(/\*\*[^*]+\*\*/g, (m) => keep("md-strong", m)); // **bold**
+    s = s.replace(/__[^_]+__/g, (m) => keep("md-strong", m)); // __bold__
+    s = s.replace(/\*[^*\s][^*]*\*/g, (m) => keep("md-em", m)); // *italic*
+    s = s.replace(
+        /(^|[^\w\u0000])_([^_]+)_(?=$|[^\w])/g,
+        (_, p, t) => p + keep("md-em", `_${t}_`),
+    ); // _italic_
+    s = s.replace(/(^|\s)(@[^\s]+)/g, (_, p, t) => p + keep("md-mention", t)); // @file
+    // Restore placeholders (repeat: a token may nest inside another's text).
+    let prev;
+    do {
+        prev = s;
+        s = s.replace(/\u0000(\d+)\u0000/g, (_, i) => stash[+i]);
+    } while (s !== prev && /\u0000\d+\u0000/.test(s));
+    return s;
+}
+
+export function highlightComposer(src) {
+    const text = escapeHtml(String(src ?? "")).replace(/\r\n?/g, "\n");
+    const lines = text.split("\n");
+    let inFence = false;
+    const out = lines.map((line, idx) => {
+        if (/^\s*```/.test(line)) {
+            inFence = !inFence;
+            return `<span class="md-code">${line}</span>`;
+        }
+        if (inFence) return `<span class="md-code">${line}</span>`;
+
+        let m;
+        // `!`/`!!` shell or `/command` — only meaningful at the very start.
+        if (idx === 0 && (m = line.match(/^(!!?|\/[\w:-]*)/)))
+            return (
+                `<span class="md-cmd">${m[1]}</span>` +
+                highlightInline(line.slice(m[1].length))
+            );
+        // ATX heading
+        if ((m = line.match(/^(\s*)(#{1,6})(\s+)(.*)$/)))
+            return `${m[1]}<span class="md-h">${m[2]}${m[3]}${highlightInline(m[4])}</span>`;
+        // blockquote (`>` is already HTML-escaped to `&gt;` at this point)
+        if ((m = line.match(/^(\s*)(&gt;)(\s?)(.*)$/)))
+            return `${m[1]}<span class="md-quote">${m[2]}${m[3]}${highlightInline(m[4])}</span>`;
+        // unordered / ordered list marker
+        if ((m = line.match(/^(\s*)([-*+])(\s+)(.*)$/)))
+            return `${m[1]}<span class="md-marker">${m[2]}</span>${m[3]}${highlightInline(m[4])}`;
+        if ((m = line.match(/^(\s*)(\d+\.)(\s+)(.*)$/)))
+            return `${m[1]}<span class="md-marker">${m[2]}</span>${m[3]}${highlightInline(m[4])}`;
+        return highlightInline(line);
+    });
+    // A trailing newline needs a filler char, else the block clips its last
+    // (empty) line and the backdrop scrolls out of sync with the textarea.
+    return out.join("\n") + "\n";
+}
