@@ -1595,6 +1595,46 @@ async function showFileAc(query) {
     renderAc();
 }
 
+// The path token to complete inside a `!`/`!!` bash command: whatever follows
+// the `!`/`!!` prefix (and any whitespace), up to the caret's last
+// whitespace-delimited token. Returns null when the input isn't a bash command.
+// Used by the Tab handler to force-open file completion (the pi TUI's
+// forceFileAutocomplete), so it isn't spammed on every keystroke.
+function bashTokenSpan(v, caret) {
+    const trimmed = v.trimStart();
+    if (!trimmed.startsWith("!")) return null;
+    const before = v.slice(0, caret);
+    const leadingWs = v.length - trimmed.length;
+    const bangCount = before.trimStart().startsWith("!!") ? 2 : 1;
+    // Only complete text between the `!`/`!!` prefix and the caret.
+    const afterBang = before.slice(leadingWs + bangCount);
+    const spaceIdx = afterBang.lastIndexOf(" ");
+    const token = spaceIdx >= 0 ? afterBang.slice(spaceIdx + 1) : afterBang;
+    const tokenStart = leadingWs + bangCount + (spaceIdx >= 0 ? spaceIdx + 1 : 0);
+    return { token, start: tokenStart, end: caret };
+}
+
+// File completions for `!`/`!!` bash commands (same file cache as @-mentions,
+// but values carry the bare path instead of `@path`).
+async function showBashFileAc(query) {
+    const myReq = ++acReq;
+    const files = await ensureFiles();
+    if (myReq !== acReq) return;
+    // Reuse the cached file list; map to items with the bare path as value.
+    const bashFiles = files.map((f) => ({
+        value: f.path,
+        label: f.label,
+        description: f.description,
+        path: f.path,
+    }));
+    const ranked = query
+        ? fuzzyFilter(bashFiles, query, (f) => f.path)
+        : bashFiles;
+    acItems = ranked.slice(0, 20);
+    acIndex = 0;
+    renderAc();
+}
+
 // Directory suggestions for `/new <dir>`: the host resolves the partial against
 // the active thread's cwd and returns matching subdirs as absolute paths.
 async function showDirAc(query) {
@@ -1721,6 +1761,23 @@ function updateAc() {
         return;
     }
 
+    // `!`/`!!` bash-command file completion is *not* auto-triggered here
+    // (unlike `/`, `@`, `/new`). It's force-opened by Tab — see `bashTokenSpan()`
+    // + the Tab handler in the composer keydown listener — mirroring the pi TUI's
+    // forceFileAutocomplete (Tab to list, Tab again to accept). But once the
+    // list is open, keep it live so typing narrows it instead of flickering shut.
+    if (acMode === "bash" && $ac.classList.contains("show")) {
+        const span = bashTokenSpan(v, caret);
+        if (span) {
+            acAtStart = span.start;
+            acAtEnd = span.end;
+            showBashFileAc(span.token);
+            return;
+        }
+        closeAc();
+        return;
+    }
+
     // Extension-supplied completions (e.g. a `/md <file>` provider). Only when
     // the active thread registered providers, so prose typing stays local.
     if (extAcEnabled && v.trim()) {
@@ -1738,6 +1795,23 @@ function acceptAc(run) {
     // File mentions splice into the `@token` span and keep editing — never
     // submit — so you can attach several files in one message.
     if (acMode === "file") {
+        const v = $prompt.value;
+        const before = v.slice(0, acAtStart);
+        const after = v.slice(acAtEnd);
+        const insert = it.value + " ";
+        $prompt.value = before + insert + after;
+        const pos = before.length + insert.length;
+        closeAc();
+        $prompt.focus();
+        $prompt.setSelectionRange(pos, pos);
+        autoGrow();
+        return;
+    }
+
+    // Bash file completions splice the bare path into the `!/!!` token span
+    // and keep editing (never submit), so you can chain further arguments.
+    // Matches the @-mention splice pattern — same behaviour, no `@` prefix.
+    if (acMode === "bash") {
         const v = $prompt.value;
         const before = v.slice(0, acAtStart);
         const after = v.slice(acAtEnd);
@@ -2368,10 +2442,11 @@ $prompt.addEventListener("keydown", (e) => {
                 acceptAc(false);
                 break;
             case "Enter":
-                // In file mode, Enter accepts the suggestion (and keeps
-                // editing); in command mode it accepts + runs.
+                // In file mode and bash mode, Enter accepts the suggestion
+                // (and keeps editing) so you can chain further arguments;
+                // in command / dir mode it accepts + runs.
                 e.preventDefault();
-                acceptAc(acMode !== "file");
+                acceptAc(acMode !== "file" && acMode !== "bash");
                 break;
             case "Escape":
                 e.preventDefault();
@@ -2379,6 +2454,25 @@ $prompt.addEventListener("keydown", (e) => {
                 break;
         }
         return;
+    }
+    // No typeahead open: Tab force-opens file completion for a `!`/`!!` bash
+    // command (the pi TUI's forceFileAutocomplete). This is the only way bash
+    // completion appears — it isn't auto-triggered while typing — so the flow
+    // is "Tab to list, Tab again to accept". Falls through to default Tab
+    // otherwise (no focus traversal to worry about inside the textarea).
+    if (e.key === "Tab" && !e.shiftKey) {
+        const caret = $prompt.selectionStart ?? $prompt.value.length;
+        const span = bashTokenSpan($prompt.value, caret);
+        // An empty token (e.g. `!!cat ` with a trailing space) is the
+        // "next argument" position — Tab there lists every file (empty query).
+        if (span) {
+            e.preventDefault();
+            acMode = "bash";
+            acAtStart = span.start;
+            acAtEnd = span.end;
+            showBashFileAc(span.token);
+            return;
+        }
     }
     // No typeahead open: Up/Down browse input history (mirrors the pi TUI),
     // falling through to normal caret movement when not at a draft boundary.
