@@ -53,6 +53,11 @@ export interface AppOptions {
         op: "open" | "close",
         id: string,
     ) => void;
+    onUiResponse?: (
+        threadId: string | undefined,
+        requestId: string,
+        value: unknown,
+    ) => void;
     onThinkingVisibility?: (hidden: boolean, threadId?: string) => void;
     onThinkingLevel?: (
         op: "cycle" | "set",
@@ -82,6 +87,11 @@ export interface AppOptions {
     modelApi?: {
         list: (threadId?: string) => any;
         set: (provider: string, id: string, threadId?: string) => any;
+    };
+    commandsApi?: {
+        list: (
+            threadId?: string,
+        ) => { items: any[] } | Promise<{ items: any[] }>;
     };
 }
 
@@ -171,10 +181,12 @@ export function createApp({
     threads,
     sessionApi,
     modelApi,
+    commandsApi,
     onBash,
     onConnect,
     onInterrupt,
     onSurface,
+    onUiResponse,
     onThinkingVisibility,
     onThinkingLevel,
     listFiles,
@@ -282,6 +294,16 @@ export function createApp({
         sendJson(res, 200, (await modelApi?.list?.(threadId)) ?? { items: [] });
     });
 
+    // extension/prompt/skill slash commands for the `/` typeahead (read-only)
+    router.get("/commands", async ({ res, url }) => {
+        const threadId = url.searchParams.get("thread") || undefined;
+        sendJson(
+            res,
+            200,
+            (await commandsApi?.list?.(threadId)) ?? { items: [] },
+        );
+    });
+
     // project file list for the `@` mention typeahead (read-only). The client
     // caches this and fuzzy-filters locally as the user types.
     router.get("/files", async ({ res, url }) => {
@@ -347,6 +369,11 @@ export function createApp({
     });
     router.post("/surface", ({ res, body }) => {
         onSurface?.(body.threadId || undefined, body.op, body.id);
+        res.writeHead(202).end();
+    });
+    // answer to a blocking dialog (select/confirm/input/editor)
+    router.post("/ui-response", ({ res, body }) => {
+        onUiResponse?.(body.threadId || undefined, body.requestId, body.value);
         res.writeHead(202).end();
     });
     router.post("/session/name", async ({ res, body }) => {

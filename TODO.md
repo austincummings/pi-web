@@ -52,7 +52,10 @@ Simple, line-based backlog. Check items off as they land.
       wire protocol + front-end are unchanged.)
 
 - [ ] 21. Reach slash-command parity with the pi TUI. The web UI (`src/web/app.ts`
-      `COMMANDS`) now ships 16 of the TUI's 22 commands. Shared today:
+      `COMMANDS`) now ships 16 of the TUI's 22 commands. Extension/prompt/skill
+      commands (from `pi.getCommands()`) are also surfaced dynamically in the `/`
+      typeahead via `GET /commands` (`commandsApi`, refreshed on thread switch +
+      /reload); they execute by falling through to `s.prompt("/name …")`. Shared today:
       `/resume`, `/new`, `/name`, `/session`, `/compact`, `/copy`, `/export`,
       `/reload`, `/hotkeys`, `/changelog`, `/model`, `/tree`, `/fork`, `/clone`,
       `/import`, `/share`. Status of the rest (port or decide N/A):

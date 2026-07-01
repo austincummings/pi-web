@@ -42,10 +42,20 @@
  * @property {any} tree
  * @property {object} [options]
  *
+ * @typedef {object} DialogSpec  a pending blocking dialog sent to the browser
+ * @property {string} id                        request id (echoed in the response)
+ * @property {"select"|"confirm"|"input"|"editor"} dialog
+ * @property {string} title
+ * @property {string} [message]                  confirm
+ * @property {string[]} [options]                select
+ * @property {string} [placeholder]              input
+ * @property {string} [prefill]                  editor
+ *
  * @typedef {object} SurfacesSnapshot
  * @property {{left:SurfaceCard[], right:SurfaceCard[], bottom:SurfaceCard[], footer:SurfaceCard[]}} docks
  * @property {SurfaceCard[]} overlays
  * @property {{key:string, text:string, align?:"right", tone?:"warning"|"error"}[]} status
+ * @property {DialogSpec[]} dialogs             open blocking dialogs (select/confirm/input/editor)
  */
 
 /**
@@ -58,7 +68,13 @@ export function createPiWebHost({ broadcast, getPi }) {
     const surfaces = new Map();
     /** @type {Map<string, {text:string, align?:string, tone?:string}>} keyed status segments */
     const statuses = new Map();
+    /**
+     * Open blocking dialogs awaiting a browser response.
+     * @type {Map<string, {kind:string, spec:DialogSpec, settle:(v:any)=>void}>}
+     */
+    const pendingUi = new Map();
     let orderSeq = 0;
+    let uiSeq = 0;
 
     /** @param {Surface} s @returns {SurfaceCard} */
     const renderCard = (s) => {
@@ -100,10 +116,59 @@ export function createPiWebHost({ broadcast, getPi }) {
                 align: v.align,
                 tone: v.tone,
             }));
-        return { docks, overlays, status };
+        const dialogs = [...pendingUi.values()].map((e) => e.spec);
+        return { docks, overlays, status, dialogs };
     };
 
     const push = () => broadcast({ kind: "surfaces", surfaces: snapshot() });
+
+    /**
+     * Open a blocking dialog and return a promise that settles when the browser
+     * answers (via resolveUiRequest), the optional AbortSignal fires, or the
+     * optional timeout elapses. The pending dialog is part of the surfaces
+     * snapshot, so it survives a browser refresh (replayed on reconnect).
+     *
+     * @param {"select"|"confirm"|"input"|"editor"} kind
+     * @param {object} spec                    dialog-specific fields (title, options, …)
+     * @param {{signal?:AbortSignal, timeout?:number}} [opts]
+     * @returns {Promise<any>}
+     */
+    const requestUi = (kind, spec, opts: Record<string, any> = {}) => {
+        const id = `ui-${++uiSeq}`;
+        return new Promise((resolve) => {
+            let timer = null;
+            const settle = (value) => {
+                if (!pendingUi.has(id)) return;
+                pendingUi.delete(id);
+                if (timer) clearTimeout(timer);
+                opts.signal?.removeEventListener?.("abort", onAbort);
+                // Normalize per dialog kind: confirm is a boolean; the rest map
+                // a cancel (null/undefined) to `undefined` like pi-tui.
+                let result = value;
+                if (kind === "confirm") result = value === true;
+                else if (value == null) result = undefined;
+                resolve(result);
+                push();
+            };
+            const onAbort = () => settle(undefined);
+            pendingUi.set(id, {
+                kind,
+                spec: { id, dialog: kind, ...spec },
+                settle,
+            });
+            if (opts.signal) {
+                if (opts.signal.aborted)
+                    queueMicrotask(() => settle(undefined));
+                else
+                    opts.signal.addEventListener?.("abort", onAbort, {
+                        once: true,
+                    });
+            }
+            if (opts.timeout > 0)
+                timer = setTimeout(() => settle(undefined), opts.timeout);
+            push();
+        });
+    };
 
     /**
      * Map a widget `placement` (pi-parity + web-only rails) onto an internal
@@ -246,6 +311,86 @@ export function createPiWebHost({ broadcast, getPi }) {
         },
 
         /**
+         * Show a selector; resolves to the chosen option (or undefined on
+         * cancel). Mirrors pi-tui `ctx.ui.select(title, options, opts?)`.
+         * @param {string} title
+         * @param {string[]} options
+         * @param {{signal?:AbortSignal, timeout?:number}} [opts]
+         * @returns {Promise<string|undefined>}
+         */
+        select(title, options, opts) {
+            return requestUi(
+                "select",
+                {
+                    title: String(title ?? ""),
+                    options: (options ?? []).map(String),
+                },
+                opts,
+            );
+        },
+        /**
+         * Show a confirmation dialog; resolves to a boolean. Mirrors pi-tui
+         * `ctx.ui.confirm(title, message, opts?)`.
+         * @param {string} title
+         * @param {string} message
+         * @param {{signal?:AbortSignal, timeout?:number}} [opts]
+         * @returns {Promise<boolean>}
+         */
+        confirm(title, message, opts) {
+            return requestUi(
+                "confirm",
+                { title: String(title ?? ""), message: String(message ?? "") },
+                opts,
+            );
+        },
+        /**
+         * Show a single-line text input; resolves to the entered string (or
+         * undefined on cancel). Mirrors pi-tui `ctx.ui.input(title, placeholder, opts?)`.
+         * @param {string} title
+         * @param {string} [placeholder]
+         * @param {{signal?:AbortSignal, timeout?:number}} [opts]
+         * @returns {Promise<string|undefined>}
+         */
+        input(title, placeholder, opts) {
+            return requestUi(
+                "input",
+                {
+                    title: String(title ?? ""),
+                    placeholder: placeholder != null ? String(placeholder) : "",
+                },
+                opts,
+            );
+        },
+        /**
+         * Show a multi-line editor; resolves to the edited text (or undefined on
+         * cancel). Mirrors pi-tui `ctx.ui.editor(title, prefill?)`.
+         * @param {string} title
+         * @param {string} [prefill]
+         * @param {{signal?:AbortSignal, timeout?:number}} [opts]
+         * @returns {Promise<string|undefined>}
+         */
+        editor(title, prefill, opts) {
+            return requestUi(
+                "editor",
+                {
+                    title: String(title ?? ""),
+                    prefill: prefill != null ? String(prefill) : "",
+                },
+                opts,
+            );
+        },
+        /**
+         * Resolve an open blocking dialog with the browser's answer. Called by
+         * the host when a `/ui-response` arrives. Unknown ids are ignored
+         * (already settled by timeout/abort/refresh).
+         * @param {string} id
+         * @param {any} value
+         */
+        resolveUiRequest(id, value) {
+            pendingUi.get(id)?.settle(value);
+        },
+
+        /**
          * Transient toast (mirrors pi-tui ui.notify).
          * @param {string} message
          * @param {"info"|"warning"|"error"} [type]
@@ -291,6 +436,8 @@ export function createPiWebHost({ broadcast, getPi }) {
         clear() {
             surfaces.clear();
             statuses.clear();
+            // cancel any open dialogs so awaiting extensions unblock
+            for (const e of [...pendingUi.values()]) e.settle(undefined);
             push();
         },
 

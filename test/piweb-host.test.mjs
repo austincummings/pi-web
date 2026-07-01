@@ -90,3 +90,85 @@ test("deprecated dock() alias still mounts (defaults to the right rail)", () => 
     host.dock("legacy", { render: () => ({ type: "Text", text: "hi" }) });
     expect(snap().docks.right.map((c) => c.id)).toEqual(["legacy"]);
 });
+
+// ---- blocking dialogs (select / confirm / input / editor) ----------------
+
+test("select() surfaces a dialog spec and resolves to the chosen option", async () => {
+    const { host, snap } = makeHost();
+    const p = host.select("Pick one", ["a", "b", "c"]);
+    const dialogs = snap().dialogs;
+    expect(dialogs.length).toBe(1);
+    expect(dialogs[0]).toMatchObject({
+        dialog: "select",
+        title: "Pick one",
+        options: ["a", "b", "c"],
+    });
+    host.resolveUiRequest(dialogs[0].id, "b");
+    expect(await p).toBe("b");
+    // resolving clears the pending dialog from the snapshot
+    expect(snap().dialogs.length).toBe(0);
+});
+
+test("confirm() resolves to a boolean; cancel (non-true) is false", async () => {
+    const { host, snap } = makeHost();
+    const yes = host.confirm("Title", "Sure?");
+    const yId = snap().dialogs[0].id;
+    host.resolveUiRequest(yId, true);
+    expect(await yes).toBe(true);
+
+    const no = host.confirm("Title", "Sure?");
+    const nId = snap().dialogs[0].id;
+    host.resolveUiRequest(nId, false);
+    expect(await no).toBe(false);
+});
+
+test("input()/editor() resolve to the string; null cancels to undefined", async () => {
+    const { host, snap } = makeHost();
+    const inp = host.input("Name", "type here");
+    expect(snap().dialogs[0]).toMatchObject({
+        dialog: "input",
+        placeholder: "type here",
+    });
+    host.resolveUiRequest(snap().dialogs[0].id, "hi");
+    expect(await inp).toBe("hi");
+
+    const ed = host.editor("Body", "prefill");
+    expect(snap().dialogs[0]).toMatchObject({
+        dialog: "editor",
+        prefill: "prefill",
+    });
+    host.resolveUiRequest(snap().dialogs[0].id, null);
+    expect(await ed).toBeUndefined();
+});
+
+test("a timeout auto-dismisses the dialog with undefined", async () => {
+    const { host, snap } = makeHost();
+    const p = host.input("Q", "", { timeout: 5 });
+    expect(snap().dialogs.length).toBe(1);
+    expect(await p).toBeUndefined();
+    expect(snap().dialogs.length).toBe(0);
+});
+
+test("an AbortSignal dismisses the dialog", async () => {
+    const { host, snap } = makeHost();
+    const ac = new AbortController();
+    const p = host.confirm("Q", "?", { signal: ac.signal });
+    expect(snap().dialogs.length).toBe(1);
+    ac.abort();
+    expect(await p).toBe(false);
+    expect(snap().dialogs.length).toBe(0);
+});
+
+test("clear() cancels open dialogs so awaiting callers unblock", async () => {
+    const { host, snap } = makeHost();
+    const p = host.select("Pick", ["a"]);
+    expect(snap().dialogs.length).toBe(1);
+    host.clear();
+    expect(await p).toBeUndefined();
+    expect(snap().dialogs.length).toBe(0);
+});
+
+test("resolveUiRequest with an unknown id is a no-op", () => {
+    const { host } = makeHost();
+    expect(() => host.resolveUiRequest("nope", "x")).not.toThrow();
+});

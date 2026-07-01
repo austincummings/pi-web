@@ -345,6 +345,44 @@ test("model routes delegate to modelApi (list / set)", async () => {
     }
 });
 
+test("/commands delegates to commandsApi.list for the / typeahead", async () => {
+    const calls = [];
+    const bus = createBus();
+    const piweb = createPiWebHost({ broadcast: () => {}, getPi: () => ({}) });
+    const server = createApp({
+        web: "src/web",
+        bus,
+        piweb,
+        commandsApi: {
+            list: (threadId) => {
+                calls.push(`list:${threadId}`);
+                return {
+                    items: [
+                        {
+                            name: "ui-demo",
+                            description: "run all four dialogs",
+                            source: "extension",
+                        },
+                    ],
+                };
+            },
+        },
+    });
+    const base = await new Promise((r) =>
+        server.listen(0, "127.0.0.1", () =>
+            r(`http://127.0.0.1:${server.address().port}`),
+        ),
+    );
+    try {
+        const listed = await (await fetch(`${base}/commands?thread=t1`)).json();
+        expect(calls).toContain("list:t1");
+        expect(listed.items[0].name).toBe("ui-demo");
+        expect(listed.items[0].source).toBe("extension");
+    } finally {
+        server.close();
+    }
+});
+
 test("/bash delegates to onBash with the exclude flag", async () => {
     const calls = [];
     const bus = createBus();
@@ -733,6 +771,40 @@ test("/surface forwards overlay open/close to onSurface", async () => {
             body: JSON.stringify({ threadId: "t1", op: "close", id: "m" }),
         });
         expect(calls).toContain("close:m@t1");
+    } finally {
+        server.close();
+    }
+});
+
+test("/ui-response forwards a blocking-dialog answer to onUiResponse", async () => {
+    const calls = [];
+    const bus = createBus();
+    const piweb = createPiWebHost({ broadcast: () => {}, getPi: () => ({}) });
+    const server = createApp({
+        web: "src/web",
+        bus,
+        piweb,
+        onUiResponse: (threadId, requestId, value) =>
+            calls.push({ threadId, requestId, value }),
+    });
+    const base = await new Promise((r) =>
+        server.listen(0, "127.0.0.1", () =>
+            r(`http://127.0.0.1:${server.address().port}`),
+        ),
+    );
+    try {
+        await fetch(`${base}/ui-response`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                threadId: "t1",
+                requestId: "ui-1",
+                value: "b",
+            }),
+        });
+        expect(calls).toEqual([
+            { threadId: "t1", requestId: "ui-1", value: "b" },
+        ]);
     } finally {
         server.close();
     }

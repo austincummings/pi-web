@@ -1065,6 +1065,79 @@
             .picker .item.new {
                 color: var(--acc2);
             }
+            /* blocking dialogs (piweb select/confirm/input/editor) */
+            #dialog {
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.5);
+                display: none;
+                align-items: flex-start;
+                justify-content: center;
+                z-index: 60;
+            }
+            #dialog.show {
+                display: flex;
+            }
+            .dialog-card {
+                margin-top: 16vh;
+                background: var(--panel);
+                border: 1px solid var(--line);
+                border-radius: 10px;
+                width: min(560px, 90vw);
+                max-height: 68vh;
+                overflow: auto;
+            }
+            .dialog-card h3 {
+                margin: 0;
+                padding: 12px 14px;
+                font-size: 14px;
+                color: var(--dim);
+                text-transform: uppercase;
+                letter-spacing: 0.08em;
+                border-bottom: 1px solid var(--line);
+            }
+            .dialog-body {
+                padding: 12px 14px;
+            }
+            .dialog-card .item {
+                padding: 9px 12px;
+                border: 1px solid var(--line);
+                border-radius: 6px;
+                margin-bottom: 6px;
+                cursor: pointer;
+            }
+            .dialog-card .item.sel,
+            .dialog-card .item:hover {
+                border-color: var(--acc);
+                box-shadow: inset 2px 0 0 var(--acc);
+            }
+            .dialog-msg {
+                margin-bottom: 14px;
+                color: var(--txt);
+                white-space: pre-wrap;
+            }
+            .dialog-field {
+                display: block;
+                width: 100%;
+                box-sizing: border-box;
+                padding: 8px 10px;
+                margin-bottom: 12px;
+                background: var(--bg);
+                color: var(--txt);
+                border: 1px solid var(--line);
+                border-radius: 6px;
+                font: inherit;
+                resize: vertical;
+            }
+            .dialog-field:focus {
+                outline: none;
+                border-color: var(--acc);
+            }
+            .dialog-btns {
+                display: flex;
+                gap: 8px;
+                justify-content: flex-end;
+            }
             /* /model picker: search box + scrollable list */
             .picker .model-search {
                 display: block;
@@ -1155,6 +1228,9 @@
         <div id="overlay-layer"></div>
         <div id="toast-layer"></div>
         <div id="overlay"><div class="picker" id="picker"></div></div>
+        <div id="dialog">
+            <div class="dialog-card" id="dialog-card"></div>
+        </div>
         <script type="module" src="/app.js"></script>
     </body>
 </html>

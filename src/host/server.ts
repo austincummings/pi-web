@@ -284,12 +284,26 @@ const nullRegistry = {
     closeOverlay() {},
     notify() {},
     setStatus() {},
+    select() {
+        return Promise.resolve(undefined);
+    },
+    confirm() {
+        return Promise.resolve(false);
+    },
+    input() {
+        return Promise.resolve(undefined);
+    },
+    editor() {
+        return Promise.resolve(undefined);
+    },
+    resolveUiRequest() {},
     clear() {},
     snapshot() {
         return {
             docks: { left: [], right: [], bottom: [], footer: [] },
             overlays: [],
             status: [],
+            dialogs: [],
         };
     },
     async dispatch() {},
@@ -310,6 +324,11 @@ const piweb = {
     closeOverlay: (...a) => activeRegistry().closeOverlay(...a),
     notify: (...a) => activeRegistry().notify(...a),
     setStatus: (...a) => activeRegistry().setStatus(...a),
+    // blocking dialogs — return promises that settle on the browser's response
+    select: (...a) => activeRegistry().select(...a),
+    confirm: (...a) => activeRegistry().confirm(...a),
+    input: (...a) => activeRegistry().input(...a),
+    editor: (...a) => activeRegistry().editor(...a),
     clear: (...a) => activeRegistry().clear(...a),
     snapshot: () => activeRegistry().snapshot(),
     /**
@@ -1435,6 +1454,29 @@ const modelApi = {
     },
 };
 
+// ---- slash commands (/-typeahead) ----------------------------------------
+// Surface the thread's extension/prompt/skill commands (registered via
+// pi.registerCommand + file-based prompts/skills) so the web `/` typeahead can
+// offer them alongside its built-in client commands. Executed by falling
+// through to s.prompt("/name ..."), which dispatches registered commands.
+const commandsApi = {
+    /** @param {string} [threadId] */
+    list(threadId) {
+        const pi = threadRuntimes.get(threadId)?.pi;
+        let items = [];
+        try {
+            items = (pi?.getCommands?.() ?? []).map((c) => ({
+                name: c.name,
+                description: c.description ?? "",
+                source: c.source,
+            }));
+        } catch {
+            /* best-effort */
+        }
+        return { items };
+    },
+};
+
 // ---- shell execution (! adds output to context, !! keeps it local) -------
 /**
  * @param {string} command
@@ -1602,6 +1644,7 @@ const server = createApp({
     threads,
     sessionApi,
     modelApi,
+    commandsApi,
     // Project file list for the browser's `@` mention typeahead, scoped to the
     // viewing thread's working directory.
     listFiles: (threadId) =>
@@ -1630,13 +1673,31 @@ const server = createApp({
         else if (op === "close") t.piweb.closeOverlay(id);
     },
     /**
+     * Deliver a browser's answer to a blocking dialog back to the awaiting
+     * extension, routed to the thread that opened it.
+     * @param {string|undefined} threadId
+     * @param {string} requestId
+     * @param {any} value
+     */
+    onUiResponse: (threadId, requestId, value) => {
+        const t = threadId ? threadRuntimes.get(threadId) : null;
+        if (!t?.piweb || !requestId) return;
+        t.piweb.resolveUiRequest(requestId, value);
+    },
+    /**
      * @param {string} text
      * @param {string} [threadId]
      * @param {{data:string; mimeType:string}[]} [images]
      */
     onPrompt: (text, threadId, images) => {
-        const s = sessionFor(threadId);
+        const t = threadId ? threadRuntimes.get(threadId) : null;
+        const s = t?.session ?? sessionFor(threadId);
         if (!s) return;
+        // Route this thread's registry for any extension command dispatched by
+        // s.prompt (e.g. a `/command` handler that calls piweb.select/notify).
+        // The prompt runs the handler before any event sets currentThread, so a
+        // fresh thread would otherwise fall back to the no-op registry.
+        if (t) currentThread = t;
         // While a turn is in flight, pi keeps letting you type: each message is
         // appended to the thread's steering queue instead of starting a second
         // concurrent turn. Steering messages are injected at the next message
