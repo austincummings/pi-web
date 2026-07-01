@@ -412,6 +412,14 @@
                 border-radius: 6px;
                 padding: 6px 10px;
             }
+            /* pi TUI parity: a registered message renderer owns its styling, so
+               tree-rendered custom messages drop the customMessageBg wash and
+               let the renderer control the background. */
+            .msg.custom .body.bare {
+                background: none;
+                border-radius: 0;
+                padding: 0;
+            }
             .msg .body p {
                 margin: 6px 0;
             }
@@ -1073,7 +1081,8 @@
                 background: var(--panel);
                 border: 1px solid var(--line);
                 border-radius: 8px;
-                overflow: hidden;
+                max-height: 40vh;
+                overflow-y: auto;
                 display: none;
                 box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
             }
