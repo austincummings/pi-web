@@ -2169,14 +2169,13 @@ const server = createApp({
                 kind: "surfaces",
                 surfaces: t.piweb.snapshot(),
             });
-            // refresh the intro view with the newly loaded resources (#5)
+            // refresh the intro view with the newly loaded resources (#5).
+            // `reload` tells the client to also echo the intro inline at the
+            // bottom of the transcript, not just refresh the pinned banner.
             bus.broadcastToThread(threadId, {
                 kind: "welcome",
+                reload: true,
                 ...buildWelcome(t.resourceLoader),
-            });
-            bus.broadcastToThread(threadId, {
-                kind: "system",
-                text: "reloaded extensions",
             });
             // re-assert the composer's thinking-level border after reload
             // (mirrors the pi TUI re-running updateEditorBorderColor)
