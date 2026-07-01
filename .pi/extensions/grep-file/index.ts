@@ -385,7 +385,8 @@ const STYLE = `
   .grow { display: flex; align-items: center; cursor: pointer; height: 1.4em;
           user-select: none; color: var(--dim, #666); }
   .grow:hover { background: var(--hover, rgba(255,255,255,.05)); }
-  .grow .no { border-right: 1px solid var(--line); }
+  .grow .no { border-right: 1px solid var(--line);
+              font-size: 1.25em; line-height: 1; }
   .grow:hover .no { color: var(--acc); }
   .grow .gline { flex: 1; height: 0;
                  border-top: 1px dashed var(--line); margin: 0 12px; opacity: .6; }
