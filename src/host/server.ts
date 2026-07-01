@@ -655,6 +655,10 @@ function subscribe(thread) {
                     const imgs = imagesOf(ev.message.content);
                     if (imgs.length) frame.images = imgs;
                     emit(frame);
+                    // A brand-new thread is hidden from the list until it has a
+                    // message; now that one exists, surface it immediately
+                    // instead of waiting for the turn to finish (agent_end).
+                    broadcastThreads();
                 } else if (ev.message?.role === "assistant") {
                     streamed = false;
                     streamedThinking = false;
@@ -1124,8 +1128,11 @@ const threads = {
             });
         // The SDK only flushes a session to disk after its first assistant
         // message, so brand-new or still-running threads won't appear in
-        // `infos`. Surface every live in-registry thread so they stay visible
-        // and resumable across browser refreshes (the server keeps them alive).
+        // `infos`. Surface every live in-registry thread that already has at
+        // least one message so they stay visible and resumable across browser
+        // refreshes (the server keeps them alive). Empty, freshly-created
+        // threads are skipped so they don't pollute the list until the first
+        // message is actually sent — the client still opens them by URL.
         const onDisk = new Set(infos.map((i) => i.id));
         for (const [id, rt] of threadRuntimes) {
             if (onDisk.has(id)) continue;
@@ -1138,6 +1145,8 @@ const threads = {
                 const u = msgs.find((m) => m?.role === "user");
                 if (u) firstMessage = textOf(u.content).slice(0, 80);
             } catch {}
+            // No messages yet → don't list it (avoids empty-thread clutter).
+            if (messageCount === 0) continue;
             items.unshift({
                 id,
                 name: sm?.getSessionName?.() || firstMessage || "(new thread)",
