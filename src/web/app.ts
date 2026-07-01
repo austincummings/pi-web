@@ -418,6 +418,28 @@ function renderAssistant(el, text) {
     followBottom();
 }
 
+// Render an extension custom message (kind:"custom"). When the host ships a
+// serialized component `tree` (from a registered message renderer), render it
+// via renderNode; otherwise render the message's text as markdown. The
+// customType is shown as the role label (mirrors the TUI's customMessageLabel).
+function renderCustomMessage(m) {
+    clearEmpty();
+    const el = document.createElement("div");
+    el.className = "msg custom";
+    const role = document.createElement("div");
+    role.className = "role";
+    role.textContent = m.customType || "custom";
+    const body = document.createElement("div");
+    body.className = "body";
+    if (m.tree) body.appendChild(renderNode(m.tree, null));
+    else body.innerHTML = renderMarkdown(m.text || "");
+    el.append(role, body);
+    $transcript.appendChild(el);
+    followBottom();
+    assistantEl = null;
+    return el;
+}
+
 // ---- Tool calls ----------------------------------------------------------
 // One <pi-tool> card per tool call (keyed by the `call-id` attribute). The
 // element owns its own state, expand/collapse, and rendering (see ./pi-tool.ts);
@@ -719,6 +741,26 @@ function renderNode(node, surfaceId) {
                     payload: { value: i.value },
                 });
             return i;
+        }
+        case "Code": {
+            // a code block; a highlighter renderer emits `spans` ({text, token})
+            // mapped to the theme's --syn-* colors, else plain `text`.
+            const pre = document.createElement("pre");
+            pre.className = "code-block";
+            if (node.lang) pre.dataset.lang = node.lang;
+            const code = document.createElement("code");
+            if (Array.isArray(node.spans)) {
+                for (const sp of node.spans) {
+                    const s = document.createElement("span");
+                    if (sp.token) s.className = "syn-" + sp.token;
+                    s.textContent = sp.text ?? "";
+                    code.appendChild(s);
+                }
+            } else {
+                code.textContent = node.text ?? "";
+            }
+            pre.appendChild(code);
+            return pre;
         }
         case "Frame": {
             // arbitrary HTML/CSS/JS, isolated in a sandboxed <pi-frame>
@@ -2471,6 +2513,10 @@ function onSseMessage(e) {
             break;
         case "tool":
             applyToolFrame(m);
+            break;
+        case "custom":
+            // extension-injected message rendered via a registered renderer
+            renderCustomMessage(m);
             break;
         case "system":
             bubble("system", m.text);

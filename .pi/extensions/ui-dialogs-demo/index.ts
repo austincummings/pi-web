@@ -13,6 +13,8 @@
  *   /ui-input    — single-line text
  *   /ui-editor   — multi-line text
  *   /ui-demo     — run all four in sequence
+ *   /ui-card     — send a custom message rendered by a registered
+ *                  message renderer (piweb.registerMessageRenderer, TODO #19)
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 // The pi-web UI-bridge shim: resolves to the in-process host registry, or
@@ -20,6 +22,50 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { piweb } from "../../../src/sdk/piweb.ts";
 
 export default function (pi: ExtensionAPI) {
+    // A custom transcript-message renderer: messages of customType "demo-card"
+    // render as a titled Stack with a Code node instead of plain markdown.
+    piweb.registerMessageRenderer("demo-card", (message, opts) => {
+        const d = (message.details as any) || {};
+        return {
+            type: "Stack",
+            children: [
+                { type: "Text", text: `⭐ ${d.title ?? "Card"}` },
+                { type: "Divider" },
+                {
+                    type: "Code",
+                    lang: d.lang ?? "txt",
+                    spans: [
+                        { token: "keyword", text: "const " },
+                        { token: "variable", text: "expanded" },
+                        { token: "operator", text: " = " },
+                        { token: "number", text: String(opts.expanded) },
+                        { token: "punctuation", text: ";" },
+                    ],
+                },
+                { type: "Text", text: d.body ?? "" },
+            ],
+        };
+    });
+
+    pi.registerCommand("ui-card", {
+        description:
+            "Demo: send a custom message rendered by a message renderer",
+        handler: async () => {
+            // A rendererless message falls back to markdown; "demo-card" is
+            // routed through the renderer registered above.
+            pi.sendMessage({
+                customType: "demo-card",
+                content: "A demo card (fallback text if no renderer).",
+                display: true,
+                details: {
+                    title: "Hello from an extension",
+                    lang: "ts",
+                    body: "Rendered via piweb.registerMessageRenderer.",
+                },
+            });
+        },
+    });
+
     pi.registerCommand("ui-select", {
         description: "Demo: piweb.select() blocking dialog",
         handler: async () => {

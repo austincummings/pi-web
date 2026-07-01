@@ -22,8 +22,21 @@ Simple, line-based backlog. Check items off as they land.
 - [x] 16. Create a matrix of TUI extension points vs. our web UI counterparts, noting gaps; add as `docs/extension-points.md`. (Done — see `docs/extension-points.md`; the gaps it surfaces are tracked in #22.)
 - [ ] 17. Research whether to switch to HTMX for rendering the dynamic UI.
 - [ ] 18. Research rendering markdown in the composer text box.
-- [ ] 19. Add a web equivalent of pi's `registerMessageRenderer(customType, renderer)` so
-      extensions can override how a message / code block renders in the transcript
+- [~] 19. Add a web equivalent of pi's `registerMessageRenderer(customType, renderer)` so
+  extensions can override how a message / code block renders in the transcript.
+  **Core landed:** `piweb.registerMessageRenderer(customType, (message, opts) => tree)`
+  stores a `customType -> renderer` map on the per-thread host; custom
+  messages (`pi.sendMessage({ customType })`, role `"custom"`) render via the
+  returned serializable tree on live `message_end` + transcript replay
+  (`customFrame` in `server.ts`), falling back to markdown text when no
+  renderer is registered or `display === false`. Added a `Code` node type
+  (`renderNode`) so highlighters can emit `{ token, text }` spans mapped to
+  the theme `--syn-*` palette. No-op under plain pi. **Remaining:** auto-route
+  fenced code blocks in assistant markdown through a synthetic `"code"`
+  renderer (needs `markdown.ts` language capture + per-block routing) — the
+  tree-sitter-highlighter forcing function.
+
+      <sub>Original spec (kept for reference):</sub> override how a message / code block renders in the transcript
       (closely related to #10; the forcing function is a tree-sitter highlighter).
       Shape: `piweb.registerMessageRenderer(customType, (message, opts) => Node)`
       where the renderer returns a **serializable component tree** (the same
@@ -37,6 +50,7 @@ Simple, line-based backlog. Check items off as they land.
       spans without a `Frame`, (c) capturing the fenced-code language in
       `markdown.ts` so code blocks can be routed to a registered renderer.
       Stays portable: with no host present the call no-ops like the rest of `piweb`.
+
 - [x] 20. Rename the `dock`/`overlay` surface API toward pi parity: `dock` -> `setWidget`
       with a widened `placement` (`aboveEditor`/`belowEditor` aliases for today's
       `bottom`/`footer`, plus web-only `left`/`right` rails), and accept `string[]`
@@ -108,7 +122,8 @@ Simple, line-based backlog. Check items off as they land.
       on the per-thread host settles it (confirm→boolean, others→string|undef,
       cancel/timeout/abort→undef). Stubbed no-op under plain pi in
       `sdk/piweb.ts`. Web renders a `#dialog` modal (arrow/Enter select nav,
-      Esc/backdrop cancel). - [ ] `registerMessageRenderer` (folds in #19) - [x] `setTitle` web page-title hook (folds in #8 — `piweb.setTitle`; `ctx.ui` wiring still pending) - [ ] `setFooter` — footer replacement hook - [ ] `setWorkingMessage` / `setWorkingVisible` / `setWorkingIndicator` - [ ] `setEditorText` / `getEditorText` / `pasteToEditor` composer bridge - [ ] `addAutocompleteProvider` — extension-supplied completion - [ ] `getToolsExpanded` / `setToolsExpanded` programmatic control - [ ] theme API: `getAllThemes` / `getTheme` / `setTheme` / `theme.fg(...)` - [ ] `ctx.mode === "web"` so portable extensions can branch on the medium - [ ] N/A in a browser: `setEditorComponent` / `getEditorComponent` (TUI
+      Esc/backdrop cancel). - [x] `registerMessageRenderer` (folds in #19; core landed — custom-message
+      renderer + `Code` node; fenced-code auto-routing still pending) - [x] `setTitle` web page-title hook (folds in #8 — `piweb.setTitle`; `ctx.ui` wiring still pending) - [ ] `setFooter` — footer replacement hook - [ ] `setWorkingMessage` / `setWorkingVisible` / `setWorkingIndicator` - [ ] `setEditorText` / `getEditorText` / `pasteToEditor` composer bridge - [ ] `addAutocompleteProvider` — extension-supplied completion - [ ] `getToolsExpanded` / `setToolsExpanded` programmatic control - [ ] theme API: `getAllThemes` / `getTheme` / `setTheme` / `theme.fg(...)` - [ ] `ctx.mode === "web"` so portable extensions can branch on the medium - [ ] N/A in a browser: `setEditorComponent` / `getEditorComponent` (TUI
       Component swap) — document as out of scope rather than implement
 
 - [x] 23. Reach theme-palette parity with the pi TUI. `loadPiTheme()` in

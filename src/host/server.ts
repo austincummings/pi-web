@@ -284,6 +284,13 @@ const nullRegistry = {
     closeOverlay() {},
     notify() {},
     setStatus() {},
+    registerMessageRenderer() {},
+    hasMessageRenderer() {
+        return false;
+    },
+    renderMessage() {
+        return null;
+    },
     select() {
         return Promise.resolve(undefined);
     },
@@ -324,6 +331,11 @@ const piweb = {
     closeOverlay: (...a) => activeRegistry().closeOverlay(...a),
     notify: (...a) => activeRegistry().notify(...a),
     setStatus: (...a) => activeRegistry().setStatus(...a),
+    // custom transcript-message renderers (customType -> serializable tree)
+    registerMessageRenderer: (...a) =>
+        activeRegistry().registerMessageRenderer(...a),
+    hasMessageRenderer: (...a) => activeRegistry().hasMessageRenderer(...a),
+    renderMessage: (...a) => activeRegistry().renderMessage(...a),
     // blocking dialogs — return promises that settle on the browser's response
     select: (...a) => activeRegistry().select(...a),
     confirm: (...a) => activeRegistry().confirm(...a),
@@ -587,6 +599,32 @@ async function pinModel(s) {
  * @param {ThreadRuntime} thread
  * @returns {() => void} unsubscribe
  */
+/**
+ * Build a `custom` transcript frame for an extension CustomMessage (role
+ * "custom", from `pi.sendMessage`). If a renderer is registered for its
+ * customType, ship the serialized component tree; otherwise fall back to the
+ * message's text content (the client renders it as markdown). Mirrors pi-tui's
+ * registered-message-renderer path (TODO #19).
+ * @param {PiWebRegistry|null|undefined} reg   the thread's surface registry
+ * @param {any} m                              the CustomMessage
+ * @returns {ServerMessage}
+ */
+function customFrame(reg, m) {
+    const frame: Record<string, unknown> = {
+        kind: "custom",
+        customType: m.customType || "",
+    };
+    let tree = null;
+    try {
+        tree = reg?.renderMessage?.(m.customType, m, { expanded: false });
+    } catch {
+        tree = null;
+    }
+    if (tree) frame.tree = tree;
+    else frame.text = textOf(m.content);
+    return frame;
+}
+
 function subscribe(thread) {
     let streamed = false;
     let streamedThinking = false;
@@ -633,6 +671,12 @@ function subscribe(thread) {
             }
             case "message_end": {
                 const m = ev.message;
+                // extension-injected custom messages (pi.sendMessage) render via
+                // a registered message renderer, or fall back to their text
+                if (m?.role === "custom") {
+                    if (m.display !== false) emit(customFrame(thread.piweb, m));
+                    break;
+                }
                 if (m?.role !== "assistant") break;
                 if (m.stopReason === "error" || m.errorMessage)
                     emit({
@@ -825,6 +869,10 @@ async function ensureLoaded(id) {
  */
 function replayTranscript(s, send) {
     send({ kind: "transcript_reset" });
+    // this thread's surface registry, for re-rendering custom messages on replay
+    const replayReg = threadRuntimes.get(
+        s?.sessionManager?.getSessionId?.(),
+    )?.piweb;
     let messages = [];
     try {
         const ctx = s.sessionManager.buildSessionContext?.();
@@ -878,6 +926,11 @@ function replayTranscript(s, send) {
                     result: textOf(m.content),
                     details: m.details,
                 });
+                break;
+            case "custom":
+                // extension-injected custom message: render via a registered
+                // renderer (serialized tree) or fall back to its text content
+                if (m.display !== false) send(customFrame(replayReg, m));
                 break;
             case "bashExecution":
                 // user-run shell (! / !!) is stored as its own message

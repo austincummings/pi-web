@@ -172,3 +172,45 @@ test("resolveUiRequest with an unknown id is a no-op", () => {
     const { host } = makeHost();
     expect(() => host.resolveUiRequest("nope", "x")).not.toThrow();
 });
+
+// ---- custom message renderers (registerMessageRenderer) ------------------
+
+test("registerMessageRenderer + renderMessage return the serialized tree", () => {
+    const { host } = makeHost();
+    expect(host.hasMessageRenderer("card")).toBe(false);
+    host.registerMessageRenderer("card", (msg, opts) => ({
+        type: "Text",
+        text: `${msg.details.title} (expanded=${opts.expanded})`,
+    }));
+    expect(host.hasMessageRenderer("card")).toBe(true);
+    const tree = host.renderMessage(
+        "card",
+        { customType: "card", details: { title: "Hi" } },
+        { expanded: true },
+    );
+    expect(tree).toEqual({ type: "Text", text: "Hi (expanded=true)" });
+});
+
+test("renderMessage returns null when no renderer is registered", () => {
+    const { host } = makeHost();
+    expect(host.renderMessage("nope", { customType: "nope" })).toBeNull();
+});
+
+test("renderMessage catches a throwing renderer and surfaces a Text node", () => {
+    const { host } = makeHost();
+    host.registerMessageRenderer("boom", () => {
+        throw new Error("kaboom");
+    });
+    const tree = host.renderMessage("boom", { customType: "boom" });
+    expect(tree).toEqual({ type: "Text", text: "render error: kaboom" });
+});
+
+test("registerMessageRenderer with a non-function unregisters; clear() drops all", () => {
+    const { host } = makeHost();
+    host.registerMessageRenderer("x", () => ({ type: "Text", text: "x" }));
+    host.registerMessageRenderer("x", null);
+    expect(host.hasMessageRenderer("x")).toBe(false);
+    host.registerMessageRenderer("y", () => ({ type: "Text", text: "y" }));
+    host.clear();
+    expect(host.hasMessageRenderer("y")).toBe(false);
+});

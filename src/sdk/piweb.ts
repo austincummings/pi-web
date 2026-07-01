@@ -40,6 +40,12 @@ export interface PiWebSurface {
         opts?: { align?: "right"; tone?: "warning" | "error" },
     ): void;
     setTitle(text?: string): void;
+    // --- custom transcript-message renderers ---
+    /** Register a serializable-tree renderer for messages of `customType`. */
+    registerMessageRenderer(
+        customType: string,
+        renderer: (message: any, opts: { expanded: boolean }) => any,
+    ): void;
     // --- blocking dialogs (await the browser's answer) ---
     select(
         title: string,
@@ -85,6 +91,9 @@ const stub = {
     notify: noop,
     setTitle: noop,
     setStatus: noop,
+    registerMessageRenderer: noop,
+    hasMessageRenderer: () => false,
+    renderMessage: () => null,
     select: dialogNoop,
     confirm: () => Promise.resolve(false),
     input: dialogNoop,

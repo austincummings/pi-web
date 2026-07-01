@@ -73,6 +73,15 @@ export function createPiWebHost({ broadcast, getPi }) {
      * @type {Map<string, {kind:string, spec:DialogSpec, settle:(v:any)=>void}>}
      */
     const pendingUi = new Map();
+    /**
+     * Custom transcript-message renderers, keyed by `customType`. Each takes a
+     * CustomMessage + options and returns a *serializable* component tree (the
+     * same Stack/Row/Text/Button/Frame/Code node model as surfaces). The web
+     * analogue of pi-tui's `registerMessageRenderer` (which returns a live TUI
+     * `Component`).
+     * @type {Map<string, (message:any, opts:any)=>any>}
+     */
+    const messageRenderers = new Map();
     let orderSeq = 0;
     let uiSeq = 0;
 
@@ -380,6 +389,47 @@ export function createPiWebHost({ broadcast, getPi }) {
             );
         },
         /**
+         * Register a custom renderer for transcript messages of `customType`
+         * (extension messages sent via `pi.sendMessage({ customType, … })`).
+         * Mirrors pi-tui `pi.registerMessageRenderer`, but the renderer returns
+         * a serializable node tree instead of a live `Component`. Pass a
+         * non-function to unregister.
+         * @param {string} customType
+         * @param {(message:any, opts:{expanded:boolean})=>any} renderer
+         */
+        registerMessageRenderer(customType, renderer) {
+            const key = String(customType);
+            if (typeof renderer === "function")
+                messageRenderers.set(key, renderer);
+            else messageRenderers.delete(key);
+        },
+        /**
+         * Whether a renderer is registered for `customType`.
+         * @param {string} customType @returns {boolean}
+         */
+        hasMessageRenderer(customType) {
+            return messageRenderers.has(String(customType));
+        },
+        /**
+         * Render a custom message to a serializable tree via its registered
+         * renderer, or null when none is registered. Errors are caught and
+         * surfaced as a Text node so one bad renderer can't sink the transcript.
+         * @param {string} customType
+         * @param {any} message
+         * @param {{expanded?:boolean}} [opts]
+         * @returns {any|null}
+         */
+        renderMessage(customType, message, opts = {}) {
+            const r = messageRenderers.get(String(customType));
+            if (!r) return null;
+            try {
+                return r(message, { expanded: false, ...opts }) ?? null;
+            } catch (err) {
+                return { type: "Text", text: `render error: ${err.message}` };
+            }
+        },
+
+        /**
          * Resolve an open blocking dialog with the browser's answer. Called by
          * the host when a `/ui-response` arrives. Unknown ids are ignored
          * (already settled by timeout/abort/refresh).
@@ -436,6 +486,7 @@ export function createPiWebHost({ broadcast, getPi }) {
         clear() {
             surfaces.clear();
             statuses.clear();
+            messageRenderers.clear();
             // cancel any open dialogs so awaiting extensions unblock
             for (const e of [...pendingUi.values()]) e.settle(undefined);
             push();
