@@ -453,12 +453,18 @@ const piweb = {
 };
 globalThis.__PIWEB__ = piweb;
 
-// pi-web defaults to the `meridian` provider. That provider is registered by
-// the pi-meridian extension *during* session startup, so it isn't resolvable
-// until after createAgentSession. We pin it afterwards via setModel.
-// Override with PI_PROVIDER / PI_MODEL.
-const PROVIDER = process.env.PI_PROVIDER ?? "meridian";
-const MODEL_ID = process.env.PI_MODEL ?? "claude-opus-4-8";
+// Model selection precedence:
+//   1. PI_PROVIDER / PI_MODEL env vars (explicit override, always wins)
+//   2. pi's own settings.json default (defaultProvider/defaultModel) — this is
+//      already resolved onto session.state.model by createAgentSession, so we
+//      leave it untouched when the user has configured a pi default
+//   3. the `meridian` fallback, when neither of the above applies
+// pi-meridian registers its provider *during* session startup, so meridian is
+// only resolvable after createAgentSession; hence the post-hoc pin.
+const ENV_PROVIDER = process.env.PI_PROVIDER;
+const ENV_MODEL_ID = process.env.PI_MODEL;
+const FALLBACK_PROVIDER = "meridian";
+const FALLBACK_MODEL_ID = "claude-opus-4-8";
 const authStorage = AuthStorage.create();
 const modelRegistry = ModelRegistry.create(authStorage);
 
@@ -654,18 +660,54 @@ function describeError(raw: unknown): string {
     }
 }
 
-/** @param {AgentSession} s */
+/**
+ * Choose the session's model, honoring pi's own settings where possible.
+ * See the precedence comment on ENV_PROVIDER/FALLBACK_PROVIDER above.
+ * @param {AgentSession} s
+ */
 async function pinModel(s: AgentSession) {
-    const model = modelRegistry.find(PROVIDER, MODEL_ID);
-    if (model) {
-        await s.setModel(model);
+    const cur = s.state?.model;
+
+    // 1. Explicit env override always wins.
+    if (ENV_PROVIDER || ENV_MODEL_ID) {
+        const provider = ENV_PROVIDER ?? FALLBACK_PROVIDER;
+        const modelId = ENV_MODEL_ID ?? FALLBACK_MODEL_ID;
+        const model = modelRegistry.find(provider, modelId);
+        if (model) {
+            await s.setModel(model);
+            console.log(
+                `  model:  ${model.provider}/${model.id} (${model.name ?? ""}) [env]`,
+            );
+            return;
+        }
+        console.warn(
+            `  model:  ${provider}/${modelId} not found (PI_PROVIDER/PI_MODEL)`,
+        );
+    }
+
+    // 2. Respect pi's settings.json default when the user has set one.
+    //    createAgentSession already resolved it onto s.state.model.
+    const sm = s.settingsManager;
+    const hasPiDefault = !!(
+        sm?.getDefaultModel?.() || sm?.getDefaultProvider?.()
+    );
+    if (hasPiDefault && cur?.provider && cur?.id) {
         console.log(
-            `  model:  ${model.provider}/${model.id} (${model.name ?? ""})`,
+            `  model:  ${cur.provider}/${cur.id} (${cur.name ?? ""}) [pi settings]`,
+        );
+        return;
+    }
+
+    // 3. No env override and no pi default — pin the meridian fallback.
+    const fallback = modelRegistry.find(FALLBACK_PROVIDER, FALLBACK_MODEL_ID);
+    if (fallback) {
+        await s.setModel(fallback);
+        console.log(
+            `  model:  ${fallback.provider}/${fallback.id} (${fallback.name ?? ""}) [fallback]`,
         );
     } else {
-        const cur = s.state?.model;
         console.warn(
-            `  model:  ${PROVIDER}/${MODEL_ID} not found — using ${cur?.provider}/${cur?.id}`,
+            `  model:  ${FALLBACK_PROVIDER}/${FALLBACK_MODEL_ID} not found — using ${cur?.provider}/${cur?.id}`,
         );
     }
 }

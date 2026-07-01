@@ -52,10 +52,12 @@ Open the web UI:
   mirrors the pi-tui glass-cockpit footer (dir, branch, model, context-window
   usage bar, session cost).
 
-> The app defaults to the **`meridian` provider** (`meridian/claude-opus-4-8`),
-> pinned after startup via `session.setModel` once the pi-meridian extension has
-> registered the provider. Override with `PI_PROVIDER` / `PI_MODEL` env vars.
-> Surfaces work regardless of provider.
+> Model selection follows this precedence: (1) `PI_PROVIDER` / `PI_MODEL` env
+> vars, (2) pi's own `settings.json` default (`defaultProvider`/`defaultModel`,
+> the same one the pi TUI `/model` selector writes), (3) the **`meridian`
+> fallback** (`meridian/claude-opus-4-8`). The pin is applied after startup via
+> `session.setModel` because the pi-meridian extension only registers its
+> provider during session startup. Surfaces work regardless of provider.
 
 ## The self-modifiable loop
 
