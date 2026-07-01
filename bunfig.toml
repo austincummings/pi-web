@@ -1,0 +1,5 @@
+[test]
+# Register a happy-dom global environment before any test runs so the DOM-level
+# front-end suites (Web Components in src/web/*) have `document`,
+# `customElements`, and friends. Pure/string-only suites are unaffected.
+preload = ["./test/setup-dom.ts"]
