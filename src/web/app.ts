@@ -10,8 +10,8 @@ import {
     hasResources,
     type WelcomeInfo,
 } from "./welcome.ts";
-// NOTE: these two modules are imported only for their side effect —
-// registering the <pi-frame> / <pi-tool> custom elements via
+// NOTE: these modules are imported only for their side effect —
+// registering the <pi-frame> / <pi-tool> / <pi-thinking> custom elements via
 // customElements.define(). We reference their classes solely in type
 // positions (`as PiFrame`, `: PiTool | null`), so a plain `import { PiTool }`
 // gets elided as type-only by the bundler, which then tree-shakes the whole
@@ -21,12 +21,14 @@ import {
 // keeps the class names available for annotations.
 import "./pi-frame.ts";
 import "./pi-tool.ts";
+import "./pi-thinking.ts";
 import type {
     PiFrame,
     PiFrameActionDetail,
     PiFrameNotifyDetail,
 } from "./pi-frame.ts";
 import type { PiTool } from "./pi-tool.ts";
+import type { PiThinking } from "./pi-thinking.ts";
 
 // Expose the tool-renderer registry so client-side extensions can override how
 // a tool's result is displayed (web counterpart to pi-tui's renderResult).
@@ -178,8 +180,6 @@ function setWorking(on) {
 
 let assistantEl = null; // current streaming assistant bubble
 let bashEl = null; // current streaming bash output block
-let thinkingEl = null; // current streaming thinking block
-let thinkingRaw = ""; // accumulated thinking text (rendered as markdown)
 let thinkingHidden = false; // mirrors pi's "hide thinking blocks" setting
 let thinkingLevel = "off"; // per-session reasoning level (focused border color)
 let thinkingSupported = false; // does the active model support cycling levels?
@@ -438,36 +438,28 @@ function applyToolFrame(m) {
     if (follow) $transcript.scrollTop = $transcript.scrollHeight;
 }
 
-// A collapsible thinking/reasoning trace. Clicking the header (or Ctrl+T)
-// toggles visibility, which is persisted to pi's `hideThinkingBlock` setting.
-function thinkingBubble() {
+// A streaming thinking/reasoning trace, owned by the <pi-thinking> custom
+// element (see ./pi-thinking.ts): it holds its raw text, re-renders markdown
+// internally (throttled to one paint per animation frame), and emits
+// `pithinking-toggle` when its header is clicked. Here we just create/look up
+// the element and feed it SSE `thinking` frames; the header toggle and
+// follow-scroll are wired once via delegated listeners on $transcript.
+function newThinking(): PiThinking {
     clearEmpty();
-    const el = document.createElement("div");
-    el.className = "thinking-block";
-    el.innerHTML =
-        '<div class="think-head">thinking</div><div class="think-body"></div>';
-    (el.querySelector(".think-head") as HTMLElement).onclick = () =>
-        toggleThinking();
+    const el = document.createElement("pi-thinking") as PiThinking;
     $transcript.appendChild(el);
     $transcript.scrollTop = $transcript.scrollHeight;
     return el;
 }
-
-function renderThinking(el, text) {
-    el.querySelector(".think-body").innerHTML = renderMarkdown(text);
-    $transcript.scrollTop = $transcript.scrollHeight;
+function lastThinking(): PiThinking | null {
+    const all = $transcript.querySelectorAll("pi-thinking");
+    return (all[all.length - 1] as PiThinking) ?? null;
 }
-
-// Throttle streaming thinking re-renders to one paint per animation frame.
-let thinkingRenderPending = false;
-function scheduleThinkingRender() {
-    if (thinkingRenderPending) return;
-    thinkingRenderPending = true;
-    requestAnimationFrame(() => {
-        thinkingRenderPending = false;
-        if (thinkingEl) renderThinking(thinkingEl, thinkingRaw);
-    });
-}
+$transcript.addEventListener("pithinking-toggle", () => toggleThinking());
+$transcript.addEventListener(
+    "pithinking-render",
+    () => ($transcript.scrollTop = $transcript.scrollHeight),
+);
 
 // Apply the hidden state to the DOM (CSS collapses .think-body). When `persist`
 // is set, also write the new value back to pi's settings via the host.
@@ -2056,7 +2048,6 @@ function onSseMessage(e) {
             renderQueue();
             renderWelcome(); // re-pin the banner as the first transcript entry
             assistantEl = null;
-            thinkingEl = null;
             setWorking(false);
             break;
         case "thinking_level":
@@ -2072,7 +2063,6 @@ function onSseMessage(e) {
             pushHistory(m.text); // seed/extend per-thread input history
             histIndex = null;
             assistantEl = null;
-            thinkingEl = null;
             break;
         case "delta":
             if (!assistantEl) {
@@ -2084,25 +2074,12 @@ function onSseMessage(e) {
             scheduleAssistantRender();
             break;
         case "thinking":
-            if (m.status === "full") {
-                // non-streamed (replay / cached): render in one shot
-                const el = thinkingBubble();
-                renderThinking(el, m.text || "");
-                thinkingEl = null;
-            } else if (m.status === "start") {
-                thinkingEl = thinkingBubble();
-                thinkingRaw = "";
-            } else if (m.status === "delta") {
-                if (!thinkingEl) {
-                    thinkingEl = thinkingBubble();
-                    thinkingRaw = "";
-                }
-                thinkingRaw += m.text;
-                scheduleThinkingRender();
-            } else if (m.status === "end") {
-                if (thinkingEl) renderThinking(thinkingEl, thinkingRaw);
-                thinkingEl = null;
-                thinkingRaw = "";
+            // `start`/`full` begin a fresh block; `delta`/`end` feed the
+            // current one (the element owns its raw text + throttled render).
+            if (m.status === "start" || m.status === "full") {
+                newThinking().apply(m);
+            } else {
+                (lastThinking() ?? newThinking()).apply(m);
             }
             break;
         case "assistant_full":

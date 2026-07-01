@@ -180,23 +180,27 @@ Simple, line-based backlog. Check items off as they land.
           SSE frames (covers both live sends and replay), clear it on
           `transcript_reset`. No host change required for an MVP.
 
-- [ ] 26. Extract the streaming thinking trace into a `<pi-thinking>` custom
+- [x] 26. Extract the streaming thinking trace into a `<pi-thinking>` custom
       element (continuing the front-end custom-element refactor that already
-      landed `<pi-frame>` and `<pi-tool>`). Today `src/web/app.ts` tracks the
-      live block via the `thinkingEl`/`thinkingRaw` module globals and renders
-      it through the free functions `thinkingBubble()` / `renderThinking()` /
-      `scheduleThinkingRender()`.
-    - [ ] **Own the element's state** — a `<pi-thinking>` that holds its raw
-          text and re-renders markdown internally, throttled to one paint per
-          animation frame (move `scheduleThinkingRender`'s rAF inside).
-    - [ ] **Streaming API** — feed it the `thinking` SSE frames
+      landed `<pi-frame>` and `<pi-tool>`). `src/web/pi-thinking.ts` now owns the
+      block; `src/web/app.ts` creates/looks up the element and feeds it SSE
+      frames (`newThinking()` / `lastThinking()`), so the `thinkingEl`/
+      `thinkingRaw` globals and the `thinkingBubble()`/`renderThinking()`/
+      `scheduleThinkingRender()` free functions are gone.
+    - [x] **Own the element's state** — `<pi-thinking>` holds its raw text and
+          re-renders markdown internally, throttled to one paint per animation
+          frame (the rAF moved inside `scheduleRender()`).
+    - [x] **Streaming API** — `apply()` consumes the `thinking` SSE frames
           (`start`/`delta`/`end`/`full`); the host appends deltas and the
-          element renders, so `thinkingEl`/`thinkingRaw` globals go away.
-    - [ ] **Keep visibility app-global** — the show/hide toggle stays at app
+          element renders, so `thinkingEl`/`thinkingRaw` globals went away.
+    - [x] **Keep visibility app-global** — the show/hide toggle stays at app
           level (`body.hide-thinking` CSS + persisted to pi's
-          `hideThinkingBlock` setting); the element just respects the CSS.
-    - [ ] **Light DOM** — carry the existing `.thinking-block` classes so the
-          shared stylesheet applies unchanged (add `display:block`).
+          `hideThinkingBlock` setting); the element only emits a bubbling
+          `pithinking-toggle` event and otherwise respects the CSS. Follow-scroll
+          stays with the host via a `pithinking-render` event.
+    - [x] **Light DOM** — carries the existing `.thinking-block` classes so the
+          shared stylesheet applies unchanged (`.thinking-block` gains
+          `display:block` since a custom element is inline by default).
 
 ## Docs
 
