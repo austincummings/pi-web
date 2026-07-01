@@ -206,7 +206,12 @@ export function renderMarkdown(src) {
         html.push(`<p>${inline(buf.join("<br>"))}</p>`);
     }
     closeList();
-    return html.join("\n");
+    // Join with "" (not "\n"): the blocks are all block-level elements, so the
+    // separator is cosmetic — but if the output is mounted in a `white-space:
+    // pre-wrap` context (e.g. an extension custom-message `Markdown` node inside
+    // `.msg`), stray "\n"s between tags render as blank lines. Fenced code keeps
+    // its own newlines inside the <pre> string, so nothing visible is lost.
+    return html.join("");
 }
 
 /**

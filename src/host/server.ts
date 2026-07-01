@@ -295,6 +295,15 @@ const nullRegistry = {
     renderMessage() {
         return null;
     },
+    addAutocompleteProvider() {
+        return () => {};
+    },
+    hasAutocomplete() {
+        return false;
+    },
+    autocomplete() {
+        return Promise.resolve(null);
+    },
     select() {
         return Promise.resolve(undefined);
     },
@@ -342,6 +351,9 @@ const piweb = {
         activeRegistry().registerMessageRenderer(...a),
     hasMessageRenderer: (...a) => activeRegistry().hasMessageRenderer(...a),
     renderMessage: (...a) => activeRegistry().renderMessage(...a),
+    // composer autocomplete providers (piweb.addAutocompleteProvider)
+    addAutocompleteProvider: (...a) =>
+        activeRegistry().addAutocompleteProvider(...a),
     // blocking dialogs — return promises that settle on the browser's response
     select: (...a) => activeRegistry().select(...a),
     confirm: (...a) => activeRegistry().confirm(...a),
@@ -1554,10 +1566,10 @@ const modelApi = {
 const commandsApi = {
     /** @param {string} [threadId] */
     list(threadId) {
-        const pi = threadRuntimes.get(threadId)?.pi;
+        const rt = threadRuntimes.get(threadId);
         let items = [];
         try {
-            items = (pi?.getCommands?.() ?? []).map((c) => ({
+            items = (rt?.pi?.getCommands?.() ?? []).map((c) => ({
                 name: c.name,
                 description: c.description ?? "",
                 source: c.source,
@@ -1565,7 +1577,10 @@ const commandsApi = {
         } catch {
             /* best-effort */
         }
-        return { items };
+        // `autocomplete` tells the web `/` composer whether this thread has any
+        // extension autocomplete providers registered, so it only round-trips
+        // to `/autocomplete` when there's something to serve.
+        return { items, autocomplete: !!rt?.piweb?.hasAutocomplete?.() };
     },
 };
 
@@ -1749,6 +1764,11 @@ const server = createApp({
     // viewing thread's working directory.
     listFiles: (threadId) =>
         listProjectFiles(threadRuntimes.get(threadId)?.cwd),
+    // Run this thread's registered autocomplete providers for the composer.
+    autocomplete: async (threadId, ctx) => {
+        const t = threadId ? threadRuntimes.get(threadId) : null;
+        return (await t?.piweb?.autocomplete?.(ctx)) ?? null;
+    },
     // Directory suggestions for the `/new <dir>` typeahead.
     listDirs: (q, threadId) => listProjectDirs(q, threadId),
     // On SSE (re)connect, resolve + replay the thread this client is viewing

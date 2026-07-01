@@ -90,7 +90,7 @@ function intraLine(
                 left += escapeHtml(ws);
                 firstDel = false;
             }
-            if (v) left += `<mark class="d">${escapeHtml(v)}</mark>`;
+            if (v) left += `<span class="inverse">${escapeHtml(v)}</span>`;
         } else if (part.added) {
             let v = part.value;
             if (firstIns) {
@@ -99,7 +99,7 @@ function intraLine(
                 right += escapeHtml(ws);
                 firstIns = false;
             }
-            if (v) right += `<mark class="a">${escapeHtml(v)}</mark>`;
+            if (v) right += `<span class="inverse">${escapeHtml(v)}</span>`;
         } else {
             left += escapeHtml(part.value);
             right += escapeHtml(part.value);
@@ -177,11 +177,15 @@ function alignRows(diffText: string): Row[] {
     return rows;
 }
 
-function cell(side: Side | null, kind: "del" | "add" | "ctx"): string {
-    if (!side) return `<td class="ln filler"></td><td class="tx filler"></td>`;
+// A side's line-number + text cells, colored by the diff class that mirrors the
+// app's renderer (`diff-added`/`diff-removed`/`diff-context`). `mid` draws the
+// single center divider between the two panes (the one intended divergence).
+function cell(side: Side | null, cls: string, mid: boolean): string {
+    const m = mid ? " mid" : "";
+    if (!side) return `<td class="ln${m}"></td><td class="tx"></td>`;
     return (
-        `<td class="ln ${kind}">${escapeHtml(side.num)}</td>` +
-        `<td class="tx ${kind}">${side.html || "&nbsp;"}</td>`
+        `<td class="ln ${cls}${m}">${escapeHtml(side.num)}</td>` +
+        `<td class="tx ${cls}">${side.html || "&nbsp;"}</td>`
     );
 }
 
@@ -196,11 +200,11 @@ function buildSplitHtml(diffText: string, path: string): string {
                 return `<tr class="meta"><td colspan="4">${escapeHtml(r.text)}</td></tr>`;
             }
             if (r.kind === "ctx") {
-                return `<tr class="ctx">${cell(r.left, "ctx")}${cell(r.right, "ctx")}</tr>`;
+                return `<tr>${cell(r.left, "diff-context", false)}${cell(r.right, "diff-context", true)}</tr>`;
             }
             if (r.left) removed++;
             if (r.right) added++;
-            return `<tr class="chg">${cell(r.left, "del")}${cell(r.right, "add")}</tr>`;
+            return `<tr>${cell(r.left, "diff-removed", false)}${cell(r.right, "diff-added", true)}</tr>`;
         })
         .join("");
 
@@ -216,26 +220,22 @@ function buildSplitHtml(diffText: string, path: string): string {
   .sd .hd .stat .minus { color: var(--diff-removed); }
   .sd table { border-collapse: collapse; width: 100%; table-layout: fixed; }
   .sd col.gutter { width: 3.5em; }
-  .sd td { padding: 0 6px; vertical-align: top; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
-  .sd td.ln {
-    width: 3.5em; text-align: right; color: var(--dim);
-    user-select: none; -webkit-user-select: none;
-    border-right: 1px solid var(--line);
-  }
-  .sd td.tx { border-right: 1px solid var(--line); }
-  .sd tr td:last-child { border-right: 0; }
-  .sd td.del { background: color-mix(in srgb, var(--diff-removed) 13%, transparent); }
-  .sd td.add { background: color-mix(in srgb, var(--diff-added) 13%, transparent); }
-  .sd td.ctx { color: var(--diff-context); }
-  .sd td.filler {
-    background:
-      repeating-linear-gradient(45deg,
-        color-mix(in srgb, var(--line) 40%, transparent) 0 6px,
-        transparent 6px 12px);
-  }
-  .sd mark.d { background: color-mix(in srgb, var(--diff-removed) 42%, transparent); color: inherit; border-radius: 2px; }
-  .sd mark.a { background: color-mix(in srgb, var(--diff-added) 42%, transparent); color: inherit; border-radius: 2px; }
-  .sd tr.meta td { color: var(--dim); text-align: center; padding: 2px 6px; }
+  .sd td { padding: 0 6px; vertical-align: top; }
+  .sd td.ln { text-align: right; user-select: none; -webkit-user-select: none; }
+  .sd td.tx { white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
+  /* The only divergence from the app's unified diff: a center divider between
+     the two panes, drawn with the provided --line token. */
+  .sd td.mid { border-left: 1px solid var(--line); }
+  /* Colors mirror the app's diff renderer exactly (src/web/index.html): a
+     foreground color per line, and a solid .inverse (theme.inverse analogue)
+     for intra-line changes — all from the injected --diff-* / --bg tokens. */
+  .sd .diff-added { color: var(--diff-added); }
+  .sd .diff-removed { color: var(--diff-removed); }
+  .sd .diff-context { color: var(--diff-context); }
+  .sd .inverse { color: var(--bg); }
+  .sd .diff-added .inverse { background: var(--diff-added); }
+  .sd .diff-removed .inverse { background: var(--diff-removed); }
+  .sd tr.meta td { color: var(--diff-context); text-align: center; padding: 2px 6px; }
 </style>`;
 
     const header =

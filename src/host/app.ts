@@ -100,6 +100,10 @@ export interface AppOptions {
             threadId?: string,
         ) => { items: any[] } | Promise<{ items: any[] }>;
     };
+    autocomplete?: (
+        threadId: string | undefined,
+        ctx: { text: string; caret?: number },
+    ) => any | Promise<any>;
 }
 
 /**
@@ -191,6 +195,7 @@ export function createApp({
     sessionApi,
     modelApi,
     commandsApi,
+    autocomplete,
     onBash,
     onAbortBash,
     onConnect,
@@ -328,6 +333,19 @@ export function createApp({
         const threadId = url.searchParams.get("thread") || undefined;
         const items = listDirs ? await listDirs(q, threadId) : [];
         sendJson(res, 200, { items });
+    });
+
+    // extension-supplied composer completions (piweb.addAutocompleteProvider).
+    // The client posts the composer `{ text, caret }`; the host runs the
+    // thread's providers and returns a `{ start, end, items }` splice span.
+    router.post("/autocomplete", async ({ res, body }) => {
+        const result = autocomplete
+            ? await autocomplete(body.threadId || undefined, {
+                  text: String(body.text ?? ""),
+                  caret: Number.isInteger(body.caret) ? body.caret : undefined,
+              })
+            : null;
+        sendJson(res, 200, result ?? { items: [] });
     });
 
     // bundled front-end entrypoint (built by build-web.ts)

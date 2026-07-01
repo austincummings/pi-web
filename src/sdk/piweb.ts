@@ -13,6 +13,42 @@
 type NotifyLevel = "info" | "warning" | "error";
 type DialogOptions = { signal?: AbortSignal; timeout?: number };
 
+/** The composer snapshot passed to an autocomplete provider. */
+export interface AutocompleteContext {
+    /** Full composer text. */
+    text: string;
+    /** Caret offset within `text`. */
+    caret: number;
+}
+/** A single completion candidate. */
+export interface AutocompleteItem {
+    /** Text spliced into the composer when accepted. */
+    value: string;
+    /** Label shown in the dropdown (defaults to `value`). */
+    label?: string;
+    /** Muted secondary text shown alongside the label. */
+    description?: string;
+}
+/**
+ * A provider's result: items plus an optional `[start, end)` replace span
+ * (defaults to the whitespace-delimited token ending at the caret).
+ */
+export interface AutocompleteResult {
+    start?: number;
+    end?: number;
+    items: (AutocompleteItem | string)[];
+}
+export type AutocompleteProvider = (
+    ctx: AutocompleteContext,
+) =>
+    | AutocompleteResult
+    | (AutocompleteItem | string)[]
+    | null
+    | undefined
+    | Promise<
+          AutocompleteResult | (AutocompleteItem | string)[] | null | undefined
+      >;
+
 /**
  * The pi-web UI-bridge surface available to extensions. A serializable superset
  * of pi's `ExtensionUIContext`; the dialog methods mirror pi-tui's `ctx.ui.*`.
@@ -51,6 +87,14 @@ export interface PiWebSurface {
         customType: string,
         renderer: (message: any, opts: { expanded: boolean }) => any,
     ): void;
+    // --- composer autocomplete ---
+    /**
+     * Register a composer autocomplete provider (mirrors pi-tui
+     * `ctx.ui.addAutocompleteProvider`). The browser queries registered
+     * providers as the user types; return items (+ optional replace span) or
+     * null when the provider doesn't apply. Returns a disposer.
+     */
+    addAutocompleteProvider(provider: AutocompleteProvider): () => void;
     // --- blocking dialogs (await the browser's answer) ---
     select(
         title: string,
@@ -100,6 +144,9 @@ const stub = {
     registerMessageRenderer: noop,
     hasMessageRenderer: () => false,
     renderMessage: () => null,
+    addAutocompleteProvider: () => noop,
+    hasAutocomplete: () => false,
+    autocomplete: () => Promise.resolve(null),
     select: dialogNoop,
     confirm: () => Promise.resolve(false),
     input: dialogNoop,

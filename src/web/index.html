@@ -386,6 +386,14 @@
             .msg.assistant .body {
                 white-space: normal;
             }
+            /* Markdown surface nodes (e.g. extension-rendered custom messages)
+               render inside .msg's pre-wrap context. Reset to normal so the
+               newlines renderMarkdown puts *between* block tags (</p>\n<p>)
+               aren't shown as blank lines; fenced code keeps its own <pre>
+               whitespace. */
+            .md {
+                white-space: normal;
+            }
             /* User turns get the theme's userMessageBg/Text wash (the TUI tints
                the whole user block); customMessage* + selectedBg vars are exposed
                in :root for extension-rendered messages (folds toward #19). */

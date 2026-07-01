@@ -1427,17 +1427,23 @@ let acIndex = 0;
 // merged into the `/` palette alongside the built-in client COMMANDS. Refreshed
 // on thread switch and after /reload.
 let extCommands = [];
+// Whether the active thread has any extension autocomplete providers
+// (piweb.addAutocompleteProvider). Gates the `/autocomplete` round-trip so
+// plain prose typing doesn't hit the host on every keystroke.
+let extAcEnabled = false;
 
 // Fetch the active thread's registered slash commands and map them to typeahead
 // entries. Skips any that collide with a built-in client command.
 async function refreshCommands() {
     if (!activeThreadId) {
         extCommands = [];
+        extAcEnabled = false;
         return;
     }
     const data = await getJson(
         "/commands?thread=" + encodeURIComponent(activeThreadId),
     );
+    extAcEnabled = !!data?.autocomplete;
     const builtin = new Set(COMMANDS.map((c) => c.value));
     extCommands = (data?.items || [])
         .map((c) => ({
@@ -1528,6 +1534,45 @@ async function showDirAc(query) {
     renderAc();
 }
 
+// Extension-supplied completions (piweb.addAutocompleteProvider). The host runs
+// the active thread's providers against the composer text + caret and returns a
+// `{ start, end, items }` splice span. Guarded by acReq like the other async
+// sources so a slow response can't clobber a newer keystroke.
+async function showExtAc(text, caret) {
+    const myReq = ++acReq;
+    let result = null;
+    try {
+        const r = await fetch("/autocomplete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                text,
+                caret,
+                threadId: activeThreadId || undefined,
+            }),
+        });
+        result = await r.json();
+    } catch {}
+    if (myReq !== acReq) return; // superseded
+    const items = (result?.items || [])
+        .map((it) => ({
+            value: it.value,
+            label: it.label || it.value,
+            description: it.description || "",
+        }))
+        .filter((it) => it.value);
+    if (!items.length) {
+        closeAc();
+        return;
+    }
+    acMode = "ext";
+    acAtStart = Number.isInteger(result.start) ? result.start : caret;
+    acAtEnd = Number.isInteger(result.end) ? result.end : caret;
+    acItems = items;
+    acIndex = 0;
+    renderAc();
+}
+
 function renderAc() {
     if (!acItems.length) {
         closeAc();
@@ -1594,6 +1639,13 @@ function updateAc() {
         return;
     }
 
+    // Extension-supplied completions (e.g. a `/md <file>` provider). Only when
+    // the active thread registered providers, so prose typing stays local.
+    if (extAcEnabled && v.trim()) {
+        showExtAc(v, caret); // async; guarded by acReq
+        return;
+    }
+
     closeAc();
 }
 
@@ -1617,6 +1669,30 @@ function acceptAc(run) {
         return;
     }
 
+    // Extension completions (piweb.addAutocompleteProvider) splice their value
+    // into the provider's [start, end) span. Enter runs the resulting line
+    // (e.g. `/md <file>`); Tab inserts and keeps editing.
+    if (acMode === "ext") {
+        const v = $prompt.value;
+        const before = v.slice(0, acAtStart);
+        const after = v.slice(acAtEnd);
+        const line = before + it.value + after;
+        if (run) {
+            closeAc();
+            $prompt.value = "";
+            syncHighlight(); // repaint the now-empty highlight backdrop
+            runInput(line);
+            return;
+        }
+        $prompt.value = line;
+        const pos = before.length + it.value.length;
+        closeAc();
+        $prompt.focus();
+        $prompt.setSelectionRange(pos, pos);
+        autoGrow();
+        return;
+    }
+
     // Directory completion for `/new <dir>`: Enter creates a thread in the
     // selected dir; Tab drills into it (appends `/`) so you can keep navigating.
     if (acMode === "dir") {
@@ -1625,6 +1701,7 @@ function acceptAc(run) {
         if (run) {
             closeAc();
             $prompt.value = "";
+            syncHighlight(); // repaint the now-empty highlight backdrop
             runInput(before + it.value);
             return;
         }
@@ -2499,6 +2576,12 @@ function onSseMessage(e) {
         case "bash":
             if (m.status === "start") {
                 bashEl = bashBubble(m.command, m.excludeFromContext);
+                // Seed the Up/Down input history with the full `!`/`!!` text
+                // (mirrors the pi TUI, which stores run bash commands too).
+                if (m.command)
+                    pushHistory(
+                        (m.excludeFromContext ? "!!" : "!") + m.command,
+                    );
             } else {
                 if (!bashEl) bashEl = bashBubble("", false);
                 bashEl.apply(m);

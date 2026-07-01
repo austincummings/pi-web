@@ -82,6 +82,15 @@ export function createPiWebHost({ broadcast, getPi }) {
      * @type {Map<string, (message:any, opts:any)=>any>}
      */
     const messageRenderers = new Map();
+    /**
+     * Extension-supplied composer autocomplete providers (the web analogue of
+     * pi-tui `ctx.ui.addAutocompleteProvider`). Each is called with the current
+     * composer `{ text, caret }` and returns completion items (+ an optional
+     * replace span) or null when it doesn't apply. Providers run in-process;
+     * the browser queries them over `/autocomplete` as the user types.
+     * @type {((ctx:{text:string,caret:number})=>any)[]}
+     */
+    const autocompleteProviders = [];
     let orderSeq = 0;
     let uiSeq = 0;
     // pi's runtime label shown in place of a collapsed thinking block
@@ -435,6 +444,84 @@ export function createPiWebHost({ broadcast, getPi }) {
         },
 
         /**
+         * Register an extension composer autocomplete provider. Mirrors pi-tui
+         * `ctx.ui.addAutocompleteProvider`: the provider gets `{ text, caret }`
+         * and returns items (`string` | `{value,label?,description?}`) either as
+         * a bare array (replacing the token before the caret) or as
+         * `{ start, end, items }` to control the spliced span. Returning null/an
+         * empty list means "no completion here". Returns a disposer.
+         * @param {(ctx:{text:string,caret:number})=>any} provider
+         * @returns {() => void}
+         */
+        addAutocompleteProvider(provider) {
+            if (typeof provider !== "function") return () => {};
+            autocompleteProviders.push(provider);
+            return () => {
+                const i = autocompleteProviders.indexOf(provider);
+                if (i !== -1) autocompleteProviders.splice(i, 1);
+            };
+        },
+        /** Whether any autocomplete provider is registered (client gate). */
+        hasAutocomplete() {
+            return autocompleteProviders.length > 0;
+        },
+        /**
+         * Run the registered providers against a composer snapshot and return
+         * the first non-empty completion, normalized to `{ start, end, items }`
+         * (or null). Called by the host for the browser's `/autocomplete`.
+         * @param {{text?:string, caret?:number}} ctx
+         * @returns {Promise<{start:number,end:number,items:{value:string,label:string,description?:string}[]}|null>}
+         */
+        async autocomplete(ctx) {
+            const text = String(ctx?.text ?? "");
+            const caret = Number.isInteger(ctx?.caret)
+                ? Math.max(0, Math.min(ctx.caret, text.length))
+                : text.length;
+            // Default span: the whitespace-delimited token ending at the caret.
+            const tokenStart =
+                caret - (text.slice(0, caret).match(/\S*$/)?.[0].length ?? 0);
+            const base = { text, caret };
+            for (const provider of autocompleteProviders) {
+                let r;
+                try {
+                    r = await provider(base);
+                } catch (err) {
+                    console.error("[piweb] autocomplete provider failed:", err);
+                    continue;
+                }
+                if (!r) continue;
+                const rawItems = Array.isArray(r) ? r : r.items;
+                if (!Array.isArray(rawItems) || rawItems.length === 0) continue;
+                const items = rawItems
+                    .map((it) =>
+                        typeof it === "string"
+                            ? { value: it, label: it }
+                            : {
+                                  value: String(it.value ?? it.label ?? ""),
+                                  label: String(it.label ?? it.value ?? ""),
+                                  description:
+                                      it.description != null
+                                          ? String(it.description)
+                                          : undefined,
+                              },
+                    )
+                    .filter((it) => it.value !== "");
+                if (!items.length) continue;
+                const hasSpan = !Array.isArray(r);
+                const start =
+                    hasSpan && Number.isInteger(r.start)
+                        ? Math.max(0, Math.min(r.start, caret))
+                        : tokenStart;
+                const end =
+                    hasSpan && Number.isInteger(r.end)
+                        ? Math.max(start, Math.min(r.end, text.length))
+                        : caret;
+                return { start, end, items: items.slice(0, 50) };
+            }
+            return null;
+        },
+
+        /**
          * Resolve an open blocking dialog with the browser's answer. Called by
          * the host when a `/ui-response` arrives. Unknown ids are ignored
          * (already settled by timeout/abort/refresh).
@@ -511,6 +598,7 @@ export function createPiWebHost({ broadcast, getPi }) {
             surfaces.clear();
             statuses.clear();
             messageRenderers.clear();
+            autocompleteProviders.length = 0;
             // cancel any open dialogs so awaiting extensions unblock
             for (const e of [...pendingUi.values()]) e.settle(undefined);
             push();
