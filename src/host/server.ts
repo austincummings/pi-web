@@ -26,7 +26,7 @@
  * thread id it targets.
  */
 import { readFile, readdir, unlink } from "node:fs/promises";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
     basename,
@@ -38,7 +38,7 @@ import {
     sep,
 } from "node:path";
 import { homedir, tmpdir } from "node:os";
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileP = promisify(execFile);
@@ -1239,7 +1239,116 @@ const threads = {
         const t = await createThread(SessionManager.forkFrom(abs, targetCwd));
         return { id: t.id, cwd: t.cwd };
     },
+    /**
+     * Delete a thread's session file (Ctrl+D in the resume picker). Mirrors the
+     * pi TUI: refuse a running thread, trash-then-unlink the file, evict any
+     * live copy, then rebroadcast the list. Threads not yet flushed to disk are
+     * simply dropped from the registry.
+     * @param {string} threadId
+     */
+    async delete(threadId) {
+        if (!threadId) throw new Error("missing threadId");
+        // Parity with the TUI's "Cannot delete the currently active session":
+        // the web has no single active thread, so block any thread with a turn
+        // in flight instead.
+        if (threadRuntimes.get(threadId)?.busy)
+            throw new Error("Cannot delete a running thread");
+        const file = await sessionFileForThread(threadId);
+        if (!file) {
+            // No session file yet (no assistant message flushed): nothing to
+            // unlink, just drop it from the registry so it leaves the list.
+            threadRuntimes.delete(threadId);
+            broadcastThreads();
+            return { ok: true, method: "unlink" as const };
+        }
+        const result = await deleteSessionFile(file);
+        if (result.ok) {
+            threadRuntimes.delete(threadId); // evict any live copy
+            broadcastThreads(); // SSE → every client refreshes its list
+        }
+        return result;
+    },
+    /**
+     * Rename a thread's session (Ctrl+R in the resume picker) by appending a
+     * session_info entry. Works on loaded and on-disk threads.
+     * @param {string} threadId
+     * @param {string} name
+     */
+    async rename(threadId, name) {
+        const n = (name ?? "").trim();
+        if (!n) throw new Error("missing name");
+        const s = sessionFor(threadId);
+        if (s) {
+            s.setSessionName(n);
+            broadcastThreads();
+            return { ok: true };
+        }
+        const file = await sessionFileForThread(threadId);
+        if (!file) throw new Error(`unknown thread: ${threadId}`);
+        const sm = SessionManager.open(file);
+        sm.appendSessionInfo(n);
+        broadcastThreads();
+        return { ok: true };
+    },
 };
+
+/**
+ * Resolve a threadId to its on-disk session file path. Prefers a live registry
+ * entry (so brand-new threads resolve before any disk listing), then falls back
+ * to scanning all sessions so unloaded/old threads are still deletable.
+ * @param {string} threadId
+ * @returns {Promise<string | undefined>}
+ */
+async function sessionFileForThread(threadId) {
+    const live = threadRuntimes
+        .get(threadId)
+        ?.session?.sessionManager?.getSessionFile?.();
+    if (live) return live;
+    const infos = await SessionManager.listAll().catch(() => []);
+    return infos.find((i) => i.id === threadId)?.path;
+}
+
+/**
+ * Delete a session file, trying the `trash` CLI first (recoverable) and falling
+ * back to a permanent unlink. Ported verbatim from the pi TUI's
+ * session-selector so behavior matches exactly.
+ * @param {string} sessionPath
+ */
+async function deleteSessionFile(
+    sessionPath,
+): Promise<{ ok: boolean; method: "trash" | "unlink"; error?: string }> {
+    const trashArgs = sessionPath.startsWith("-")
+        ? ["--", sessionPath]
+        : [sessionPath];
+    const trashResult = spawnSync("trash", trashArgs, { encoding: "utf-8" });
+
+    const getTrashErrorHint = () => {
+        const parts = [];
+        if (trashResult.error) parts.push(trashResult.error.message);
+        const stderr = trashResult.stderr?.trim();
+        if (stderr) parts.push(stderr.split("\n")[0] ?? stderr);
+        if (parts.length === 0) return null;
+        return `trash: ${parts.join(" · ").slice(0, 200)}`;
+    };
+
+    // trash reported success, or the file is gone anyway → treat as success.
+    if (trashResult.status === 0 || !existsSync(sessionPath)) {
+        return { ok: true, method: "trash" };
+    }
+
+    // Fallback to permanent deletion.
+    try {
+        await unlink(sessionPath);
+        return { ok: true, method: "unlink" };
+    } catch (err) {
+        const unlinkError = err instanceof Error ? err.message : String(err);
+        const trashErrorHint = getTrashErrorHint();
+        const error = trashErrorHint
+            ? `${unlinkError} (${trashErrorHint})`
+            : unlinkError;
+        return { ok: false, method: "unlink", error };
+    }
+}
 
 // Describe one session-tree node as a navigable jump point for /tree. Returns
 // null for entries that aren't useful to jump to (model/thinking changes, tool

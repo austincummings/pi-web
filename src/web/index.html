@@ -1190,6 +1190,23 @@
             .picker .item.new {
                 color: var(--acc2);
             }
+            /* delete-confirmation: target row + hint turn red (TUI parity) */
+            .picker .item.confirm-delete .name,
+            .picker .item.confirm-delete .meta {
+                color: var(--err);
+            }
+            .picker .item.confirm-delete {
+                box-shadow: inset 2px 0 0 var(--err);
+            }
+            .picker .picker-hint {
+                padding: 8px 14px;
+                font-size: 13px;
+                color: var(--dim);
+                border-bottom: 1px solid var(--line);
+            }
+            .picker .picker-hint.danger {
+                color: var(--err);
+            }
             /* blocking dialogs (piweb select/confirm/input/editor) */
             #dialog {
                 position: fixed;

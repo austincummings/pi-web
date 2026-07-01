@@ -1249,6 +1249,10 @@ function updateTitle() {
 let pickerItems = [];
 let pickerIndex = -1;
 let pickerNav = false;
+// threadId of the row awaiting a delete confirmation (Ctrl+D), or null. While
+// set, the picker swallows every key but Enter (confirm) / Esc (cancel), just
+// like the pi TUI's session-selector delete flow.
+let pickerConfirmId = null;
 
 function setPickerSel(i) {
     if (!pickerItems.length) return;
@@ -1264,6 +1268,13 @@ function openPicker() {
     $picker.innerHTML = "<h3>Resume thread</h3>";
     pickerItems = [];
     pickerNav = true;
+    pickerConfirmId = null;
+
+    // Hint line under the title, mirroring the TUI selector header. Updated in
+    // place by renderPickerHint() when entering/leaving delete confirmation.
+    const hint = document.createElement("div");
+    hint.className = "picker-hint";
+    $picker.appendChild(hint);
 
     const mk = (cls, name, meta, onClick) => {
         const item = document.createElement("div");
@@ -1328,6 +1339,11 @@ function openPicker() {
                 },
             );
             item.title = t.cwd || "";
+            item.dataset.threadId = t.id;
+            // The active/running thread can't be deleted (TUI parity).
+            item.dataset.deletable = String(
+                !(t.id === activeThreadId || t.running),
+            );
             $picker.appendChild(item);
             pickerItems.push(item);
         }
@@ -1337,6 +1353,7 @@ function openPicker() {
         el.classList.contains("active"),
     );
     setPickerSel(activeIdx >= 0 ? activeIdx : 0);
+    renderPickerHint();
     // Blur the composer so its Up/Down history-browse handler doesn't compete
     // with the picker's arrow-key navigation while the modal is open.
     $prompt?.blur();
@@ -1349,9 +1366,72 @@ function closePicker() {
     pickerNav = false;
     pickerItems = [];
     pickerIndex = -1;
+    pickerConfirmId = null;
     modelNav = false;
     modelRows = [];
     if (wasNav) $prompt?.focus(); // return focus to the composer
+}
+
+// Update the picker's hint line: normal nav hints, or the red delete-confirm
+// prompt while a row is pending deletion (mirrors the TUI selector header).
+function renderPickerHint() {
+    const hint = $picker?.querySelector(".picker-hint");
+    if (!hint) return;
+    if (pickerConfirmId) {
+        hint.textContent = "Delete thread? Enter confirm · Esc cancel";
+        hint.classList.add("danger");
+    } else {
+        hint.textContent = "↑↓ move · Enter open · Ctrl+D delete";
+        hint.classList.remove("danger");
+    }
+}
+
+// Begin a delete confirmation on the highlighted row. No-ops on the "New
+// thread" row and refuses the active/running thread (TUI parity).
+function startDeleteConfirmForSelected() {
+    const el = pickerItems[pickerIndex];
+    const id = el?.dataset?.threadId;
+    if (!id) return; // "＋ New thread" or a non-thread row
+    if (el.dataset.deletable !== "true") {
+        toast("Cannot delete the currently active thread", "error");
+        return;
+    }
+    pickerConfirmId = id;
+    el.classList.add("confirm-delete");
+    renderPickerHint();
+}
+
+function cancelDeleteThread() {
+    pickerItems.forEach((el) => el.classList.remove("confirm-delete"));
+    pickerConfirmId = null;
+    renderPickerHint();
+}
+
+async function confirmDeleteThread() {
+    const id = pickerConfirmId;
+    pickerConfirmId = null;
+    if (!id) return;
+    let r;
+    try {
+        // Use post() (not postThread) so the *target* threadId is sent, not the
+        // thread this client is currently viewing.
+        r = await (await post("/threads/delete", { threadId: id })).json();
+    } catch (err) {
+        toast(`Failed to delete: ${err?.message ?? err}`, "error");
+        return;
+    }
+    if (r?.ok) {
+        toast(
+            r.method === "trash" ? "Thread moved to trash" : "Thread deleted",
+            "info",
+        );
+        // broadcastThreads() refreshes threadItems over SSE; rebuild the open
+        // picker from the new list so the row disappears immediately.
+        if ($overlay?.classList.contains("show")) openPicker();
+    } else {
+        toast(`Failed to delete: ${r?.error ?? "unknown error"}`, "error");
+        renderPickerHint();
+    }
 }
 
 $overlay?.addEventListener("click", (e) => {
@@ -2365,6 +2445,24 @@ document.addEventListener("keydown", (e) => {
     // Ignore the very keystroke that opened the picker (e.g. the Enter that
     // submitted `/resume`), which calls preventDefault() before bubbling here.
     if (e.defaultPrevented) return;
+    // Delete confirmation active: swallow every key but Enter/Esc (TUI parity).
+    if (pickerConfirmId) {
+        e.preventDefault();
+        if (e.key === "Enter") confirmDeleteThread();
+        else if (e.key === "Escape") {
+            // Stop the global Escape handler from also closing the picker.
+            e.stopImmediatePropagation();
+            cancelDeleteThread();
+        }
+        return;
+    }
+    // Ctrl+D or Ctrl+Backspace → start a delete confirmation on the selection.
+    // preventDefault stops the browser's bookmark (Ctrl+D) shortcut.
+    if (e.ctrlKey && (e.key === "d" || e.key === "Backspace")) {
+        e.preventDefault();
+        startDeleteConfirmForSelected();
+        return;
+    }
     switch (e.key) {
         case "ArrowDown":
             e.preventDefault();
@@ -2507,7 +2605,10 @@ function onSseMessage(e) {
         case "threads":
             threadItems = m.items || [];
             updateTitle();
-            if ($overlay?.classList.contains("show")) openPicker();
+            // Refresh an open resume picker, but not mid delete-confirmation
+            // (openPicker() would reset pickerConfirmId and drop the prompt).
+            if ($overlay?.classList.contains("show") && !pickerConfirmId)
+                openPicker();
             break;
         case "thread_switched":
             // the host tells us which thread this connection resolved to;

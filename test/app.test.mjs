@@ -161,6 +161,113 @@ test("thread routes delegate to injected callbacks", async () => {
     }
 });
 
+test("/threads/delete + /threads/rename delegate to callbacks", async () => {
+    const calls = [];
+    const bus = createBus();
+    const piweb = createPiWebHost({
+        broadcast: () => {},
+        getPi: () => ({}),
+    });
+    const server = createApp({
+        web: "src/web",
+        bus,
+        piweb,
+        threads: {
+            list: async () => [],
+            delete: async (threadId) => {
+                calls.push(`delete:${threadId}`);
+                if (threadId === "running")
+                    return {
+                        ok: false,
+                        error: "Cannot delete a running thread",
+                    };
+                return { ok: true, method: "trash" };
+            },
+            rename: async (threadId, name) => {
+                calls.push(`rename:${threadId}:${name}`);
+                return { ok: true };
+            },
+        },
+    });
+    const base = await new Promise((r) =>
+        server.listen(0, "127.0.0.1", () =>
+            r(`http://127.0.0.1:${server.address().port}`),
+        ),
+    );
+    const postJson = (path, body) =>
+        fetch(`${base}${path}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        });
+    try {
+        // Successful delete → 200 { ok, method }.
+        const ok = await postJson("/threads/delete", { threadId: "a" });
+        expect(ok.status).toBe(200);
+        expect(await ok.json()).toEqual({ ok: true, method: "trash" });
+
+        // Refused delete (running) → 400 with the message and ok:false.
+        const bad = await postJson("/threads/delete", { threadId: "running" });
+        expect(bad.status).toBe(400);
+        const badBody = await bad.json();
+        expect(badBody.ok).toBe(false);
+        expect(badBody.error).toContain("running");
+
+        // Rename delegates with threadId + name.
+        const rn = await postJson("/threads/rename", {
+            threadId: "a",
+            name: "My Thread",
+        });
+        expect(rn.status).toBe(200);
+        expect(await rn.json()).toEqual({ ok: true });
+
+        expect(calls).toEqual([
+            "delete:a",
+            "delete:running",
+            "rename:a:My Thread",
+        ]);
+    } finally {
+        server.close();
+    }
+});
+
+test("/threads/delete surfaces a thrown callback error as 400", async () => {
+    const bus = createBus();
+    const piweb = createPiWebHost({
+        broadcast: () => {},
+        getPi: () => ({}),
+    });
+    const server = createApp({
+        web: "src/web",
+        bus,
+        piweb,
+        threads: {
+            list: async () => [],
+            delete: async () => {
+                throw new Error("boom");
+            },
+        },
+    });
+    const base = await new Promise((r) =>
+        server.listen(0, "127.0.0.1", () =>
+            r(`http://127.0.0.1:${server.address().port}`),
+        ),
+    );
+    try {
+        const res = await fetch(`${base}/threads/delete`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ threadId: "a" }),
+        });
+        expect(res.status).toBe(400);
+        const body = await res.json();
+        expect(body.ok).toBe(false);
+        expect(body.error).toContain("boom");
+    } finally {
+        server.close();
+    }
+});
+
 test("/files returns the project file list for the @ mention typeahead", async () => {
     const bus = createBus();
     const piweb = createPiWebHost({

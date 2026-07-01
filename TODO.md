@@ -244,6 +244,19 @@ Simple, line-based backlog. Check items off as they land.
       `{ type:"image", data, mimeType }` content blocks and re-extracts them on
       replay (`textOf` / image-block helper) so they render as inline transcript
       thumbnails. Mirrors the TUI's `app.clipboard.pasteImage` + file processor.
+- [x] 28. Reach thread-deletion (and rename) parity with the pi TUI's session
+      selector. In the resume picker, `Ctrl+D` / `Ctrl+Backspace` starts an inline
+      delete confirmation on the highlighted thread (`Delete thread? Enter · Esc`,
+      row + hint turn red); while confirming, every key but Enter/Esc is swallowed.
+      `POST /threads/delete { threadId }` runs the host's `threads.delete`, which
+      ports the TUI's `deleteSessionFile` verbatim (try the `trash` CLI first, then
+      permanent `unlink`), refuses a running thread ("Cannot delete a running
+      thread"), evicts any live copy from `threadRuntimes`, and `broadcastThreads()`
+      so every SSE client's list refreshes. Not-yet-flushed threads are just dropped
+      from the registry. Filesystem paths stay server-side (id-only API preserved).
+      `threads.rename` (`POST /threads/rename`) appends a `session_info` name for
+      loaded or on-disk threads. Toasts mirror the TUI status ("Thread moved to
+      trash" / "Thread deleted" / "Failed to delete: …").
 
 ## Docs
 

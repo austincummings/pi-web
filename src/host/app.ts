@@ -89,6 +89,12 @@ export interface AppOptions {
         clone?: (threadId?: string) => Promise<any>;
         fork?: (threadId: string | undefined, entryId: string) => Promise<any>;
         importJsonl?: (path: string, threadId?: string) => Promise<any>;
+        delete?: (threadId: string) => Promise<{
+            ok: boolean;
+            method?: "trash" | "unlink";
+            error?: string;
+        }>;
+        rename?: (threadId: string, name: string) => Promise<any>;
     };
     sessionApi?: Record<string, (...args: any[]) => any>;
     modelApi?: {
@@ -503,6 +509,32 @@ export function createApp({
                     body.path,
                     body.threadId || undefined,
                 )) ?? {};
+            sendJson(res, 200, result);
+        } catch (err) {
+            sendJson(res, 400, { error: String(err?.message ?? err) });
+        }
+    });
+    // Delete a thread's session (Ctrl+D in the resume picker). Mirrors the pi
+    // TUI: trash-then-unlink, blocking a running thread. Returns { ok, method }.
+    router.post("/threads/delete", async ({ res, body }) => {
+        try {
+            const result = (await threads?.delete?.(body.threadId)) ?? {
+                ok: false,
+                error: "delete not supported",
+            };
+            sendJson(res, result.ok ? 200 : 400, result);
+        } catch (err) {
+            sendJson(res, 400, {
+                ok: false,
+                error: String(err?.message ?? err),
+            });
+        }
+    });
+    // Rename a thread's session (Ctrl+R in the resume picker).
+    router.post("/threads/rename", async ({ res, body }) => {
+        try {
+            const result =
+                (await threads?.rename?.(body.threadId, body.name)) ?? {};
             sendJson(res, 200, result);
         } catch (err) {
             sendJson(res, 400, { error: String(err?.message ?? err) });
