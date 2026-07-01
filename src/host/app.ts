@@ -36,7 +36,11 @@ export interface AppOptions {
     piweb: any;
     theme?: Record<string, string>;
     bundleWeb?: () => Promise<string>;
-    onPrompt?: (text: string, threadId?: string) => void;
+    onPrompt?: (
+        text: string,
+        threadId?: string,
+        images?: Array<{ data: string; mimeType: string }>,
+    ) => void;
     onDequeue?: (
         threadId: string | undefined,
         abort: boolean,
@@ -144,7 +148,7 @@ function sendJson(res, code, obj) {
  * @param {string} o.web
  * @param {ReturnType<typeof createBus>} o.bus
  * @param {object} o.piweb     piweb host registry/router (snapshot/dispatch)
- * @param {(text:string, threadId?:string)=>void} [o.onPrompt]
+ * @param {(text:string, threadId?:string, images?:{data:string,mimeType:string}[])=>void} [o.onPrompt]
  * @param {(threadId?:string)=>Promise<void>} [o.onReload]
  * @param {(threadId?:string)=>Promise<void>} [o.onInterrupt]
  * @param {(command:string, exclude:boolean, threadId?:string)=>void} [o.onBash]
@@ -318,7 +322,9 @@ export function createApp({
 
     router.post("/prompt", ({ res, body }) => {
         const text = (body.text ?? "").trim();
-        if (text) onPrompt?.(text, body.threadId || undefined);
+        const images = Array.isArray(body.images) ? body.images : undefined;
+        if (text || images?.length)
+            onPrompt?.(text, body.threadId || undefined, images);
         res.writeHead(202).end();
     });
     // Restore the thread's queued (steering/follow-up) messages back to the

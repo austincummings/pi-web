@@ -740,6 +740,64 @@
                 width: 1ch;
                 text-align: center;
             }
+            /* Pending pasted/attached images waiting below the composer,
+               shown as removable thumbnail chips until the message is sent. */
+            .attachments {
+                display: none;
+                flex-wrap: wrap;
+                gap: 8px;
+                padding: 8px 14px 0;
+            }
+            .attachments.show {
+                display: flex;
+            }
+            .attach-chip {
+                position: relative;
+                width: 56px;
+                height: 56px;
+                border-radius: 6px;
+                overflow: hidden;
+                border: 1px solid var(--line);
+                background: #0c1117;
+            }
+            .attach-chip img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+                display: block;
+            }
+            .attach-remove {
+                position: absolute;
+                top: 2px;
+                right: 2px;
+                width: 18px;
+                height: 18px;
+                line-height: 16px;
+                padding: 0;
+                border: none;
+                border-radius: 50%;
+                background: rgba(0, 0, 0, 0.65);
+                color: #fff;
+                font-size: 13px;
+                cursor: pointer;
+            }
+            .attach-remove:hover {
+                background: rgba(0, 0, 0, 0.85);
+            }
+            /* Inline image thumbnails rendered inside a transcript bubble. */
+            .msg-images {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin-top: 8px;
+            }
+            .msg-image {
+                max-width: 240px;
+                max-height: 240px;
+                border-radius: 6px;
+                border: 1px solid var(--line);
+                cursor: pointer;
+            }
             form#ask {
                 display: flex;
                 gap: 8px;
@@ -1067,6 +1125,11 @@
                     <span class="spin"></span
                     ><span class="label">Working…</span>
                 </div>
+                <div
+                    id="attachments"
+                    class="attachments"
+                    aria-live="polite"
+                ></div>
                 <form id="ask">
                     <div class="input-wrap">
                         <div

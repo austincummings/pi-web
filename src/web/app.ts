@@ -81,6 +81,100 @@ const $ask = document.getElementById("ask") as HTMLFormElement;
 const $ac = document.getElementById("ac");
 const $working = document.getElementById("working");
 const $queued = document.getElementById("queued");
+const $attachments = document.getElementById("attachments");
+
+// ---- pasted/attached images (Ctrl+V into the composer) --------------------
+// Images pasted (or dropped) into the composer are held here as base64 until
+// the message is sent, and shown as removable thumbnail chips below the input.
+// Each entry: { data: base64 (no data: prefix), mimeType, url: data-URL }.
+/** @type {{data:string; mimeType:string; url:string}[]} */
+let pendingImages = [];
+const MAX_IMAGE_DIM = 2000; // downscale large pastes (mirrors the pi CLI cap)
+
+// Read a File as a data: URL.
+function readAsDataURL(file): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onerror = () => reject(r.error);
+        r.onload = () => resolve(String(r.result));
+        r.readAsDataURL(file);
+    });
+}
+
+// Decode a data-URL into an <img> so we can measure/resize it on a canvas.
+function loadImageEl(url): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+        const im = new Image();
+        im.onload = () => resolve(im);
+        im.onerror = reject;
+        im.src = url;
+    });
+}
+
+// Turn a File into a pending-image record, downscaling to MAX_IMAGE_DIM on the
+// longest edge when needed (keeps request payloads sane). Falls back to the
+// original bytes if canvas processing fails.
+async function fileToImage(file) {
+    const url = await readAsDataURL(file);
+    let outUrl = url;
+    let mimeType = file.type || "image/png";
+    try {
+        const im = await loadImageEl(url);
+        const longest = Math.max(im.width, im.height);
+        const scale = longest > MAX_IMAGE_DIM ? MAX_IMAGE_DIM / longest : 1;
+        if (scale < 1) {
+            const c = document.createElement("canvas");
+            c.width = Math.round(im.width * scale);
+            c.height = Math.round(im.height * scale);
+            c.getContext("2d").drawImage(im, 0, 0, c.width, c.height);
+            outUrl = c.toDataURL("image/png");
+            mimeType = "image/png";
+        }
+    } catch {
+        /* keep the original bytes */
+    }
+    const comma = outUrl.indexOf(",");
+    return { mimeType, data: outUrl.slice(comma + 1), url: outUrl };
+}
+
+// Ingest a pasted/dropped image file into the pending list.
+async function addImageFile(file) {
+    try {
+        pendingImages.push(await fileToImage(file));
+        renderAttachments();
+    } catch {
+        notice("could not read pasted image");
+    }
+}
+
+// Paint the pending-image thumbnail chips below the composer.
+function renderAttachments() {
+    if (!$attachments) return;
+    $attachments.innerHTML = "";
+    if (!pendingImages.length) {
+        $attachments.classList.remove("show");
+        return;
+    }
+    pendingImages.forEach((img, i) => {
+        const chip = document.createElement("div");
+        chip.className = "attach-chip";
+        const thumb = document.createElement("img");
+        thumb.src = img.url;
+        thumb.alt = "pasted image";
+        const rm = document.createElement("button");
+        rm.type = "button";
+        rm.className = "attach-remove";
+        rm.textContent = "\u00d7";
+        rm.title = "Remove image";
+        rm.addEventListener("click", () => {
+            pendingImages.splice(i, 1);
+            renderAttachments();
+        });
+        chip.append(thumb, rm);
+        $attachments.appendChild(chip);
+    });
+    $attachments.classList.add("show");
+}
 
 // ---- steering queue (mirrors the pi TUI's pending-messages display) --------
 // While a turn is in flight the host appends each submitted message to this
@@ -279,12 +373,24 @@ const COMMANDS = [
     },
 ];
 
-function bubble(role, text = "") {
+function bubble(role, text = "", images = []) {
     clearEmpty();
     const el = document.createElement("div");
     el.className = `msg ${role}`;
     el.innerHTML = `<div class="role">${role}</div><div class="body"></div>`;
     el.querySelector(".body").textContent = text;
+    if (images && images.length) {
+        const wrap = document.createElement("div");
+        wrap.className = "msg-images";
+        images.forEach((im) => {
+            const img = document.createElement("img");
+            img.className = "msg-image";
+            img.src = im.url || `data:${im.mimeType};base64,${im.data}`;
+            img.addEventListener("click", () => window.open(img.src, "_blank"));
+            wrap.appendChild(img);
+        });
+        el.querySelector(".body").appendChild(wrap);
+    }
     $transcript.appendChild(el);
     $transcript.scrollTop = $transcript.scrollHeight;
     return el;
@@ -1325,9 +1431,9 @@ function showOverlay(title, contentEl) {
     $overlay.classList.add("show");
 }
 
-function runInput(text) {
+function runInput(text, images = []) {
     text = (text ?? "").trim();
-    if (!text) return;
+    if (!text && !images.length) return;
     if (text.startsWith("!")) {
         const exclude = text.startsWith("!!");
         const command = text.slice(exclude ? 2 : 1).trim();
@@ -1341,7 +1447,10 @@ function runInput(text) {
         const arg = sp === -1 ? "" : text.slice(sp + 1).trim();
         if (runCommand(cmd, arg)) return;
     }
-    postThread("/prompt", { text });
+    postThread("/prompt", {
+        text,
+        images: images.length ? images : undefined,
+    });
 }
 
 // Create a fresh thread, then navigate to it (URL + SSE re-point). An optional
@@ -1794,6 +1903,35 @@ $prompt.addEventListener("input", () => {
     updateAc();
     applyThinkingBorder(); // live `!` bash-mode border toggle
 });
+
+// Ctrl/Cmd+V of an image (screenshot, copied file) attaches it to the message
+// rather than pasting garbage text. Plain-text pastes fall through untouched.
+$prompt.addEventListener("paste", (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files = [];
+    for (const it of items)
+        if (it.kind === "file" && it.type.startsWith("image/")) {
+            const f = it.getAsFile();
+            if (f) files.push(f);
+        }
+    if (!files.length) return; // no image → let the normal text paste happen
+    e.preventDefault();
+    files.forEach(addImageFile);
+});
+
+// Drag-and-drop images onto the composer, same plumbing as paste.
+$prompt.addEventListener("dragover", (e) => {
+    if (e.dataTransfer?.types?.includes("Files")) e.preventDefault();
+});
+$prompt.addEventListener("drop", (e) => {
+    const files = Array.from(e.dataTransfer?.files || []).filter((f) =>
+        f.type.startsWith("image/"),
+    );
+    if (!files.length) return;
+    e.preventDefault();
+    files.forEach(addImageFile);
+});
 $prompt.addEventListener("keydown", (e) => {
     // Shift+Tab cycles the reasoning level (mirrors the pi TUI). It's a browser
     // focus-traversal key, so preventDefault to keep focus in the composer.
@@ -1939,13 +2077,19 @@ document.addEventListener("keydown", (e) => {
 $ask.addEventListener("submit", (e) => {
     e.preventDefault();
     const text = $prompt.value;
+    const images = pendingImages.map(({ data, mimeType }) => ({
+        data,
+        mimeType,
+    }));
     $prompt.value = "";
+    pendingImages = [];
+    renderAttachments();
     histIndex = null; // leave history-browse on send
     histDraft = "";
     autoGrow();
     applyThinkingBorder(); // clear any `!` bash-mode border
     closeAc();
-    runInput(text);
+    runInput(text, images);
 });
 
 // ---- SSE stream ----
@@ -2059,7 +2203,7 @@ function onSseMessage(e) {
             setThinkingHidden(!!m.hidden, false);
             break;
         case "user":
-            bubble("user", m.text);
+            bubble("user", m.text, m.images);
             pushHistory(m.text); // seed/extend per-thread input history
             histIndex = null;
             assistantEl = null;

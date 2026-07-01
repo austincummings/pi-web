@@ -382,6 +382,54 @@ test("/bash delegates to onBash with the exclude flag", async () => {
     }
 });
 
+test("/prompt forwards text and pasted image attachments to onPrompt", async () => {
+    const calls = [];
+    const bus = createBus();
+    const piweb = createPiWebHost({
+        broadcast: () => {},
+        getPi: () => ({}),
+    });
+    const server = createApp({
+        web: "src/web",
+        bus,
+        piweb,
+        onPrompt: (text, threadId, images) =>
+            calls.push({ text, threadId, images }),
+    });
+    const base = await new Promise((r) =>
+        server.listen(0, "127.0.0.1", () =>
+            r(`http://127.0.0.1:${server.address().port}`),
+        ),
+    );
+    try {
+        const images = [{ data: "AAAA", mimeType: "image/png" }];
+        // text + image
+        await fetch(`${base}/prompt`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: "look", images, threadId: "t1" }),
+        });
+        // image-only (empty text) still sends
+        await fetch(`${base}/prompt`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: "", images, threadId: "t1" }),
+        });
+        // no text and no images → ignored
+        await fetch(`${base}/prompt`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: "   ", threadId: "t1" }),
+        });
+        expect(calls.length).toBe(2);
+        expect(calls[0]).toEqual({ text: "look", threadId: "t1", images });
+        expect(calls[1].text).toBe("");
+        expect(calls[1].images).toEqual(images);
+    } finally {
+        server.close();
+    }
+});
+
 test("/dequeue delegates to onDequeue and returns the restored items", async () => {
     const calls = [];
     const bus = createBus();

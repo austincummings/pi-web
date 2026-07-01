@@ -370,6 +370,19 @@ function textOf(content) {
         .join("");
 }
 /**
+ * Pull image blocks out of a message's content (block[] only). Images live as
+ * `{ type:"image", data:base64, mimeType }` content blocks; returns the
+ * `{ data, mimeType }` records the web client renders as inline thumbnails.
+ * @param {unknown} content
+ * @returns {{data:string; mimeType:string}[]}
+ */
+function imagesOf(content) {
+    if (!Array.isArray(content)) return [];
+    return content
+        .filter((b) => b?.type === "image" && b.data)
+        .map((b) => ({ data: b.data, mimeType: b.mimeType }));
+}
+/**
  * Pull thinking/reasoning text out of a message's content (block[] only).
  * Thinking lives as `{ type:"thinking", thinking, redacted? }` content blocks.
  * @param {unknown} content
@@ -567,7 +580,13 @@ function subscribe(thread) {
         switch (ev.type) {
             case "message_start":
                 if (ev.message?.role === "user") {
-                    emit({ kind: "user", text: textOf(ev.message.content) });
+                    const frame: Record<string, unknown> = {
+                        kind: "user",
+                        text: textOf(ev.message.content),
+                    };
+                    const imgs = imagesOf(ev.message.content);
+                    if (imgs.length) frame.images = imgs;
+                    emit(frame);
                 } else if (ev.message?.role === "assistant") {
                     streamed = false;
                     streamedThinking = false;
@@ -796,9 +815,16 @@ function replayTranscript(s, send) {
     }
     for (const m of messages) {
         switch (m?.role) {
-            case "user":
-                send({ kind: "user", text: textOf(m.content) });
+            case "user": {
+                const frame: Record<string, unknown> = {
+                    kind: "user",
+                    text: textOf(m.content),
+                };
+                const imgs = imagesOf(m.content);
+                if (imgs.length) frame.images = imgs;
+                send(frame);
                 break;
+            }
             case "assistant": {
                 const think = thinkingOf(m.content);
                 if (think)
@@ -1606,8 +1632,9 @@ const server = createApp({
     /**
      * @param {string} text
      * @param {string} [threadId]
+     * @param {{data:string; mimeType:string}[]} [images]
      */
-    onPrompt: (text, threadId) => {
+    onPrompt: (text, threadId, images) => {
         const s = sessionFor(threadId);
         if (!s) return;
         // While a turn is in flight, pi keeps letting you type: each message is
@@ -1617,7 +1644,9 @@ const server = createApp({
         // the next turn automatically. `streamingBehavior` is required by the
         // SDK when streaming, so only pass it when a turn is actually running.
         const opts = s.isStreaming ? { streamingBehavior: "steer" } : undefined;
-        s.prompt(text, opts).catch((err) =>
+        // Attach any pasted/dropped images (base64 blocks) to the message.
+        const promptOpts = images?.length ? { ...opts, images } : opts;
+        s.prompt(text, promptOpts).catch((err) =>
             bus.broadcastToThread(threadId, {
                 kind: "error",
                 text: String(err?.message ?? err),
