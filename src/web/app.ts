@@ -394,7 +394,7 @@ function bubble(role, text = "", images = []) {
         el.querySelector(".body").appendChild(wrap);
     }
     $transcript.appendChild(el);
-    $transcript.scrollTop = $transcript.scrollHeight;
+    followBottom();
     return el;
 }
 
@@ -409,13 +409,13 @@ function bashBubble(command, excluded) {
     body.className = "body";
     el.append(head, body);
     $transcript.appendChild(el);
-    $transcript.scrollTop = $transcript.scrollHeight;
+    followBottom();
     return el;
 }
 
 function renderAssistant(el, text) {
     el.querySelector(".body").innerHTML = renderMarkdown(text);
-    $transcript.scrollTop = $transcript.scrollHeight;
+    followBottom();
 }
 
 // ---- Tool calls ----------------------------------------------------------
@@ -529,12 +529,31 @@ function nearBottom(pad = 40) {
     );
 }
 
+// Whether new output should snap the view to the bottom. We track this from the
+// user's own scrolling (appending content doesn't fire a scroll event, so the
+// flag keeps its value across DOM mutations) rather than sampling nearBottom()
+// after we've already grown the transcript. Starts true so the first messages
+// follow.
+let stickToBottom = true;
+$transcript.addEventListener(
+    "scroll",
+    () => {
+        stickToBottom = nearBottom();
+    },
+    { passive: true },
+);
+
+// Snap to the bottom only if the user was already pinned there; if they've
+// scrolled up to read history we leave their position untouched.
+function followBottom() {
+    if (stickToBottom) $transcript.scrollTop = $transcript.scrollHeight;
+}
+
 // Apply a `tool` SSE frame: create or look up the <pi-tool> card for this call
 // id, feed it the frame, and auto-follow only if we were near the bottom (so we
 // don't yank the view while the user reads back).
 function applyToolFrame(m) {
     let el = toolCard(m.id);
-    const follow = nearBottom();
     if (!el) {
         clearEmpty();
         el = document.createElement("pi-tool") as PiTool;
@@ -543,7 +562,7 @@ function applyToolFrame(m) {
         $transcript.appendChild(el);
     }
     el.apply(m, cwd);
-    if (follow) $transcript.scrollTop = $transcript.scrollHeight;
+    followBottom();
 }
 
 // A streaming thinking/reasoning trace, owned by the <pi-thinking> custom
@@ -556,7 +575,7 @@ function newThinking(): PiThinking {
     clearEmpty();
     const el = document.createElement("pi-thinking") as PiThinking;
     $transcript.appendChild(el);
-    $transcript.scrollTop = $transcript.scrollHeight;
+    followBottom();
     return el;
 }
 function lastThinking(): PiThinking | null {
@@ -564,10 +583,7 @@ function lastThinking(): PiThinking | null {
     return (all[all.length - 1] as PiThinking) ?? null;
 }
 $transcript.addEventListener("pithinking-toggle", () => toggleThinking());
-$transcript.addEventListener(
-    "pithinking-render",
-    () => ($transcript.scrollTop = $transcript.scrollHeight),
-);
+$transcript.addEventListener("pithinking-render", () => followBottom());
 
 // Apply the hidden state to the DOM (CSS collapses .think-body). When `persist`
 // is set, also write the new value back to pi's settings via the host.
@@ -2383,6 +2399,7 @@ function onSseMessage(e) {
             break;
         case "transcript_reset":
             $transcript.innerHTML = '<div class="empty">new thread</div>';
+            stickToBottom = true; // fresh thread starts pinned to the bottom
             promptHistory = []; // input history is per-thread
             histIndex = null;
             histDraft = "";
@@ -2441,7 +2458,7 @@ function onSseMessage(e) {
             } else if (m.status === "chunk") {
                 if (!bashEl) bashEl = bashBubble("", false);
                 bashEl.querySelector(".body").textContent += m.text;
-                $transcript.scrollTop = $transcript.scrollHeight;
+                followBottom();
             } else if (m.status === "end") {
                 if (bashEl && m.exitCode != null && m.exitCode !== 0) {
                     const code = document.createElement("div");
