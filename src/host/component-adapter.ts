@@ -59,3 +59,113 @@ export function componentToNode(
     }
     return node;
 }
+
+// ---------------------------------------------------------------------------
+// Parity P1: invoke a tool's custom renderResult/renderCall host-side and adapt
+// the returned Component. Mirrors pi's own reference implementation
+// (core/export-html/tool-renderer.ts `createToolHtmlRenderer`): build a
+// ToolRenderContext, call the hook, then `component.render(cols)` via
+// componentToNode. Signatures verified against core/extensions/types.d.ts:
+//   renderCall(args, theme, ctx) => Component
+//   renderResult({content,details,isError}, {expanded,isPartial}, theme, ctx) => Component
+// ---------------------------------------------------------------------------
+
+/** A tool definition exposing the optional TUI render hooks. */
+export interface ToolRenderers {
+    renderCall?: (args: any, theme: any, ctx: any) => TuiComponent;
+    renderResult?: (
+        result: any,
+        options: any,
+        theme: any,
+        ctx: any,
+    ) => TuiComponent;
+    renderShell?: "default" | "self";
+}
+
+/** Inputs for invoking a tool renderer (a subset of pi's ToolRenderContext). */
+export interface ToolRenderParams {
+    toolName: string;
+    toolCallId: string;
+    args: any;
+    cwd: string;
+    expanded?: boolean;
+    isPartial?: boolean;
+    isError?: boolean;
+    /** Result-only: the tool result content blocks + structured details. */
+    content?: any[];
+    details?: any;
+    /** Per-tool renderer state + previous component (pi keeps these across renders). */
+    state?: any;
+    lastComponent?: TuiComponent;
+}
+
+/**
+ * Build the ToolRenderContext object pi's render hooks expect. `invalidate` is a
+ * no-op here (the live re-render loop is Parity P3); `showImages` is false (P0
+ * paints images as ANSI fallback until the structural adapter lands).
+ */
+function makeRenderContext(p: ToolRenderParams): any {
+    return {
+        args: p.args,
+        toolCallId: p.toolCallId,
+        invalidate: () => {},
+        lastComponent: p.lastComponent,
+        state: p.state ?? {},
+        cwd: p.cwd,
+        executionStarted: true,
+        argsComplete: true,
+        isPartial: !!p.isPartial,
+        expanded: !!p.expanded,
+        showImages: false,
+        isError: !!p.isError,
+    };
+}
+
+/**
+ * Invoke a tool's `renderCall` and adapt the Component to a node. Returns null
+ * if the tool has no `renderCall` or the hook throws (caller falls back to the
+ * default pi-web card).
+ */
+export function renderToolCallToNode(
+    def: ToolRenderers | undefined | null,
+    p: ToolRenderParams,
+    theme: any,
+    cols = 80,
+): AnsiBlockNode | null {
+    const fn = def?.renderCall;
+    if (typeof fn !== "function") return null;
+    try {
+        const comp = fn(p.args, theme, makeRenderContext(p));
+        if (!isComponent(comp)) return null;
+        return componentToNode(comp, cols);
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Invoke a tool's `renderResult` and adapt the Component to a node. Returns null
+ * if the tool has no `renderResult` or the hook throws.
+ */
+export function renderToolResultToNode(
+    def: ToolRenderers | undefined | null,
+    p: ToolRenderParams,
+    theme: any,
+    cols = 80,
+): AnsiBlockNode | null {
+    const fn = def?.renderResult;
+    if (typeof fn !== "function") return null;
+    try {
+        const result = {
+            content: p.content ?? [],
+            details: p.details,
+            isError: !!p.isError,
+        };
+        const options = { expanded: !!p.expanded, isPartial: !!p.isPartial };
+        const comp = fn(result, options, theme, makeRenderContext(p));
+        if (!isComponent(comp)) return null;
+        return componentToNode(comp, cols);
+    } catch {
+        return null;
+    }
+}
