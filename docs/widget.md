@@ -83,9 +83,9 @@ piweb.removeWidget(key: string): void;     // alias: setWidget(key, undefined)
 ```
 
 Where `Node` is the existing serializable component tree
-(`Box | Row | Text | Markdown | Divider | Button | Input | Frame | ...`;
-`Box`/`Text`/`Markdown`/`Input` mirror the pi-tui components of the same name,
-`Stack` is a deprecated alias for `Box`), and `ActionContext` is the dispatch context
+(`Box | Container | Row | Text | Markdown | Divider | Button | Input | Frame | ...`;
+`Box`/`Container`/`Text`/`Markdown`/`Input` mirror the pi-tui components of the
+same name), and `ActionContext` is the dispatch context
 the host already builds (`payload`, `state`, `setState`, `pi`, `openOverlay`,
 `closeOverlay`, `notify`).
 

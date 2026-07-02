@@ -101,10 +101,11 @@ export default function (pi: ExtensionAPI) {
     // Inline composer completion for `/md <path>`: when the line is `/md ` +
     // partial path, offer matching Markdown files. The replace span covers just
     // the argument, so accepting yields `/md <full path>`.
-    piweb.addAutocompleteProvider(async ({ text, caret }) => {
+    piweb.addAutocompleteProvider((current) => async (ctx) => {
+        const { text, caret } = ctx;
         const before = text.slice(0, caret);
         const m = before.match(/^\/md(\s+)(.*)$/s);
-        if (!m) return null;
+        if (!m) return current(ctx);
         const query = m[2];
         const start = caret - query.length;
         const files = await cachedDiscover();
@@ -120,7 +121,7 @@ export default function (pi: ExtensionAPI) {
             })
             .slice(0, 20)
             .map((p) => ({ value: p, label: p, description: "markdown" }));
-        if (!items.length) return null;
+        if (!items.length) return current(ctx);
         return { start, end: caret, items };
     });
 

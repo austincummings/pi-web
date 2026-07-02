@@ -215,11 +215,12 @@ export default function (pi: ExtensionAPI) {
         return files;
     };
 
-    piweb.addAutocompleteProvider(async ({ text, caret, cwd }) => {
+    piweb.addAutocompleteProvider((current) => async (ctx) => {
+        const { text, caret, cwd } = ctx;
         syncRoot(cwd); // pi-web injects the thread's cwd here
         const before = text.slice(0, caret);
         const m = before.match(/^\/cat(\s+)(.*)$/s);
-        if (!m) return null;
+        if (!m) return current(ctx);
         const query = m[2];
         const start = caret - query.length;
         const files = await cachedDiscover();
@@ -234,7 +235,7 @@ export default function (pi: ExtensionAPI) {
             })
             .slice(0, 20)
             .map((p) => ({ value: p, label: p, description: "file" }));
-        if (!items.length) return null;
+        if (!items.length) return current(ctx);
         return { start, end: caret, items };
     });
 

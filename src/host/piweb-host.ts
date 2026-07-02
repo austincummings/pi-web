@@ -1,3 +1,5 @@
+import { webPaletteTheme } from "./tui-theme.ts";
+
 /**
  * piweb host registry — the web UI's UI-extension surface.
  *
@@ -92,7 +94,15 @@ interface DialogSpec {
     prefill?: string;
 }
 
-type AutocompleteProvider = (ctx: { text: string; caret: number }) => any;
+type AutocompleteProvider = (ctx: {
+    text: string;
+    caret: number;
+    cwd?: string;
+}) => any;
+/** Wrap the current provider with additional behavior (pi-tui parity). */
+type AutocompleteProviderFactory = (
+    current: AutocompleteProvider,
+) => AutocompleteProvider;
 
 /**
  * @param o.broadcast   send a server message to viewers
@@ -122,24 +132,29 @@ export function createPiWebHost({
     /**
      * Custom transcript-message renderers, keyed by `customType`. Each takes a
      * CustomMessage + options and returns a *serializable* component tree (the
-     * same Stack/Row/Text/Button/Frame/Code node model as surfaces). The web
-     * analogue of pi-tui's `registerMessageRenderer` (which returns a live TUI
-     * `Component`).
-     * @type {Map<string, (message:any, opts:any)=>any>}
+     * same Box/Row/Text/Button/Frame/Code node model as surfaces). The web
+     * analogue of pi-tui's `pi.registerMessageRenderer` (which returns a live
+     * TUI `Component`); the renderer receives `(message, options, theme)` to
+     * match pi-tui's `MessageRenderer` shape.
+     * @type {Map<string, (message:any, options:any, theme:any)=>any>}
      */
     const messageRenderers = new Map<
         string,
-        (message: any, opts: any) => any
+        (message: any, options: any, theme: any) => any
     >();
     /**
      * Extension-supplied composer autocomplete providers (the web analogue of
-     * pi-tui `ctx.ui.addAutocompleteProvider`). Each is called with the current
-     * composer `{ text, caret }` and returns completion items (+ an optional
-     * replace span) or null when it doesn't apply. Providers run in-process;
-     * the browser queries them over `/autocomplete` as the user types.
-     * @type {((ctx:{text:string,caret:number})=>any)[]}
+     * pi-tui `ctx.ui.addAutocompleteProvider`). Each registration is a *factory*
+     * that wraps the current composed provider (`(current) => provider`), so a
+     * provider can defer to the ones registered before it. The composed
+     * provider is called with the composer `{ text, caret, cwd }` and returns
+     * completion items (+ an optional replace span) or null when nothing
+     * applies. It runs in-process; the browser queries it over `/autocomplete`
+     * as the user types. The innermost `current` is a base that returns null.
      */
-    const autocompleteProviders: AutocompleteProvider[] = [];
+    const baseAutocomplete: AutocompleteProvider = () => null;
+    let composedAutocomplete: AutocompleteProvider = baseAutocomplete;
+    let autocompleteCount = 0;
     let orderSeq = 0;
     let uiSeq = 0;
     // pi's runtime label shown in place of a collapsed thinking block
@@ -467,15 +482,17 @@ export function createPiWebHost({
         /**
          * Register a custom renderer for transcript messages of `customType`
          * (extension messages sent via `pi.sendMessage({ customType, … })`).
-         * Mirrors pi-tui `pi.registerMessageRenderer`, but the renderer returns
-         * a serializable node tree instead of a live `Component`. Pass a
-         * non-function to unregister.
+         * Mirrors pi-tui `pi.registerMessageRenderer` (an ExtensionAPI method,
+         * not `ctx.ui`), but the renderer returns a serializable node tree
+         * instead of a live `Component`. Matching pi-tui's `MessageRenderer`
+         * shape, it receives `(message, options, theme)`. Pass a non-function
+         * to unregister.
          * @param {string} customType
-         * @param {(message:any, opts:{expanded:boolean})=>any} renderer
+         * @param {(message:any, options:{expanded:boolean}, theme:any)=>any} renderer
          */
         registerMessageRenderer(
             customType: string,
-            renderer: (message: any, opts: any) => any,
+            renderer: (message: any, options: any, theme: any) => any,
         ) {
             const key = String(customType);
             if (typeof renderer === "function")
@@ -506,7 +523,13 @@ export function createPiWebHost({
             const r = messageRenderers.get(String(customType));
             if (!r) return null;
             try {
-                return r(message, { expanded: false, ...opts }) ?? null;
+                // Third arg mirrors pi-tui's `MessageRenderer(message, options,
+                // theme)`: pass the web-palette pi Theme shim so renderers can
+                // resolve theme colors the same way a TUI renderer would.
+                return (
+                    r(message, { expanded: false, ...opts }, webPaletteTheme) ??
+                    null
+                );
             } catch (err) {
                 return {
                     type: "Text",
@@ -517,30 +540,31 @@ export function createPiWebHost({
 
         /**
          * Register an extension composer autocomplete provider. Mirrors pi-tui
-         * `ctx.ui.addAutocompleteProvider`: the provider gets `{ text, caret }`
-         * and returns items (`string` | `{value,label?,description?}`) either as
-         * a bare array (replacing the token before the caret) or as
-         * `{ start, end, items }` to control the spliced span. Returning null/an
-         * empty list means "no completion here". Returns a disposer.
-         * @param {(ctx:{text:string,caret:number})=>any} provider
-         * @returns {() => void}
+         * `ctx.ui.addAutocompleteProvider(factory)`: the argument is a *factory*
+         * `(current) => provider` that wraps the current composed provider, so
+         * it can add completions or defer to `current`. Each provider gets the
+         * composer `{ text, caret, cwd }` and returns items (`string` |
+         * `{value,label?,description?}`) either as a bare array (replacing the
+         * token before the caret) or as `{ start, end, items }` to control the
+         * spliced span; returning null means "defer / no completion here".
+         * @param {(current:AutocompleteProvider)=>AutocompleteProvider} factory
+         * @returns {void}
          */
-        addAutocompleteProvider(provider: AutocompleteProvider) {
-            if (typeof provider !== "function") return () => {};
-            autocompleteProviders.push(provider);
-            return () => {
-                const i = autocompleteProviders.indexOf(provider);
-                if (i !== -1) autocompleteProviders.splice(i, 1);
-            };
+        addAutocompleteProvider(factory: AutocompleteProviderFactory) {
+            if (typeof factory !== "function") return;
+            const wrapped = factory(composedAutocomplete);
+            if (typeof wrapped !== "function") return;
+            composedAutocomplete = wrapped;
+            autocompleteCount++;
         },
         /** Whether any autocomplete provider is registered (client gate). */
         hasAutocomplete() {
-            return autocompleteProviders.length > 0;
+            return autocompleteCount > 0;
         },
         /**
-         * Run the registered providers against a composer snapshot and return
-         * the first non-empty completion, normalized to `{ start, end, items }`
-         * (or null). Called by the host for the browser's `/autocomplete`.
+         * Run the composed provider against a composer snapshot and return the
+         * completion, normalized to `{ start, end, items }` (or null). Called by
+         * the host for the browser's `/autocomplete`.
          * @param {{text?:string, caret?:number}} ctx
          * @returns {Promise<{start:number,end:number,items:{value:string,label:string,description?:string}[]}|null>}
          */
@@ -560,44 +584,41 @@ export function createPiWebHost({
             // injects it) so filesystem-path providers resolve against the
             // correct directory rather than the server's launch dir.
             const base = { text, caret, cwd: ctx?.cwd };
-            for (const provider of autocompleteProviders) {
-                let r;
-                try {
-                    r = await provider(base);
-                } catch (err) {
-                    console.error("[piweb] autocomplete provider failed:", err);
-                    continue;
-                }
-                if (!r) continue;
-                const rawItems = Array.isArray(r) ? r : r.items;
-                if (!Array.isArray(rawItems) || rawItems.length === 0) continue;
-                const items = rawItems
-                    .map((it) =>
-                        typeof it === "string"
-                            ? { value: it, label: it }
-                            : {
-                                  value: String(it.value ?? it.label ?? ""),
-                                  label: String(it.label ?? it.value ?? ""),
-                                  description:
-                                      it.description != null
-                                          ? String(it.description)
-                                          : undefined,
-                              },
-                    )
-                    .filter((it) => it.value !== "");
-                if (!items.length) continue;
-                const hasSpan = !Array.isArray(r);
-                const start =
-                    hasSpan && Number.isInteger(r.start)
-                        ? Math.max(0, Math.min(r.start, caret))
-                        : tokenStart;
-                const end =
-                    hasSpan && Number.isInteger(r.end)
-                        ? Math.max(start, Math.min(r.end, text.length))
-                        : caret;
-                return { start, end, items: items.slice(0, 50) };
+            let r;
+            try {
+                r = await composedAutocomplete(base);
+            } catch (err) {
+                console.error("[piweb] autocomplete provider failed:", err);
+                return null;
             }
-            return null;
+            if (!r) return null;
+            const rawItems = Array.isArray(r) ? r : r.items;
+            if (!Array.isArray(rawItems) || rawItems.length === 0) return null;
+            const items = rawItems
+                .map((it) =>
+                    typeof it === "string"
+                        ? { value: it, label: it }
+                        : {
+                              value: String(it.value ?? it.label ?? ""),
+                              label: String(it.label ?? it.value ?? ""),
+                              description:
+                                  it.description != null
+                                      ? String(it.description)
+                                      : undefined,
+                          },
+                )
+                .filter((it) => it.value !== "");
+            if (!items.length) return null;
+            const hasSpan = !Array.isArray(r);
+            const start =
+                hasSpan && Number.isInteger(r.start)
+                    ? Math.max(0, Math.min(r.start, caret))
+                    : tokenStart;
+            const end =
+                hasSpan && Number.isInteger(r.end)
+                    ? Math.max(start, Math.min(r.end, text.length))
+                    : caret;
+            return { start, end, items: items.slice(0, 50) };
         },
 
         /**
@@ -681,7 +702,8 @@ export function createPiWebHost({
             surfaces.clear();
             statuses.clear();
             messageRenderers.clear();
-            autocompleteProviders.length = 0;
+            composedAutocomplete = baseAutocomplete;
+            autocompleteCount = 0;
             // cancel any open dialogs so awaiting extensions unblock
             for (const e of [...pendingUi.values()]) e.settle(undefined);
             push();

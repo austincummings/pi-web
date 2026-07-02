@@ -55,6 +55,14 @@ export type AutocompleteProvider = (
     | Promise<
           AutocompleteResult | (AutocompleteItem | string)[] | null | undefined
       >;
+/**
+ * Wrap the current composed provider with additional behavior (mirrors pi-tui
+ * `AutocompleteProviderFactory`). Return a provider that adds completions or
+ * defers to `current`.
+ */
+export type AutocompleteProviderFactory = (
+    current: AutocompleteProvider,
+) => AutocompleteProvider;
 
 /**
  * The pi-web UI-bridge surface available to extensions. A serializable superset
@@ -89,19 +97,31 @@ export interface PiWebSurface {
      */
     setHiddenThinkingLabel(label?: string): void;
     // --- custom transcript-message renderers ---
-    /** Register a serializable-tree renderer for messages of `customType`. */
+    /**
+     * Register a serializable-tree renderer for messages of `customType`.
+     * Mirrors pi-tui's `pi.registerMessageRenderer` (an ExtensionAPI method):
+     * the renderer receives `(message, options, theme)` to match pi-tui's
+     * `MessageRenderer` shape, but returns a serializable node tree instead of
+     * a live `Component`.
+     */
     registerMessageRenderer(
         customType: string,
-        renderer: (message: any, opts: { expanded: boolean }) => any,
+        renderer: (
+            message: any,
+            options: { expanded: boolean },
+            theme?: any,
+        ) => any,
     ): void;
     // --- composer autocomplete ---
     /**
      * Register a composer autocomplete provider (mirrors pi-tui
-     * `ctx.ui.addAutocompleteProvider`). The browser queries registered
-     * providers as the user types; return items (+ optional replace span) or
-     * null when the provider doesn't apply. Returns a disposer.
+     * `ctx.ui.addAutocompleteProvider`). The argument is a *factory*
+     * `(current) => provider` that wraps the current composed provider, so it
+     * can add completions or defer to `current`. The browser queries the
+     * composed provider as the user types; a provider returns items (+ optional
+     * replace span) or null when it doesn't apply.
      */
-    addAutocompleteProvider(provider: AutocompleteProvider): () => void;
+    addAutocompleteProvider(factory: AutocompleteProviderFactory): void;
     // --- blocking dialogs (await the browser's answer) ---
     select(
         title: string,
@@ -156,7 +176,7 @@ const stub = {
     registerMessageRenderer: noop,
     hasMessageRenderer: () => false,
     renderMessage: () => null,
-    addAutocompleteProvider: () => noop,
+    addAutocompleteProvider: noop,
     hasAutocomplete: () => false,
     autocomplete: () => Promise.resolve(null),
     select: dialogNoop,

@@ -102,7 +102,7 @@ Two mitigating facts make this tractable:
 ```
 
 - **Extraction is host-side**, in-process. Output is pi-web's existing
-  **serializable node tree** (`Box/Stack/Row/Text/Divider/Markdown/…`) plus two
+  **serializable node tree** (`Box/Container/Row/Text/Divider/Markdown/…`) plus two
   **new nodes**: `AnsiBlock` and `Image`.
 - Transport reuses the existing SSE + POST bus and the surface lifecycle
   (`onSurface` open/close), and — for interactive components — the relay's
@@ -114,7 +114,7 @@ Two mitigating facts make this tractable:
 
 ## 4. Node additions
 
-Extend the serializable vocabulary (current cases: `Box/Stack`, `Row`, `Text`,
+Extend the serializable vocabulary (current cases: `Box/Container`, `Row`, `Text`,
 `Divider`, `Button`, `Input`, `Markdown`, `Frame`):
 
 ### 4.1 `AnsiBlock`
@@ -236,7 +236,7 @@ whole component.
 
 | Source                                                             | Recognized → node                                           | Notes                                                                                |
 | ------------------------------------------------------------------ | ----------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `Box` / `Container`                                                | `Box` / `Stack` with recursively-adapted `children`         | **both** expose public `children: Component[]`; gives nesting + per-child boundaries |
+| `Box` / `Container`                                                | `Box` / `Container` with recursively-adapted `children`     | **both** expose public `children: Component[]`; gives nesting + per-child boundaries |
 | `Spacer`                                                           | vertical gap node (height from line count via `render`)     | `lines` private → infer from `render(cols).length`                                   |
 | `Image`                                                            | `Image` node (`<img>`) via **unsafe read** of fields (§7.4) | TS-private but plain runtime props; guarded + ANSI fallback on drift                 |
 | `Text` / `Markdown` / `Input` / `Editor` / `SelectList` / _custom_ | **leaf** → `render(cols)` → `AnsiBlock`                     | content is private; ANSI is the only faithful source                                 |
@@ -518,17 +518,17 @@ not.**
 
 ## Appendix B — Built-in component capability matrix
 
-| Class                         | Public API used             | Native node?       | Else             |
-| ----------------------------- | --------------------------- | ------------------ | ---------------- |
-| `Box`                         | `children`                  | `Box` (recurse)    | —                |
-| `Container`                   | `children` (public)         | `Stack` (recurse)  | —                |
-| `Spacer`                      | `render().length`           | gap node           | —                |
-| `Image`                       | `getImageId()` only         | **none** (private) | AnsiBlock→empty  |
-| `Text` / `TruncatedText`      | `render()`                  | AnsiBlock (styled) | —                |
-| `Markdown`                    | `render()`                  | AnsiBlock          | (later: source?) |
-| `Input` / `Editor`            | `render()` + `handleInput`  | AnsiBlock + input  | —                |
-| `SelectList` / `SettingsList` | `render()` + `handleInput`  | AnsiBlock + input  | (later: items?)  |
-| _custom_                      | `render()` (+`handleInput`) | AnsiBlock (+input) | —                |
+| Class                         | Public API used             | Native node?          | Else             |
+| ----------------------------- | --------------------------- | --------------------- | ---------------- |
+| `Box`                         | `children`                  | `Box` (recurse)       | —                |
+| `Container`                   | `children` (public)         | `Container` (recurse) | —                |
+| `Spacer`                      | `render().length`           | gap node              | —                |
+| `Image`                       | `getImageId()` only         | **none** (private)    | AnsiBlock→empty  |
+| `Text` / `TruncatedText`      | `render()`                  | AnsiBlock (styled)    | —                |
+| `Markdown`                    | `render()`                  | AnsiBlock             | (later: source?) |
+| `Input` / `Editor`            | `render()` + `handleInput`  | AnsiBlock + input     | —                |
+| `SelectList` / `SettingsList` | `render()` + `handleInput`  | AnsiBlock + input     | (later: items?)  |
+| _custom_                      | `render()` (+`handleInput`) | AnsiBlock (+input)    | —                |
 
 ## Appendix C — Key encoding (DOM → bytes), excerpt
 

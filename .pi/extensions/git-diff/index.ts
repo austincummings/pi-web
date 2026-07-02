@@ -507,10 +507,11 @@ export default function (pi: ExtensionAPI) {
     });
 
     // Autocomplete: refs/flags + changed file paths after "/gdiff ".
-    piweb.addAutocompleteProvider(async ({ text, caret }) => {
+    piweb.addAutocompleteProvider((current) => async (ctx) => {
+        const { text, caret } = ctx;
         const before = text.slice(0, caret);
         const m = before.match(/^\/gdiff(\s+)(.*)$/s);
-        if (!m) return null;
+        if (!m) return current(ctx);
         const query = m[2];
         const start = caret - query.length;
         const suggestions: { value: string; description: string }[] = [

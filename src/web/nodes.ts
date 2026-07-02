@@ -33,11 +33,12 @@ export function renderStaticNode(
         renderChild ?? ((c) => renderStaticNode(c, renderChild) ?? unknown(c));
 
     switch (node.type) {
-        // Box / Container (Stack = pre-rename alias). Vertical child stack; when
-        // the host adapter supplies terminal-cell padding (structural pi Box),
-        // apply it (cells → ch/line-height) and drop the inter-child gap.
+        // Box / Container. Vertical child stack; when the host adapter supplies
+        // terminal-cell padding (structural pi Box), apply it (cells →
+        // ch/line-height) and drop the inter-child gap. `Container` mirrors the
+        // pi-tui component of the same name.
         case "Box":
-        case "Stack": {
+        case "Container": {
             const d = document.createElement("div");
             d.style.display = "flex";
             d.style.flexDirection = "column";
