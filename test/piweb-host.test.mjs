@@ -214,3 +214,45 @@ test("registerMessageRenderer with a non-function unregisters; clear() drops all
     host.clear();
     expect(host.hasMessageRenderer("y")).toBe(false);
 });
+
+// ---- custom() (pi-tui ctx.ui.custom parity) -------------------------------
+
+test("custom() mounts an overlay immediately and resolves via done()", async () => {
+    const { host, snap } = makeHost();
+    let done;
+    const p = host.custom((_theme, d) => {
+        done = d;
+        return { render: () => ({ type: "Text", text: "hi" }) };
+    });
+    // shown right away (unlike overlay(), which starts hidden)
+    expect(snap().overlays.length).toBe(1);
+    expect(snap().overlays[0].tree).toEqual({ type: "Text", text: "hi" });
+    done("picked");
+    await expect(p).resolves.toBe("picked");
+    expect(snap().overlays.length).toBe(0); // removed after settling
+});
+
+test("custom() resolves through an action handler calling done()", async () => {
+    const { host, snap } = makeHost();
+    const p = host.custom((_theme, done) => ({
+        render: () => ({ type: "Button", label: "OK", action: "ok" }),
+        actions: { ok: () => done("ok!") },
+    }));
+    const id = snap().overlays[0].id;
+    await host.dispatch(id, "ok");
+    await expect(p).resolves.toBe("ok!");
+    expect(snap().overlays.length).toBe(0);
+});
+
+test("custom() onHandle.close resolves and removes the surface", async () => {
+    const { host, snap } = makeHost();
+    let handle;
+    const p = host.custom(
+        () => ({ render: () => ({ type: "Text", text: "x" }) }),
+        { onHandle: (h) => (handle = h) },
+    );
+    expect(snap().overlays.length).toBe(1);
+    handle.close("bye");
+    await expect(p).resolves.toBe("bye");
+    expect(snap().overlays.length).toBe(0);
+});

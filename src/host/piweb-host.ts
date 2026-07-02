@@ -12,8 +12,10 @@ import { webPaletteTheme } from "./tui-theme.ts";
  *     (the web analogue of pi-tui's `setWidget(aboveEditor|belowEditor)`,
  *     widened with web-only `left`/`right` rails). Internally still tracked as
  *     `dock`-kind surfaces; `dock()` remains a deprecated authoring alias.
- *   - **overlays** — declarative modal cards, opened/closed on demand
- *     (the analogue of pi-tui's `custom({ overlay })` + select/confirm/input).
+ *   - **overlays** — modal cards driven by `custom(factory, options?)` (the
+ *     analogue of pi-tui's `ctx.ui.custom`) and by the blocking
+ *     select/confirm/input/editor dialogs. The bare overlay verbs
+ *     (`overlay`/`openOverlay`/…) are internal primitives behind `custom()`.
  *
  * Plus transient `notify()` toasts and keyed `setStatus()` segments.
  *
@@ -157,6 +159,7 @@ export function createPiWebHost({
     let autocompleteCount = 0;
     let orderSeq = 0;
     let uiSeq = 0;
+    let customSeq = 0;
     // pi's runtime label shown in place of a collapsed thinking block
     // (pi-tui `ui.setHiddenThinkingLabel`, default "Thinking..."). Host-global
     // like the page title; broadcast so every viewer renders the same text and
@@ -381,6 +384,10 @@ export function createPiWebHost({
         dock(id: string, def: Record<string, any> = {}) {
             define(id, "dock", def);
         },
+        // --- overlay surface primitives (internal) ---------------------------
+        // Not part of the public pi-tui-parity surface: extensions drive custom
+        // UI via `custom()` below (pi-tui's `ctx.ui.custom`). These remain for
+        // `custom()`'s own use, the `/surface` route, and action-handler ctx.
         /** Mount/update an overlay surface (starts closed). */
         overlay(id: string, def: Record<string, any> = {}) {
             define(id, "overlay", def);
@@ -408,6 +415,58 @@ export function createPiWebHost({
                 s.open = false;
                 push();
             }
+        },
+
+        /**
+         * Show a custom component and resolve when it calls `done(result)`.
+         * Mirrors pi-tui `ctx.ui.custom(factory, options?)`: the factory
+         * receives the (web-palette) theme and a `done` resolver and returns a
+         * *serializable* surface def (`{ render, actions?, initialState?,
+         * title? }`) in place of a live `Component`. The component mounts
+         * immediately as an overlay card. `options` mirror pi-tui
+         * (`{ overlay?, overlayOptions?, onHandle? }`); `onHandle` receives a
+         * handle with `{ close(result?), requestRender() }`.
+         * @param {(theme:any, done:(result?:any)=>void)=>any} factory
+         * @param {{overlay?:boolean, overlayOptions?:any|(()=>any), onHandle?:(h:any)=>void}} [options]
+         * @returns {Promise<any>}
+         */
+        custom(
+            factory: (theme: any, done: (result?: any) => void) => any,
+            options: Record<string, any> = {},
+        ) {
+            const id = `custom-${++customSeq}`;
+            return new Promise((resolve) => {
+                let settled = false;
+                const done = (result?: any) => {
+                    if (settled) return;
+                    settled = true;
+                    if (surfaces.delete(id)) push();
+                    resolve(result);
+                };
+                let def: any;
+                try {
+                    def = factory(webPaletteTheme, done);
+                } catch (err) {
+                    console.error("[piweb] custom() factory failed:", err);
+                    resolve(undefined);
+                    return;
+                }
+                const overlayOptions =
+                    typeof options.overlayOptions === "function"
+                        ? options.overlayOptions()
+                        : options.overlayOptions;
+                define(id, "overlay", {
+                    ...(def && typeof def === "object" ? def : {}),
+                    options: overlayOptions ?? def?.options,
+                });
+                // Unlike overlay() (which starts hidden), custom() shows the
+                // component right away.
+                host.openOverlay(id);
+                options.onHandle?.({
+                    close: (result?: any) => done(result),
+                    requestRender: () => push(),
+                });
+            });
         },
 
         /**

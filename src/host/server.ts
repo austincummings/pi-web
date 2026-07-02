@@ -343,6 +343,9 @@ const nullRegistry = {
     remove() {},
     openOverlay() {},
     closeOverlay() {},
+    custom() {
+        return Promise.resolve(undefined);
+    },
     notify() {},
     setStatus() {},
     setTitle() {},
@@ -404,6 +407,9 @@ const piweb = {
     remove: (...a: any[]) => activeRegistry().remove(...a),
     openOverlay: (...a: any[]) => activeRegistry().openOverlay(...a),
     closeOverlay: (...a: any[]) => activeRegistry().closeOverlay(...a),
+    // custom components (pi-tui `ctx.ui.custom`) — mounts an overlay surface
+    // and resolves when the extension calls `done(result)`.
+    custom: (...a: any[]) => activeRegistry().custom(...a),
     notify: (...a: any[]) => activeRegistry().notify(...a),
     setStatus: (...a: any[]) => activeRegistry().setStatus(...a),
     setTitle: (...a: any[]) => activeRegistry().setTitle(...a),

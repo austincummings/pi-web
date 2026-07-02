@@ -78,11 +78,25 @@ export interface PiWebSurface {
         options?: Record<string, any>,
     ): void;
     removeWidget(key: string): void;
-    overlay(id: string, def?: Record<string, any>): void;
-    openOverlay(id: string): void;
-    closeOverlay(id: string): void;
-    removeOverlay(id: string): void;
-    remove(id: string): void;
+    /**
+     * Show a custom component and resolve when it calls `done(result)`. Mirrors
+     * pi-tui `ctx.ui.custom(factory, options?)`, but the factory returns a
+     * *serializable* surface def (`{ render, actions?, initialState?, title? }`)
+     * in place of a live `Component` and receives the theme plus the `done`
+     * resolver. `options` mirror pi-tui (`{ overlay?, overlayOptions?,
+     * onHandle? }`); `onHandle` receives a handle with `{ close, requestRender }`.
+     */
+    custom<T = any>(
+        factory: (theme: any, done: (result?: T) => void) => any,
+        options?: {
+            overlay?: boolean;
+            overlayOptions?: Record<string, any> | (() => Record<string, any>);
+            onHandle?: (handle: {
+                close: (result?: T) => void;
+                requestRender: () => void;
+            }) => void;
+        },
+    ): Promise<T | undefined>;
     // --- transient feedback ---
     notify(message: string, type?: NotifyLevel): void;
     setStatus(
@@ -163,12 +177,7 @@ const stub = {
     setWidget: noop,
     removeWidget: noop,
     dock: noop,
-    overlay: noop,
-    removeDock: noop,
-    removeOverlay: noop,
-    remove: noop,
-    openOverlay: noop,
-    closeOverlay: noop,
+    custom: dialogNoop,
     notify: noop,
     setTitle: noop,
     setStatus: noop,
