@@ -79,12 +79,12 @@ export interface PiWebSurface {
     /** Host present? `false` under plain terminal pi (calls no-op). */
     present: boolean;
     // --- persistent surfaces ---
+    /** Mount/replace a widget; pass `undefined` content to remove it. */
     setWidget(
         key: string,
         content: string[] | Record<string, any> | undefined,
         options?: Record<string, any>,
     ): void;
-    removeWidget(key: string): void;
     /**
      * Show a custom component and resolve when it calls `done(result)`. Mirrors
      * pi-tui `ctx.ui.custom(factory, options?)`, but the factory returns a
@@ -179,9 +179,6 @@ export interface PiWebSurface {
         prefill?: string,
         opts?: DialogOptions,
     ): Promise<string | undefined>;
-    clear(): void;
-    /** Deprecated alias for setWidget. */
-    dock(id: string, def?: Record<string, any>): void;
     [key: string]: any;
 }
 
@@ -197,8 +194,6 @@ const noop = () => {};
 const dialogNoop = () => Promise.resolve(undefined);
 const stub = {
     setWidget: noop,
-    removeWidget: noop,
-    dock: noop,
     custom: dialogNoop,
     notify: noop,
     setTitle: noop,
@@ -217,7 +212,6 @@ const stub = {
     confirm: () => Promise.resolve(false),
     input: dialogNoop,
     editor: dialogNoop,
-    clear: noop,
     present: false,
 };
 
