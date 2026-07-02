@@ -32,180 +32,32 @@ import {
     createReadToolDefinition,
     type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
-import hljs from "highlight.js";
 import { readFile, readdir, stat } from "node:fs/promises";
-import { basename, isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { piweb } from "../../../src/sdk/piweb.ts";
-
-// ---------------------------------------------------------------------------
-// Language detection
-// ---------------------------------------------------------------------------
-
-// Extension → highlight.js language id. Only the cases where the bare extension
-// isn't already a valid hljs language id (or is ambiguous) need to be listed;
-// everything else is resolved via hljs.getLanguage(ext) below.
-const EXT_LANG: Record<string, string> = {
-    ts: "typescript",
-    tsx: "typescript",
-    mts: "typescript",
-    cts: "typescript",
-    js: "javascript",
-    jsx: "javascript",
-    mjs: "javascript",
-    cjs: "javascript",
-    py: "python",
-    rb: "ruby",
-    rs: "rust",
-    go: "go",
-    kt: "kotlin",
-    kts: "kotlin",
-    swift: "swift",
-    c: "c",
-    h: "c",
-    cc: "cpp",
-    cpp: "cpp",
-    cxx: "cpp",
-    hpp: "cpp",
-    hh: "cpp",
-    cs: "csharp",
-    java: "java",
-    php: "php",
-    sh: "bash",
-    bash: "bash",
-    zsh: "bash",
-    yml: "yaml",
-    yaml: "yaml",
-    toml: "ini",
-    ini: "ini",
-    md: "markdown",
-    markdown: "markdown",
-    html: "xml",
-    htm: "xml",
-    xml: "xml",
-    svg: "xml",
-    css: "css",
-    scss: "scss",
-    less: "less",
-    json: "json",
-    jsonc: "json",
-    sql: "sql",
-    dockerfile: "dockerfile",
-    make: "makefile",
-    mk: "makefile",
-    lua: "lua",
-    pl: "perl",
-    r: "r",
-    scala: "scala",
-    dart: "dart",
-    ex: "elixir",
-    exs: "elixir",
-    clj: "clojure",
-    hs: "haskell",
-    vue: "xml",
-    diff: "diff",
-    patch: "diff",
-};
-
-// Special-cased by basename (no useful extension).
-const NAME_LANG: Record<string, string> = {
-    dockerfile: "dockerfile",
-    makefile: "makefile",
-    gnumakefile: "makefile",
-    "cmakelists.txt": "cmake",
-    ".gitignore": "plaintext",
-    ".env": "bash",
-};
-
-interface Picked {
-    language: string; // hljs language id, or "" for plain text
-    label: string; // human label for the header
-}
-
-/** Decide which language to highlight `content` as, bat-style. */
-function pickLanguage(path: string, content: string): Picked {
-    const name = basename(path).toLowerCase();
-    const ext = name.includes(".") ? name.split(".").pop()! : "";
-
-    const byName = NAME_LANG[name];
-    if (byName && byName !== "plaintext" && hljs.getLanguage(byName))
-        return { language: byName, label: byName };
-    if (byName === "plaintext") return { language: "", label: "plain text" };
-
-    const byExt =
-        EXT_LANG[ext] ?? (ext && hljs.getLanguage(ext) ? ext : undefined);
-    if (byExt && hljs.getLanguage(byExt))
-        return { language: byExt, label: byExt };
-
-    // No extension mapping — let highlight.js guess from the content, but only
-    // trust a reasonably confident guess (relevance is hljs' own heuristic).
-    const auto = hljs.highlightAuto(content);
-    if (auto.language && auto.relevance >= 5)
-        return { language: auto.language, label: `${auto.language} (auto)` };
-
-    return { language: "", label: "plain text" };
-}
+import {
+    CORE_LANGS,
+    ensureLang,
+    escapeHtml,
+    highlightToLines,
+    langLabel,
+    resolveLangKey,
+    warm,
+} from "../_shared/ts-highlight.ts";
 
 // ---------------------------------------------------------------------------
 // Highlighting → line-numbered HTML
 // ---------------------------------------------------------------------------
-
-function escapeHtml(s: string): string {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-/**
- * Split highlight.js output into individual lines while keeping `<span>`
- * nesting balanced per line — a multi-line comment/string span is closed at the
- * newline and reopened on the next line, so each line is valid standalone HTML.
- */
-function splitHighlightedLines(html: string): string[] {
-    const lines: string[] = [];
-    const open: string[] = []; // stack of open <span …> tags
-    let cur = "";
-    const re = /<\/?[^>]+>|[^<]+/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(html))) {
-        const tok = m[0];
-        if (tok[0] === "<") {
-            if (tok.startsWith("</")) {
-                open.pop();
-                cur += tok;
-            } else if (tok.endsWith("/>")) {
-                cur += tok;
-            } else {
-                open.push(tok);
-                cur += tok;
-            }
-        } else {
-            const parts = tok.split("\n");
-            for (let k = 0; k < parts.length; k++) {
-                cur += parts[k];
-                if (k < parts.length - 1) {
-                    for (let s = open.length - 1; s >= 0; s--) cur += "</span>";
-                    lines.push(cur);
-                    cur = open.join("");
-                }
-            }
-        }
-    }
-    for (let s = open.length - 1; s >= 0; s--) cur += "</span>";
-    lines.push(cur);
-    return lines;
-}
+//
+// Language detection + tree-sitter highlighting live in _shared/ts-highlight.
+// Unknown extensions render as plain text (tree-sitter has no auto-detection).
 
 const MAX_LINES = 2000;
 
 /** Build the sandboxed-frame body HTML: header + line-numbered code. */
 function buildFrameHtml(path: string, content: string): string {
-    const picked = pickLanguage(path, content);
-    const highlighted = picked.language
-        ? hljs.highlight(content, {
-              language: picked.language,
-              ignoreIllegals: true,
-          }).value
-        : escapeHtml(content);
-
-    let lines = splitHighlightedLines(highlighted);
+    const key = resolveLangKey(path);
+    let lines = highlightToLines(key, content);
     // Drop a single trailing empty line (files usually end in "\n").
     if (lines.length && lines[lines.length - 1] === "") lines.pop();
 
@@ -225,7 +77,7 @@ function buildFrameHtml(path: string, content: string): string {
         .join("");
 
     const meta =
-        `${escapeHtml(picked.label)} · ${lines.length} line` +
+        `${escapeHtml(langLabel(key))} · ${lines.length} line` +
         (lines.length === 1 ? "" : "s") +
         (truncated ? ` · +${truncated} more truncated` : "");
 
@@ -320,6 +172,11 @@ async function discover(root: string): Promise<string[]> {
 // ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI) {
+    // Pre-load the tree-sitter grammar set so the sync message renderer can
+    // highlight on first paint (and on replay). Fire-and-forget; renders before
+    // it resolves fall back to plain text and re-highlight on the next render.
+    warm(CORE_LANGS).catch(() => {});
+
     // The thread's working directory. `pi` (ExtensionAPI) has no `.ctx`; the cwd
     // only arrives on the handler `ctx` (ExtensionContext.cwd). Under pi-web each
     // thread loads with its own cwd (see DefaultResourceLoader({ cwd })), so we
@@ -418,7 +275,11 @@ export default function (pi: ExtensionAPI) {
             const content = await readFile(abs, "utf8");
             // NUL byte ⇒ almost certainly binary; refuse rather than render garbage.
             if (content.includes("\u0000"))
-                return { disp, error: `${disp} looks binary`, severity: "warning" };
+                return {
+                    disp,
+                    error: `${disp} looks binary`,
+                    severity: "warning",
+                };
             return { disp, content };
         } catch (err: any) {
             return {
@@ -453,6 +314,8 @@ export default function (pi: ExtensionAPI) {
             );
             return;
         }
+        // Ensure this file's grammar is loaded before the (sync) renderer runs.
+        await ensureLang(resolveLangKey(disp));
         showFrame(disp, content);
     };
 
@@ -492,7 +355,13 @@ export default function (pi: ExtensionAPI) {
         parameters: createReadToolDefinition(process.cwd()).parameters,
         // Signature: execute(toolCallId, params, signal, onUpdate, ctx). The
         // schema-validated arguments arrive as the *second* parameter.
-        async execute(_toolCallId: string, params: any, _signal, _onUpdate, ctx: any) {
+        async execute(
+            _toolCallId: string,
+            params: any,
+            _signal: any,
+            _onUpdate: any,
+            ctx: any,
+        ) {
             syncRoot(ctx?.cwd); // scope path resolution to the calling thread
             const rawPath =
                 typeof params?.path === "string" ? params.path.trim() : "";
@@ -517,7 +386,10 @@ export default function (pi: ExtensionAPI) {
                 };
             }
             // Render the frame for the user (no-ops under plain terminal pi).
-            if (piweb.present) showFrame(disp, content);
+            if (piweb.present) {
+                await ensureLang(resolveLangKey(disp));
+                showFrame(disp, content);
+            }
             // Hand the contents back to the model as well.
             return {
                 content: [{ type: "text", text: `${disp}:\n\n${content}` }],

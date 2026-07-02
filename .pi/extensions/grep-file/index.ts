@@ -29,6 +29,7 @@ import {
     highlightLines,
     type LineMatch,
     renderMultibuffer,
+    warm,
 } from "../_shared/multibuffer.ts";
 
 // ---------------------------------------------------------------------------
@@ -155,6 +156,10 @@ function buildSummary(
 // ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI) {
+    // Pre-load tree-sitter grammars so the (sync) result renderer highlights on
+    // first paint and on replay; renders before it resolves fall back to plain
+    // text and re-highlight next render.
+    warm().catch(() => {});
     const root = (pi as any)?.ctx?.cwd ?? process.cwd();
     const toDisplay = (p: string): string => {
         const rel = relative(root, p);
@@ -255,6 +260,7 @@ export default function (pi: ExtensionAPI) {
             const summary =
                 `grep: ${total} match${total === 1 ? "" : "es"} for /${pattern}/` +
                 ` in ${hits.length} file${hits.length === 1 ? "" : "s"}`;
+            await warm(); // ensure the immediate live render is highlighted
             pi.sendMessage({
                 customType: "grep-result",
                 content: `${summary}\n${buildDigest(hits, truncated)}`,

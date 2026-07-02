@@ -13,127 +13,15 @@
  * and runs the frame's JS (allow-scripts) so folds expand client-side with no
  * host round-trip.
  */
-import hljs from "highlight.js";
-import { basename } from "node:path";
-
 // ---------------------------------------------------------------------------
 // Highlighting
 // ---------------------------------------------------------------------------
-
-const EXT_LANG: Record<string, string> = {
-    ts: "typescript",
-    tsx: "typescript",
-    mts: "typescript",
-    cts: "typescript",
-    js: "javascript",
-    jsx: "javascript",
-    mjs: "javascript",
-    cjs: "javascript",
-    py: "python",
-    rb: "ruby",
-    rs: "rust",
-    go: "go",
-    kt: "kotlin",
-    kts: "kotlin",
-    swift: "swift",
-    c: "c",
-    h: "c",
-    cc: "cpp",
-    cpp: "cpp",
-    cxx: "cpp",
-    hpp: "cpp",
-    hh: "cpp",
-    cs: "csharp",
-    java: "java",
-    php: "php",
-    sh: "bash",
-    bash: "bash",
-    zsh: "bash",
-    yml: "yaml",
-    yaml: "yaml",
-    toml: "ini",
-    ini: "ini",
-    md: "markdown",
-    markdown: "markdown",
-    html: "xml",
-    htm: "xml",
-    xml: "xml",
-    svg: "xml",
-    css: "css",
-    scss: "scss",
-    less: "less",
-    json: "json",
-    jsonc: "json",
-    sql: "sql",
-    dockerfile: "dockerfile",
-    make: "makefile",
-    mk: "makefile",
-    lua: "lua",
-    pl: "perl",
-    r: "r",
-    scala: "scala",
-    dart: "dart",
-    ex: "elixir",
-    exs: "elixir",
-    clj: "clojure",
-    hs: "haskell",
-    vue: "xml",
-    diff: "diff",
-    patch: "diff",
-};
-
-export function escapeHtml(s: string): string {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-/** Highlight a whole file, returning one HTML string per line (spans balanced). */
-export function highlightLines(path: string, content: string): string[] {
-    const name = basename(path).toLowerCase();
-    const ext = name.includes(".") ? name.split(".").pop()! : "";
-    const lang = EXT_LANG[ext] ?? (ext && hljs.getLanguage(ext) ? ext : "");
-    const html =
-        lang && hljs.getLanguage(lang)
-            ? hljs.highlight(content, { language: lang, ignoreIllegals: true })
-                  .value
-            : escapeHtml(content);
-    return splitHighlightedLines(html);
-}
-
-/** Split highlight.js output into per-line HTML, keeping spans balanced. */
-function splitHighlightedLines(html: string): string[] {
-    const lines: string[] = [];
-    const open: string[] = [];
-    let cur = "";
-    const re = /<\/?[^>]+>|[^<]+/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(html))) {
-        const tok = m[0];
-        if (tok[0] === "<") {
-            if (tok.startsWith("</")) {
-                open.pop();
-                cur += tok;
-            } else if (tok.endsWith("/>")) {
-                cur += tok;
-            } else {
-                open.push(tok);
-                cur += tok;
-            }
-        } else {
-            const parts = tok.split("\n");
-            for (let k = 0; k < parts.length; k++) {
-                cur += parts[k];
-                if (k < parts.length - 1) {
-                    for (let s = open.length - 1; s >= 0; s--) cur += "</span>";
-                    lines.push(cur);
-                    cur = open.join("");
-                }
-            }
-        }
-    }
-    for (let s = open.length - 1; s >= 0; s--) cur += "</span>";
-    lines.push(cur);
-    return lines;
-}
+//
+// Syntax highlighting is delegated to the shared tree-sitter module. `escapeHtml`
+// and `highlightLines` are re-exported so this module's consumers (grep-file,
+// semgrep) keep importing them from here unchanged.
+import { escapeHtml, highlightLines, warm } from "./ts-highlight.ts";
+export { escapeHtml, highlightLines, warm };
 
 /**
  * Overlay <mark> tags onto an already-highlighted line at the given visible

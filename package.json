@@ -19,7 +19,9 @@
     },
     "dependencies": {
         "@earendil-works/pi-coding-agent": "0.80.2",
-        "diff": "^8.0.4"
+        "diff": "^8.0.4",
+        "tree-sitter-wasms": "^0.1.13",
+        "web-tree-sitter": "0.24.7"
     },
     "devDependencies": {
         "@happy-dom/global-registrator": "^20.10.6",

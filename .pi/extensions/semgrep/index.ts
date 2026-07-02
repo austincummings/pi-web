@@ -38,6 +38,7 @@ import {
     highlightLines,
     type LineMatch,
     renderMultibuffer,
+    warm,
 } from "../_shared/multibuffer.ts";
 
 const MAX_FILES = 30; // files shown in one multibuffer
@@ -148,6 +149,9 @@ function contentRange(text: string): [number, number][] {
 // ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI) {
+    // Pre-load tree-sitter grammars so the (sync) result renderer highlights on
+    // first paint and on replay (falls back to plain text until warmed).
+    warm().catch(() => {});
     piweb.registerMessageRenderer("semgrep-result", (message: any) => {
         const d = (message.details as any) || {};
         if (!Array.isArray(d.files) || !d.files.length) {
@@ -314,6 +318,7 @@ export default function (pi: ExtensionAPI) {
                     .filter(Boolean)
                     .join("\n");
 
+                await warm(); // ensure the immediate live render is highlighted
                 pi.sendMessage({
                     customType: "semgrep-result",
                     content: digest,
