@@ -19,7 +19,18 @@ import Parser from "web-tree-sitter";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename } from "node:path";
-import { TS_QUERY } from "./highlight-queries.ts";
+import {
+    BASH_QUERY,
+    CPP_QUERY,
+    C_QUERY,
+    CSS_QUERY,
+    GO_QUERY,
+    HTML_QUERY,
+    JSON_QUERY,
+    PYTHON_QUERY,
+    RUST_QUERY,
+    TS_QUERY,
+} from "./highlight-queries.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -38,6 +49,18 @@ const GRAMMARS: Record<string, Grammar> = {
     tsx: { wasm: "tsx", query: TS_QUERY },
     javascript: { wasm: "tsx", query: TS_QUERY },
     jsx: { wasm: "tsx", query: TS_QUERY },
+    python: { wasm: "python", query: PYTHON_QUERY },
+    rust: { wasm: "rust", query: RUST_QUERY },
+    go: { wasm: "go", query: GO_QUERY },
+    json: { wasm: "json", query: JSON_QUERY },
+    bash: { wasm: "bash", query: BASH_QUERY },
+    css: { wasm: "css", query: CSS_QUERY },
+    html: { wasm: "html", query: HTML_QUERY },
+    // NOTE: yaml intentionally omitted — its prebuilt wasm external scanner
+    // references a symbol web-tree-sitter@0.24.7 doesn't provide, so parse()
+    // throws. Falls back to plain text via EXT_LANG omission below.
+    c: { wasm: "c", query: C_QUERY },
+    cpp: { wasm: "cpp", query: CPP_QUERY },
 };
 
 // The core set warmed at extension start.
@@ -54,6 +77,30 @@ export const EXT_LANG: Record<string, string> = {
     jsx: "jsx",
     mjs: "javascript",
     cjs: "javascript",
+    py: "python",
+    pyi: "python",
+    rs: "rust",
+    go: "go",
+    json: "json",
+    jsonc: "json",
+    sh: "bash",
+    bash: "bash",
+    zsh: "bash",
+    css: "css",
+    scss: "css",
+    html: "html",
+    htm: "html",
+    xml: "html",
+    svg: "html",
+    vue: "html",
+    c: "c",
+    h: "c",
+    cc: "cpp",
+    cpp: "cpp",
+    cxx: "cpp",
+    hpp: "cpp",
+    hh: "cpp",
+    hxx: "cpp",
 };
 
 /** Resolve a file path to a grammar key, or "" for plain text. */
@@ -263,19 +310,26 @@ export function highlightToLines(key: string, content: string): string[] {
     const r = key ? ready.get(key) : undefined;
     if (!r) return splitHighlightedLines(escapeHtml(content));
 
-    const p = getParser();
-    p.setLanguage(r.lang);
-    const tree = p.parse(content);
-    const caps = r.query.captures(tree.rootNode);
-    const spans: Span[] = caps.map((c, i) => ({
-        start: c.node.startIndex,
-        end: c.node.endIndex,
-        name: c.name,
-        idx: i,
-    }));
-    const html = renderHtml(content, spans);
-    tree.delete();
-    return splitHighlightedLines(html);
+    // Some prebuilt grammar wasm can throw at parse time (e.g. an external
+    // scanner referencing a symbol this runtime doesn't provide). Never let
+    // that crash the frame renderer — degrade to plain (escaped) text.
+    try {
+        const p = getParser();
+        p.setLanguage(r.lang);
+        const tree = p.parse(content);
+        const caps = r.query.captures(tree.rootNode);
+        const spans: Span[] = caps.map((c, i) => ({
+            start: c.node.startIndex,
+            end: c.node.endIndex,
+            name: c.name,
+            idx: i,
+        }));
+        const html = renderHtml(content, spans);
+        tree.delete();
+        return splitHighlightedLines(html);
+    } catch {
+        return splitHighlightedLines(escapeHtml(content));
+    }
 }
 
 /** Path-based convenience mirroring the old multibuffer `highlightLines`. */
