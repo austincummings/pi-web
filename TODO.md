@@ -293,6 +293,35 @@ Simple, line-based backlog. Check items off as they land.
       `threads.rename` (`POST /threads/rename`) appends a `session_info` name for
       loaded or on-disk threads. Toasts mirror the TUI status ("Thread moved to
       trash" / "Thread deleted" / "Failed to delete: …").
+- [ ] 29. Stylistic-consistency cleanup (from a full-tree review; mostly `.mjs` →
+      `.ts` migration leftovers). Prettier passes on all `.ts`; these are things it
+      can't catch:
+    - [ ] Remove the redundant JSDoc `@typedef`/`@property` blocks that duplicate
+          real TS declarations in the host files (`src/host/piweb-host.ts:23-59`,
+          `src/host/server.ts:104-131` `ThreadRuntime`/`ServerMessage`,
+          `src/host/app.ts:151` `SSEClient`), plus stray `@returns`/`@param` in
+          `.ts` (e.g. `server.ts:1272`, `piweb-host.ts:98,209`). Keep the prose
+          summary; let the TS types be the source of truth (matches `src/web/*` +
+          `src/sdk/*`, which carry no `@typedef`).
+    - [ ] Fix the stale `.mjs` reference in `src/host/server.ts:6` ("lives in
+          ./app.mjs" → `./app.ts`).
+    - [ ] Drop the dead `// eslint-disable-next-line no-var` in
+          `src/sdk/piweb.ts:133` (no ESLint is configured in the project); the
+          `var __PIWEB__` itself is correct inside `declare global`.
+    - [ ] Normalize object shapes to `interface` (the codebase convention): convert
+          `type ServerMessage = {…}` (`src/host/server.ts:101`) and
+          `type DialogOptions = {…}` (`src/sdk/piweb.ts:14`).
+    - [ ] Reconcile the two divergent `AutocompleteProvider` definitions — the rich
+          one in `src/sdk/piweb.ts:47` vs. the minimal
+          `(ctx: { text; caret }) => any` in `src/host/piweb-host.ts:95` (the host
+          one omits the documented host-supplied `cwd`).
+    - [ ] Align `src/sdk/piweb.ts` `stub` keys with the `PiWebSurface` interface:
+          `removeDock`/`hasMessageRenderer`/`renderMessage`/`hasAutocomplete`/
+          `autocomplete` compile only via the `[key: string]: any` index signature.
+    - [ ] Give `piframe-resize` a named detail type + typed `emit<T>` call in
+          `src/web/pi-frame.ts`, matching `piframe-action`/`piframe-notify`.
+    - [ ] Run `bun run format` on `TODO.md` (only file failing `format:check`), or
+          add it to `.prettierignore` if it's intentionally hand-formatted.
 
 ## Docs
 
