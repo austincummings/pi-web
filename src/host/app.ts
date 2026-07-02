@@ -111,6 +111,29 @@ export interface AppOptions {
             threadId?: string,
         ) => Promise<{ ok: boolean; error?: string }>;
     };
+    trustApi?: {
+        get: (threadId?: string) =>
+            | {
+                  cwd: string;
+                  options: Array<{ label: string; trusted: boolean }>;
+                  saved: { path: string; decision: boolean } | null;
+                  projectTrusted: boolean;
+              }
+            | Promise<{
+                  cwd: string;
+                  options: Array<{ label: string; trusted: boolean }>;
+                  saved: { path: string; decision: boolean } | null;
+                  projectTrusted: boolean;
+              }>;
+        set: (
+            threadId: string | undefined,
+            label: string,
+        ) => Promise<{
+            ok: boolean;
+            projectTrusted?: boolean;
+            error?: string;
+        }>;
+    };
     autocomplete?: (
         threadId: string | undefined,
         ctx: { text: string; caret?: number },
@@ -206,6 +229,7 @@ export function createApp({
     sessionApi,
     modelApi,
     commandsApi,
+    trustApi,
     autocomplete,
     onBash,
     onAbortBash,
@@ -321,6 +345,21 @@ export function createApp({
         sendJson(res, 200, (await modelApi?.list?.(threadId)) ?? { items: [] });
     });
 
+    // Project-trust state + choices for the `/trust` selector (read-only).
+    router.get("/trust", async ({ res, url }) => {
+        const threadId = url.searchParams.get("thread") || undefined;
+        sendJson(
+            res,
+            200,
+            (await trustApi?.get?.(threadId)) ?? {
+                cwd: "",
+                options: [],
+                saved: null,
+                projectTrusted: false,
+            },
+        );
+    });
+
     // extension/prompt/skill slash commands for the `/` typeahead (read-only)
     router.get("/commands", async ({ res, url }) => {
         const threadId = url.searchParams.get("thread") || undefined;
@@ -427,6 +466,15 @@ export function createApp({
                 body.id,
                 body.threadId || undefined,
             )) ?? {};
+        sendJson(res, 200, result);
+    });
+
+    // Apply a project-trust decision, then reload resources under it.
+    router.post("/trust", async ({ res, body }) => {
+        const result = (await trustApi?.set?.(
+            body.threadId || undefined,
+            body.label,
+        )) ?? { ok: false };
         sendJson(res, 200, result);
     });
     router.post("/session/compact", ({ res, body }) => {

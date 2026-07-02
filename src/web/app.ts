@@ -367,6 +367,11 @@ const COMMANDS = [
         description: "Export session — /export [html|jsonl]",
     },
     {
+        value: "/trust",
+        label: "/trust",
+        description: "Set project trust for this folder",
+    },
+    {
         value: "/changelog",
         label: "/changelog",
         description: "Show the pi changelog",
@@ -2007,6 +2012,9 @@ function runCommand(cmd: string, arg: string) {
         case "/export":
             doExport(arg);
             return true;
+        case "/trust":
+            openTrustPicker();
+            return true;
         case "/changelog":
             showChangelog();
             return true;
@@ -2090,6 +2098,45 @@ function openListPicker(title: string, rows: any[], selectIndex = 0) {
         );
     $prompt?.blur(); // don't let the composer's history keys fight the picker
     $overlay.classList.add("show");
+}
+
+// ---- /trust: set project-trust for this thread's working directory -------
+// pi gates project-local .pi resources behind a trust decision; pi-web runs
+// headless so trust-requiring projects default to untrusted. This picker lists
+// pi's trust choices (Trust / Trust parent / session-only / Do not trust) and
+// POSTs the pick to the host, which persists it + reloads resources under it.
+async function openTrustPicker() {
+    const data = await getJson(
+        "/trust" +
+            (activeThreadId
+                ? "?thread=" + encodeURIComponent(activeThreadId)
+                : ""),
+    );
+    const options: Array<{ label: string; trusted: boolean }> =
+        data?.options || [];
+    if (!options.length) {
+        notice("project trust unavailable");
+        return;
+    }
+    const state = data?.projectTrusted ? "trusted" : "untrusted";
+    const rows = options.map((o) => ({
+        name: o.label,
+        meta: o.trusted ? "trust" : "untrust",
+        onClick: () => applyTrust(o.label),
+    }));
+    openListPicker(
+        `Project trust · ${data?.cwd || ""} · currently ${state}`,
+        rows,
+    );
+}
+
+async function applyTrust(label: string) {
+    const r = await (await postThread("/trust", { label })).json();
+    if (!r?.ok) {
+        notice("trust update failed: " + (r?.error || "unknown"));
+        return;
+    }
+    toast(r.projectTrusted ? "Project trusted" : "Project not trusted");
 }
 
 // ---- /tree: jump to an earlier point in the session ----------------------
@@ -2722,6 +2769,19 @@ function onSseMessage(e: MessageEvent) {
             break;
         case "working":
             setWorking(!!m.busy);
+            break;
+        case "trust_required":
+            // First-load trust gate: this project ships trust-gated `.pi`
+            // resources (extensions/skills/prompts/settings) with no saved
+            // decision, so it started UNTRUSTED — those resources are disabled
+            // until the user decides. Prompt via the /trust picker. Non-blocking;
+            // dismissible (stays untrusted — they can /trust later).
+            notice(
+                "This project isn't trusted — its .pi extensions/skills are disabled. Pick a trust option, or run /trust later.",
+            );
+            setTimeout(() => {
+                if (!$overlay?.classList.contains("show")) openTrustPicker();
+            }, 400);
             break;
         case "queue":
             // pending steering/follow-up messages waiting for delivery

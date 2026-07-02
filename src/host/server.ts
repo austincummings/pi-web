@@ -51,6 +51,9 @@ import {
     getPackageDir,
     AuthStorage,
     ModelRegistry,
+    ProjectTrustStore,
+    hasTrustRequiringProjectResources,
+    SettingsManager,
     type AgentSession,
     type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
@@ -137,6 +140,14 @@ const HOST = process.env.HOST ?? "0.0.0.0";
 // each ThreadRuntime (sourced from its SessionManager header); pi binds cwd at
 // session creation, so "changing directory" means starting a thread elsewhere.
 const cwd = process.cwd();
+
+// Project-trust store (pi's shared ~/.pi/agent/trust.json). Declared early: the
+// default thread is created at module init (below) and createThread reads the
+// saved decision to pin the hard trust gate before loading project resources.
+const trustStore = new ProjectTrustStore(getAgentDir());
+// Threads we've shown the first-load trust prompt for this process, so
+// reconnects/refreshes don't re-nag after the user has seen (or dismissed) it.
+const trustPrompted = new Set<string>();
 
 // If a pi-web instance is already serving on this port, don't boot a second
 // server (it would only fail to bind). Instead, open the existing instance in
@@ -965,9 +976,24 @@ function createThread(sm: SessionManager) {
     const run = createChain.then(async () => {
         const thread = makeThread(sm);
         const threadCwd = thread.cwd;
+        // Hard trust gate: own the SettingsManager so we can pin the trust flag
+        // *before* loading resources. A project with trust-requiring .pi
+        // resources and no saved decision starts UNTRUSTED, so its extensions/
+        // skills/prompts/settings aren't loaded until the user decides via
+        // /trust. A saved decision is honored; a project with nothing to gate is
+        // trusted. reload() preserves this flag (it doesn't re-resolve), and the
+        // SDK default would otherwise start every project trusted.
+        const settingsManager = SettingsManager.create(threadCwd, getAgentDir());
+        const savedTrust = trustStore.get(threadCwd); // boolean | null
+        settingsManager.setProjectTrusted(
+            savedTrust !== null
+                ? savedTrust
+                : !hasTrustRequiringProjectResources(threadCwd),
+        );
         const resourceLoader = new DefaultResourceLoader({
             cwd: threadCwd,
             agentDir: getAgentDir(),
+            settingsManager,
             // Inline factory captures this thread's live ExtensionAPI so panel
             // actions call back into *this* thread (pi.sendUserMessage, etc).
             extensionFactories: [
@@ -992,6 +1018,7 @@ function createThread(sm: SessionManager) {
                 cwd: threadCwd,
                 resourceLoader,
                 sessionManager: sm,
+                settingsManager,
                 authStorage,
                 modelRegistry,
             });
@@ -1244,6 +1271,17 @@ async function handleConnect(
     // reflect the thread's current activity (e.g. focusing a busy background
     // thread should show the spinner immediately)
     send({ kind: "working", busy: !!t.busy });
+    // First-load trust gate: pi-web resolves headless -> untrusted for projects
+    // with trust-requiring .pi resources, silently ignoring them. When such a
+    // project has no saved decision yet, nudge the browser to open the /trust
+    // picker so the user can decide (the TUI shows an equivalent "not trusted,
+    // use /trust" prompt at startup). We can't block here to ask synchronously:
+    // handleConnect runs *before* this client is tagged to the thread, so a
+    // blocking dialog would deadlock. Emit once per thread per process.
+    if (needsTrustPrompt(t)) {
+        trustPrompted.add(t.id);
+        send({ kind: "trust_required", cwd: t.cwd });
+    }
     return t.id;
 }
 
@@ -2032,6 +2070,139 @@ const indexHtmlPath = Bun.embeddedFiles?.length
     ? (await import("./embedded.ts")).indexHtmlPath
     : join(WEB, "index.html");
 
+// ---- project trust (/trust) --------------------------------------------
+// pi gates project-local .pi resources behind a trust decision. Running via
+// the SDK, pi-web resolves headless -> untrusted for trust-requiring projects
+// (interactive `ctx.ui.select` never fires without a terminal). `/trust` gives
+// the browser a way to set that decision: persist it to pi's shared trust.json
+// (so future sessions honor it) AND flip the live session's flag, then
+// session.reload() reloads resources under it. reload() PRESERVES
+// settingsManager.projectTrusted (it doesn't re-resolve), so setting the flag
+// first is what makes the live thread pick up the change.
+// True when a thread's project has trust-requiring .pi resources but the user
+// has never recorded a trust decision (`trustStore.get === null`). createThread
+// starts such projects untrusted (the hard gate), and this drives the browser's
+// first-load prompt. Fires once per thread per process.
+function needsTrustPrompt(t: ThreadRuntime): boolean {
+    if (!t.session || trustPrompted.has(t.id)) return false;
+    try {
+        if (!hasTrustRequiringProjectResources(t.cwd)) return false;
+        return trustStore.get(t.cwd) === null;
+    } catch {
+        return false;
+    }
+}
+
+// getProjectTrustOptions isn't exported from the package (and deep imports are
+// blocked by its `exports` map), so mirror core/trust-manager.ts's
+// getProjectTrustOptions(cwd, { includeSessionOnly: true }). Persistence itself
+// goes through the real ProjectTrustStore, which re-normalizes these paths, so
+// the keys written to trust.json stay canonical regardless of display form.
+function projectTrustOptions(dir: string): Array<{
+    label: string;
+    trusted: boolean;
+    updates: Array<{ path: string; decision: boolean | null }>;
+}> {
+    const trustPath = resolve(dir);
+    const parent = dirname(trustPath);
+    const options: Array<{
+        label: string;
+        trusted: boolean;
+        updates: Array<{ path: string; decision: boolean | null }>;
+    }> = [
+        {
+            label: "Trust",
+            trusted: true,
+            updates: [{ path: trustPath, decision: true }],
+        },
+    ];
+    if (parent !== trustPath) {
+        options.push({
+            label: `Trust parent folder (${parent})`,
+            trusted: true,
+            updates: [
+                { path: parent, decision: true },
+                { path: trustPath, decision: null },
+            ],
+        });
+    }
+    options.push({
+        label: "Trust (this session only)",
+        trusted: true,
+        updates: [],
+    });
+    options.push({
+        label: "Do not trust",
+        trusted: false,
+        updates: [{ path: trustPath, decision: false }],
+    });
+    options.push({
+        label: "Do not trust (this session only)",
+        trusted: false,
+        updates: [],
+    });
+    return options;
+}
+
+const trustApi = {
+    get: (threadId?: string) => {
+        const t = threadId ? threadRuntimes.get(threadId) : null;
+        const dir = t?.cwd || cwd;
+        return {
+            cwd: dir,
+            options: projectTrustOptions(dir).map((o) => ({
+                label: o.label,
+                trusted: o.trusted,
+            })),
+            saved: trustStore.getEntry(dir),
+            projectTrusted:
+                t?.session?.settingsManager?.isProjectTrusted?.() ?? false,
+        };
+    },
+    set: async (threadId: string | undefined, label: string) => {
+        const t = threadId ? threadRuntimes.get(threadId) : null;
+        if (!t?.session || !t.resourceLoader || !t.piweb)
+            return { ok: false, error: "no session" };
+        const opt = projectTrustOptions(t.cwd).find((o) => o.label === label);
+        if (!opt) return { ok: false, error: "unknown option" };
+        try {
+            // Persist yes/no decisions (session-only options have no updates).
+            if (opt.updates.length) trustStore.setMany(opt.updates);
+            // Flip the live flag, then reload resources under it (mirrors the
+            // onReload path: clear surfaces, reload, re-broadcast).
+            t.session.settingsManager?.setProjectTrusted?.(opt.trusted);
+            t.piweb.clear();
+            bindingThread = t;
+            try {
+                await t.session.reload();
+            } finally {
+                bindingThread = null;
+            }
+            bus.broadcastToThread(t.id, {
+                kind: "surfaces",
+                surfaces: t.piweb.snapshot(),
+            });
+            bus.broadcastToThread(t.id, {
+                kind: "welcome",
+                reload: true,
+                ...buildWelcome(t.resourceLoader),
+            });
+            bus.broadcastToThread(t.id, thinkingLevelFrame(t.session));
+            return {
+                ok: true,
+                projectTrusted:
+                    t.session.settingsManager?.isProjectTrusted?.() ??
+                    opt.trusted,
+            };
+        } catch (err) {
+            return {
+                ok: false,
+                error: String((err as any)?.message ?? err),
+            };
+        }
+    },
+};
+
 const server = createApp({
     web: WEB,
     indexHtmlPath,
@@ -2044,6 +2215,7 @@ const server = createApp({
     sessionApi,
     modelApi,
     commandsApi,
+    trustApi,
     // Project file list for the browser's `@` mention typeahead, scoped to the
     // viewing thread's working directory.
     listFiles: (threadId) =>
