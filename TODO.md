@@ -22,37 +22,49 @@ Simple, line-based backlog. Check items off as they land.
 - [x] 16. Create a matrix of TUI extension points vs. our web UI counterparts, noting gaps; add as `docs/extension-points.md`. (Done — see `docs/extension-points.md`; the gaps it surfaces are tracked in #22.)
 - [ ] 17. Research whether to switch to HTMX for rendering the dynamic UI.
 - [ ] 18. Research rendering markdown in the composer text box.
-- [~] 19. Add a web equivalent of pi's `registerMessageRenderer(customType, renderer)` so
-  extensions can override how a message / code block renders in the transcript.
-  **Core landed:** `piweb.registerMessageRenderer(customType, (message, opts) => tree)`
-  stores a `customType -> renderer` map on the per-thread host; custom
-  messages (`pi.sendMessage({ customType })`, role `"custom"`) render via the
-  returned serializable tree on live `message_end` + transcript replay
-  (`customFrame` in `server.ts`), falling back to markdown text when no
-  renderer is registered or `display === false`. Renderers use the TUI-aligned
-  node vocabulary (`Box`/`Text`/`Markdown`/`Input` mirror the pi-tui components;
-  `Stack` is a deprecated alias for `Box`); a `Markdown` node renders via the
-  transcript's `renderMarkdown()` — mirroring pi-tui's `Markdown` component,
-  which is where code highlighting lives (no separate `Code` type). No-op under
-  plain pi. **Remaining:** highlight fenced code inside the markdown code-block
-  path (`markdown.ts` → `--syn-*` spans), serving both `Markdown` nodes and the
-  assistant transcript — the tree-sitter-highlighter forcing function (pi-tui's
-  `MarkdownTheme.highlightCode`).
+- [x] 19. Add a web equivalent of pi's `registerMessageRenderer(customType, renderer)` so
+      extensions can override how a message / code block renders in the transcript.
+      **Fenced-code highlighting landed:** `src/web/highlight.ts` highlights fenced
+      code blocks with `highlight.js` (mirroring the pi TUI's
+      `utils/syntax-highlight.js` → `theme.js` `highlightCode`), using
+      `highlight.js/lib/core` + pi's `getLanguageFromPath` language set. `renderMarkdown`
+      captures the fence language, feeds the raw source to hljs (escaped once), and emits
+      `<pre><code class="hljs language-x">`; unknown/absent languages fall back to escaped
+      plain text (no `highlightAuto`, matching the TUI) and a still-streaming (unterminated)
+      fence renders plain until it closes. hljs's `hljs-*` classes are mapped to the theme
+      `--syn-*` palette in `index.html` using the same class→palette convention the
+      tree-sitter extensions already ship (`_shared/multibuffer.ts`), so transcript and
+      extension-rendered code blocks match. Results are memoized so the throttled per-frame
+      re-render doesn't re-tokenize unchanged blocks.
+      **Core landed:** `piweb.registerMessageRenderer(customType, (message, opts) => tree)`
+      stores a `customType -> renderer` map on the per-thread host; custom
+      messages (`pi.sendMessage({ customType })`, role `"custom"`) render via the
+      returned serializable tree on live `message_end` + transcript replay
+      (`customFrame` in `server.ts`), falling back to markdown text when no
+      renderer is registered or `display === false`. Renderers use the TUI-aligned
+      node vocabulary (`Box`/`Text`/`Markdown`/`Input` mirror the pi-tui components;
+      `Stack` is a deprecated alias for `Box`); a `Markdown` node renders via the
+      transcript's `renderMarkdown()` — mirroring pi-tui's `Markdown` component,
+      which is where code highlighting lives (no separate `Code` type). No-op under
+      plain pi. **Remaining:** highlight fenced code inside the markdown code-block
+      path (`markdown.ts` → `--syn-*` spans), serving both `Markdown` nodes and the
+      assistant transcript — the tree-sitter-highlighter forcing function (pi-tui's
+      `MarkdownTheme.highlightCode`).
 
       <sub>Original spec (kept for reference):</sub> override how a message / code block renders in the transcript
-      (closely related to #10; the forcing function is a tree-sitter highlighter).
-      Shape: `piweb.registerMessageRenderer(customType, (message, opts) => Node)`
-      where the renderer returns a **serializable component tree** (the same
-      `Stack/Row/Text/Button/Frame` node model as docks/overlays), not a TUI
-      `Component`. The host keeps a `customType -> renderer` map; when a transcript
-      entry carries a matching `customType` (or, for code blocks, a synthetic
-      `"code"` type with `{ lang, text }`), it renders the returned tree via the
-      existing `renderNode` path instead of the default markdown/`<pre>` output.
-      Needs three small pieces: (a) the registry + `render` SSE frame carrying
-      `{ customType, tree }`, (b) a new `Code` node type so a highlighter can emit
-      spans without a `Frame`, (c) capturing the fenced-code language in
-      `markdown.ts` so code blocks can be routed to a registered renderer.
-      Stays portable: with no host present the call no-ops like the rest of `piweb`.
+              (closely related to #10; the forcing function is a tree-sitter highlighter).
+              Shape: `piweb.registerMessageRenderer(customType, (message, opts) => Node)`
+              where the renderer returns a **serializable component tree** (the same
+              `Stack/Row/Text/Button/Frame` node model as docks/overlays), not a TUI
+              `Component`. The host keeps a `customType -> renderer` map; when a transcript
+              entry carries a matching `customType` (or, for code blocks, a synthetic
+              `"code"` type with `{ lang, text }`), it renders the returned tree via the
+              existing `renderNode` path instead of the default markdown/`<pre>` output.
+              Needs three small pieces: (a) the registry + `render` SSE frame carrying
+              `{ customType, tree }`, (b) a new `Code` node type so a highlighter can emit
+              spans without a `Frame`, (c) capturing the fenced-code language in
+              `markdown.ts` so code blocks can be routed to a registered renderer.
+              Stays portable: with no host present the call no-ops like the rest of `piweb`.
 
 - [x] 20. Rename the `dock`/`overlay` surface API toward pi parity: `dock` -> `setWidget`
       with a widened `placement` (`aboveEditor`/`belowEditor` aliases for today's

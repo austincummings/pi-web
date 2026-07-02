@@ -17,9 +17,11 @@
     "engines": {
         "bun": ">=1.3.0"
     },
+    "//dependencies": "highlight.js powers core transcript code highlighting (src/web/highlight.ts). tree-sitter-wasms + web-tree-sitter are used only by project extensions (.pi/extensions/_shared/ts-highlight.ts, host-side), not by pi-web core.",
     "dependencies": {
         "@earendil-works/pi-coding-agent": "0.80.2",
         "diff": "^8.0.4",
+        "highlight.js": "10.7.3",
         "tree-sitter-wasms": "^0.1.13",
         "web-tree-sitter": "0.24.7"
     },

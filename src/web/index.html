@@ -469,35 +469,69 @@
                 color: var(--md-code-block);
             }
             /* Syntax tokens for highlighted code inside markdown code blocks
-               (`Markdown` node + the assistant transcript). The markdown code
-               highlighter (TODO #19) emits <span class="syn-*"> inside
-               <pre><code>, mapped here to the theme --syn-* palette. */
-            .syn-comment {
+               (`Markdown` node + the assistant transcript). highlight.js emits
+               <span class="hljs-*"> inside <pre><code> (see src/web/highlight.ts),
+               mapped here to the theme --syn-* palette. This is the same
+               class→palette convention the tree-sitter extensions use
+               (.pi/extensions/_shared/multibuffer.ts), kept in sync so a
+               transcript code block and an extension-rendered one match. */
+            .hljs-comment,
+            .hljs-quote {
                 color: var(--syn-comment);
+                font-style: italic;
             }
-            .syn-keyword {
+            .hljs-keyword,
+            .hljs-selector-tag,
+            .hljs-name,
+            .hljs-built_in,
+            .hljs-literal {
                 color: var(--syn-keyword);
             }
-            .syn-function {
-                color: var(--syn-function);
-            }
-            .syn-variable {
-                color: var(--syn-variable);
-            }
-            .syn-string {
+            .hljs-string,
+            .hljs-regexp,
+            .hljs-meta .hljs-string,
+            .hljs-symbol,
+            .hljs-bullet {
                 color: var(--syn-string);
             }
-            .syn-number {
+            .hljs-number {
                 color: var(--syn-number);
             }
-            .syn-type {
+            .hljs-title,
+            .hljs-title.function_,
+            .hljs-section,
+            .hljs-selector-id,
+            .hljs-link {
+                color: var(--syn-function);
+            }
+            .hljs-type,
+            .hljs-class .hljs-title,
+            .hljs-title.class_,
+            .hljs-attribute,
+            .hljs-selector-class {
                 color: var(--syn-type);
             }
-            .syn-operator {
+            .hljs-variable,
+            .hljs-template-variable,
+            .hljs-attr,
+            .hljs-property,
+            .hljs-params {
+                color: var(--syn-variable);
+            }
+            .hljs-operator {
                 color: var(--syn-operator);
             }
-            .syn-punctuation {
+            .hljs-punctuation {
                 color: var(--syn-punctuation);
+            }
+            .hljs-meta {
+                color: var(--syn-comment);
+            }
+            .hljs-emphasis {
+                font-style: italic;
+            }
+            .hljs-strong {
+                font-weight: 600;
             }
             .msg .body blockquote {
                 border-left: 2px solid var(--md-quote-border);

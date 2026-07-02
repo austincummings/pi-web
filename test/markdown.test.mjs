@@ -17,9 +17,42 @@ test("bold and italic", () => {
 
 test("inline and fenced code", () => {
     expect(renderMarkdown("use `x` here")).toContain("<code>x</code>");
+    // A fence with no language is plain escaped text inside a .hljs code block.
     expect(renderMarkdown("```\na<b\n```")).toContain(
-        "<pre><code>a&lt;b</code></pre>",
+        '<pre><code class="hljs">a&lt;b</code></pre>',
     );
+});
+
+test("highlights a fenced block with a known language", () => {
+    const out = renderMarkdown("```ts\nconst x = 1;\n```");
+    expect(out).toContain('<pre><code class="hljs language-ts">');
+    expect(out).toContain("hljs-keyword"); // `const`
+    // the source text survives highlighting
+    expect(out.replace(/<[^>]+>/g, "")).toContain("const x = 1;");
+});
+
+test("unknown language falls back to plain escaped code", () => {
+    const out = renderMarkdown("```notalang\nplain <b>\n```");
+    expect(out).toContain('<pre><code class="hljs language-notalang">');
+    expect(out).not.toContain("hljs-" + "keyword");
+    expect(out).toContain("plain &lt;b&gt;");
+});
+
+test("highlighted code is escaped exactly once (no double-escape)", () => {
+    const out = renderMarkdown("```ts\nconst s = a && b > c;\n```");
+    // Correct single-escaping: `&`→`&amp;`, `>`→`&gt;`.
+    expect(out).toContain("&amp;&amp;");
+    expect(out).toContain("&gt;");
+    // Double-escaping would produce these; they must be absent.
+    expect(out).not.toContain("&amp;amp;");
+    expect(out).not.toContain("&amp;gt;");
+});
+
+test("unterminated (streaming) fence renders plain, not highlighted", () => {
+    const out = renderMarkdown("```ts\nconst x = 1;");
+    expect(out).toContain("<pre><code");
+    expect(out).not.toContain("hljs-keyword");
+    expect(out.replace(/<[^>]+>/g, "")).toContain("const x = 1;");
 });
 
 test("headings and lists", () => {

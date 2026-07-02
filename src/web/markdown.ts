@@ -7,6 +7,8 @@
  * output can never inject markup or scripts.
  */
 
+import { highlightCode } from "./highlight.ts";
+
 function escapeHtml(s: string) {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -70,6 +72,13 @@ function inline(text: string) {
 export function renderMarkdown(src: string) {
     const text = escapeHtml(String(src ?? "")).replace(/\r\n?/g, "\n");
     const lines = text.split("\n");
+    // Raw (un-escaped) lines, index-aligned with `lines` (escapeHtml doesn't
+    // add/remove newlines). Fenced code is highlighted from the raw source so
+    // hljs escapes it exactly once (feeding it pre-escaped text double-escapes
+    // `&`/`<`/`>`).
+    const rawLines = String(src ?? "")
+        .replace(/\r\n?/g, "\n")
+        .split("\n");
     const html: string[] = [];
     let i = 0;
     let listType: "ul" | "ol" | null = null;
@@ -85,14 +94,26 @@ export function renderMarkdown(src: string) {
         const line = lines[i];
 
         // fenced code block
-        if (/^```/.test(line)) {
+        const fence = line.match(/^```(\S*)/);
+        if (fence) {
             closeList();
-            const buf = [];
+            const start = i + 1;
             i++;
-            while (i < lines.length && !/^```/.test(lines[i]))
-                buf.push(lines[i++]);
-            i++; // consume closing fence
-            html.push(`<pre><code>${buf.join("\n")}</code></pre>`);
+            while (i < lines.length && !/^```/.test(lines[i])) i++;
+            const closed = i < lines.length; // found the closing fence
+            const rawCode = rawLines.slice(start, i).join("\n");
+            i++; // consume closing fence (harmless no-op past end when unterminated)
+            const langRaw = fence[1] || "";
+            // Highlight only closed blocks. A still-streaming block (no closing
+            // fence yet) renders as escaped plain text so we don't re-tokenize a
+            // growing block every frame or flash partial parses; it gets
+            // highlighted once the fence closes.
+            const body = closed
+                ? highlightCode(rawCode, langRaw)
+                : escapeHtml(rawCode);
+            const safeLang = langRaw.replace(/[^\w-]/g, "");
+            const cls = "hljs" + (safeLang ? ` language-${safeLang}` : "");
+            html.push(`<pre><code class="${cls}">${body}</code></pre>`);
             continue;
         }
 

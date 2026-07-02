@@ -144,8 +144,10 @@ export function highlightCode(code: string, lang: string): string {
 
     let out: string;
     try {
-        out = hljs.highlight(code, { language: name, ignoreIllegals: true })
-            .value;
+        out = hljs.highlight(code, {
+            language: name,
+            ignoreIllegals: true,
+        }).value;
     } catch {
         out = escapeHtml(code);
     }
