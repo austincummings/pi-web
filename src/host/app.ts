@@ -257,13 +257,12 @@ export function createApp({
     // liveness: up regardless of model/auth
     router.get("/health", ({ res }) => {
         const snap = piweb.snapshot?.() ?? {};
-        const d = snap.docks ?? { left: [], right: [], bottom: [] };
-        const surfaces =
-            (d.left?.length ?? 0) +
-            (d.right?.length ?? 0) +
-            (d.bottom?.length ?? 0) +
-            (d.footer?.length ?? 0) +
-            (snap.overlays?.length ?? 0);
+        const docks = snap.docks ?? {};
+        const dockCount = Object.values(docks).reduce(
+            (n: number, cards: any) => n + (cards?.length ?? 0),
+            0,
+        );
+        const surfaces = dockCount + (snap.overlays?.length ?? 0);
         sendJson(res, 200, { ok: true, surfaces });
     });
 

@@ -112,34 +112,17 @@
                 flex: 1 1 auto;
                 min-width: 0;
             }
-            /* extension docks (left / right rails, bottom tray) */
-            .dock.side {
-                flex: 0 0 320px;
-                min-width: 260px;
-                overflow: auto;
-                padding: 14px;
-                display: flex;
-                flex-direction: column;
-                gap: 14px;
-                background: var(--bg);
-            }
-            #dock-left {
-                border-right: 1px solid var(--line);
-            }
-            #dock-right {
-                border-left: 1px solid var(--line);
-            }
-            /* bottom = above the prompt; footer = below the prompt */
-            .dock.bottom,
-            .dock.footer {
+            /* extension docks: aboveEditor / belowEditor trays (pi-tui parity) */
+            .dock.above-editor,
+            .dock.below-editor {
                 display: flex;
                 flex-wrap: wrap;
                 gap: 12px;
                 padding: 12px 14px;
                 border-top: 1px solid var(--line);
             }
-            .dock.bottom > .surface,
-            .dock.footer > .surface {
+            .dock.above-editor > .surface,
+            .dock.below-editor > .surface {
                 flex: 1 1 240px;
             }
             .dock.empty-dock {
@@ -1352,7 +1335,6 @@
         </style>
     </head>
     <body>
-        <aside id="dock-left" class="dock side empty-dock"></aside>
         <div id="center" class="col">
             <header>
                 <span
@@ -1366,13 +1348,16 @@
             </header>
             <div id="transcript">
                 <div class="empty">
-                    Ask pi something, or use a dock registered by an extension →
+                    Ask pi something…
                     <br />Type <b>/</b> for commands — <b>/resume</b> to switch
                     threads, <b>/new</b> for a fresh one. <br />Run shell with
                     <b>!</b> (output in context) or <b>!!</b> (local only).
                 </div>
             </div>
-            <div id="dock-bottom" class="dock bottom empty-dock"></div>
+            <div
+                id="dock-above-editor"
+                class="dock above-editor empty-dock"
+            ></div>
             <div class="composer">
                 <div id="ac" class="ac"></div>
                 <div id="queued" class="queued" aria-live="polite"></div>
@@ -1402,11 +1387,14 @@
                     </div>
                 </form>
             </div>
-            <div id="dock-footer" class="dock footer empty-dock"></div>
+            <div
+                id="dock-below-editor"
+                class="dock below-editor empty-dock"
+            ></div>
             <div id="contextbar" class="contextbar"></div>
             <div id="statusbar" class="statusbar"></div>
         </div>
-        <aside id="dock-right" class="dock side empty-dock"></aside>
+
         <div id="overlay-layer"></div>
         <div id="toast-layer"></div>
         <div id="overlay"><div class="picker" id="picker"></div></div>

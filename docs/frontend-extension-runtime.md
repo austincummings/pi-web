@@ -44,15 +44,16 @@ capability-bearing work is **relayed to** the host.
 Per AGENTS.md ("match the pi TUI by default; treat divergence as a decision"),
 the first cut deliberately **defers all web-only surface**:
 
-- **No web regions** — `setWidget` left/right rails and `overlay` modal cards are
-  out of v1. Widgets/status/dialogs use only what maps to pi's TUI.
+- **No web regions** — custom `custom()`/overlay modal cards are out of v1.
+  Widgets/status/dialogs use only what maps to pi's TUI (the two
+  `aboveEditor`/`belowEditor` widget slots).
 - **No `Frame`** — no arbitrary sandboxed HTML/CSS/JS output. Renderers emit pi's
   serializable node vocabulary (Box/Row/Text/Divider/Code/Markdown) that the web
   already mounts to match the TUI.
 
 Consequences: the render sandbox needs only a **Worker** for logic (no render
 iframe), and `piweb` largely **collapses into the relayed `ctx.ui`** (see §17.7).
-Web-only affordances (rails, overlays, `Frame`, side-by-side layouts) return as
+Web-only affordances (overlays, `Frame`, side-by-side layouts) return as
 explicit, justified divergences in a later phase.
 
 ---

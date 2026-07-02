@@ -7,9 +7,10 @@ current `dock` surface API to `setWidget`, aligning pi-web with pi's TUI
 Landed: `setWidget(key, content, options)` + `removeWidget(key)` on the host
 registry (`src/host/piweb-host.ts`), forwarded in `src/host/server.ts` and
 stubbed as no-ops in `src/sdk/piweb.ts`. `string[]` content, the
-`aboveEditor`/`belowEditor`/`left`/`right` placements, and `title`/`order`
+`aboveEditor`/`belowEditor` placements, and `title`/`order`
 options all work; `dock()` remains as a deprecated authoring alias. The wire
-protocol and front-end (`docks.{left,right,bottom,footer}` cards) are unchanged.
+protocol and front-end (`docks.{aboveEditor,belowEditor}` cards) mirror pi-tui's
+two widget slots.
 
 ---
 
@@ -55,9 +56,7 @@ already use, and the same one proposed for `registerMessageRenderer`, TODO #19).
 ## 3. The pi-web API
 
 ```ts
-type WidgetPlacement =
-  | "aboveEditor" | "belowEditor"   // pi-compatible
-  | "left" | "right";               // web-only rails (superset)
+type WidgetPlacement = "aboveEditor" | "belowEditor"; // pi-tui parity
 
 interface WidgetOptions {
   placement?: WidgetPlacement;      // default "aboveEditor"
@@ -101,9 +100,8 @@ the host already builds (`payload`, `state`, `setState`, `pi`, `openOverlay`,
 - **Keying & replacement** match pi: same `key` replaces in place.
 - **State preservation** mirrors today's `define()` behaviour — re-defining a
   widget keeps `state` unless a new `initialState` is supplied.
-- **Placement aliases** map onto today's internal rails:
-  `aboveEditor -> bottom`, `belowEditor -> footer`. `left`/`right` are the
-  web-only rails with no TUI counterpart.
+- **Placement** maps onto pi-tui's two slots: `aboveEditor` (default) and
+  `belowEditor` (the internal dock `side` uses these same names).
 
 ### `string[]` content (drop-in compatibility)
 
@@ -147,9 +145,8 @@ The change is mechanical against `src/host/piweb-host.ts`:
    keep `dock` as a thin deprecated alias that forwards (one release).
 2. Normalize args: if `content` is an array, synthesize the `render` above; if a
    `WidgetDef`, use it directly; if `undefined`, delete the surface.
-3. Map `placement` -> internal `side` (`aboveEditor->bottom`,
-   `belowEditor->footer`, `left`/`right` pass through). Keep accepting the old
-   `side` values during the alias window.
+3. Map `placement` -> internal `side` (`aboveEditor`/`belowEditor`, pi-tui's two
+   slots; the internal `side` uses the same names).
 4. `removeWidget(key)` -> existing `removeDock`/`remove`.
 5. `snapshot()` and the `surfaces` SSE frame are **unchanged** — the front-end
    keeps rendering `docks.{left,right,bottom,footer}` cards via `renderNode`; only
@@ -168,12 +165,12 @@ modal cards (pi's `custom({ overlay })`), not sticky chrome, and have their own
 open/close lifecycle. Folding them into a `placement` would conflate two distinct
 primitives. The intended long-term mapping:
 
-| pi `ExtensionUIContext`                  | pi-web                                                                    |
-| ---------------------------------------- | ------------------------------------------------------------------------- |
-| `setWidget(key, content, { placement })` | `setWidget(key, content, { placement, title, order })` (+ `left`/`right`) |
-| `setStatus(key, text)`                   | `setStatus(key, text, { align, tone })` (already present)                 |
-| `notify(msg, type)`                      | `notify(msg, type)` (already present)                                     |
-| `custom({ overlay })`                    | `overlay(id, def)` + `openOverlay`/`closeOverlay`                         |
+| pi `ExtensionUIContext`                  | pi-web                                                 |
+| ---------------------------------------- | ------------------------------------------------------ |
+| `setWidget(key, content, { placement })` | `setWidget(key, content, { placement, title, order })` |
+| `setStatus(key, text)`                   | `setStatus(key, text)` (already present)               |
+| `notify(msg, type)`                      | `notify(msg, type)` (already present)                  |
+| `custom({ overlay })`                    | `overlay(id, def)` + `openOverlay`/`closeOverlay`      |
 
 ## 7. Examples
 
@@ -192,7 +189,7 @@ Rich web UI widget with state + an action:
 ```ts
 const piweb = globalThis.__PIWEB__;
 piweb?.setWidget("counter", {
-    placement: "right",
+    placement: "belowEditor",
     title: "Counter",
     initialState: { n: 0 },
     render: (s) => ({
@@ -222,4 +219,4 @@ piweb?.removeWidget("counter");
 - [ ] README + host docstrings: describe `setWidget` directly (drop the
       "dock = setWidget analogue" wording).
 - [ ] Optional: a small example extension under `.pi/extensions/` exercising a
-      `left`/`right` rail widget.
+      `belowEditor` widget.

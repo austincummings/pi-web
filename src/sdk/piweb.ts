@@ -106,11 +106,7 @@ export interface PiWebSurface {
     ): Promise<T | undefined>;
     // --- transient feedback ---
     notify(message: string, type?: NotifyLevel): void;
-    setStatus(
-        key: string,
-        text?: string,
-        opts?: { align?: "right"; tone?: "warning" | "error" },
-    ): void;
+    setStatus(key: string, text?: string): void;
     setTitle(text?: string): void;
     /**
      * Set the working/loading message shown during streaming (mirrors pi-tui

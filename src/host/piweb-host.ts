@@ -7,11 +7,11 @@ import { webPaletteTheme } from "./tui-theme.ts";
  * createAgentSession). It generalizes pi's TUI `ExtensionUIContext` into a 2D,
  * serializable model. Extensions mount **surfaces**:
  *
- *   - **widgets** — persistent, stackable widgets in the left / right / bottom
- *     / footer rails, authored via `setWidget(key, content, { placement })`
- *     (the web analogue of pi-tui's `setWidget(aboveEditor|belowEditor)`,
- *     widened with web-only `left`/`right` rails). Internally still tracked as
- *     `dock`-kind surfaces; `dock()` remains a deprecated authoring alias.
+ *   - **widgets** — persistent, stackable widgets in the aboveEditor /
+ *     belowEditor trays, authored via `setWidget(key, content, { placement })`
+ *     (pi-tui parity: the two `setWidget(aboveEditor|belowEditor)` slots).
+ *     Internally tracked as `dock`-kind surfaces; `dock()` remains a
+ *     deprecated authoring alias.
  *   - **overlays** — modal cards driven by `custom(factory, options?)` (the
  *     analogue of pi-tui's `ctx.ui.custom`) and by the blocking
  *     select/confirm/input/editor dialogs. The bare overlay verbs
@@ -24,9 +24,7 @@ import { webPaletteTheme } from "./tui-theme.ts";
  * in-process. The host serializes the tree, ships it to the browser, and routes
  * action events back to the in-process handler.
  *
- * @typedef {"left"|"right"|"bottom"|"footer"} DockSide
- *   bottom = above the prompt (pi-tui "aboveEditor"); footer = below the prompt
- *   (pi-tui "belowEditor").
+ * @typedef {"aboveEditor"|"belowEditor"} DockSide  pi-tui's two widget slots.
  *
  * @typedef {object} Surface
  * @property {string} id
@@ -56,13 +54,13 @@ import { webPaletteTheme } from "./tui-theme.ts";
  * @property {string} [prefill]                  editor
  *
  * @typedef {object} SurfacesSnapshot
- * @property {{left:SurfaceCard[], right:SurfaceCard[], bottom:SurfaceCard[], footer:SurfaceCard[]}} docks
+ * @property {{aboveEditor:SurfaceCard[], belowEditor:SurfaceCard[]}} docks
  * @property {SurfaceCard[]} overlays
- * @property {{key:string, text:string, align?:"right", tone?:"warning"|"error"}[]} status
+ * @property {{key:string, text:string}[]} status
  * @property {DialogSpec[]} dialogs             open blocking dialogs (select/confirm/input/editor)
  */
 
-type DockSide = "left" | "right" | "bottom" | "footer";
+type DockSide = "aboveEditor" | "belowEditor";
 type DialogKind = "select" | "confirm" | "input" | "editor";
 type NotifyLevel = "info" | "warning" | "error";
 
@@ -119,10 +117,7 @@ export function createPiWebHost({
 }) {
     const surfaces = new Map<string, Surface>();
     /** keyed status segments */
-    const statuses = new Map<
-        string,
-        { text: string; align?: string; tone?: string }
-    >();
+    const statuses = new Map<string, { text: string }>();
     /**
      * Open blocking dialogs awaiting a browser response.
      * @type {Map<string, {kind:string, spec:DialogSpec, settle:(v:any)=>void}>}
@@ -199,10 +194,8 @@ export function createPiWebHost({
 
     const snapshot = () => {
         const docks: Record<DockSide, SurfaceCard[]> = {
-            left: [],
-            right: [],
-            bottom: [],
-            footer: [],
+            aboveEditor: [],
+            belowEditor: [],
         };
         const overlays: SurfaceCard[] = [];
         const ordered = [...surfaces.values()].sort(
@@ -212,17 +205,14 @@ export function createPiWebHost({
             if (s.kind === "overlay") {
                 if (s.open) overlays.push(renderCard(s));
             } else {
-                (docks[s.side ?? "bottom"] ?? docks.bottom).push(renderCard(s));
+                (docks[s.side ?? "aboveEditor"] ?? docks.aboveEditor).push(
+                    renderCard(s),
+                );
             }
         }
         const status = [...statuses.entries()]
             .sort(([a], [b]) => a.localeCompare(b))
-            .map(([key, v]) => ({
-                key,
-                text: v.text,
-                align: v.align,
-                tone: v.tone,
-            }));
+            .map(([key, v]) => ({ key, text: v.text }));
         const dialogs = [...pendingUi.values()].map((e) => e.spec);
         return { docks, overlays, status, dialogs };
     };
@@ -282,27 +272,13 @@ export function createPiWebHost({
     };
 
     /**
-     * Map a widget `placement` (pi-parity + web-only rails) onto an internal
-     * dock `side`. `aboveEditor`/`belowEditor` are pi's two slots; `left`/`right`
-     * are the web-only rails; the raw `side` values pass through unchanged.
-     * @param {"aboveEditor"|"belowEditor"|"left"|"right"|"bottom"|"footer"} [placement]
+     * Map a widget `placement` onto an internal dock `side`. pi-tui has exactly
+     * two slots: `aboveEditor` (default) and `belowEditor`.
+     * @param {"aboveEditor"|"belowEditor"} [placement]
      * @returns {DockSide}
      */
-    const placementToSide = (placement?: string): DockSide => {
-        switch (placement) {
-            case "belowEditor":
-            case "footer":
-                return "footer";
-            case "left":
-                return "left";
-            case "right":
-                return "right";
-            case "aboveEditor":
-            case "bottom":
-            default:
-                return "bottom";
-        }
-    };
+    const placementToSide = (placement?: string): DockSide =>
+        placement === "belowEditor" ? "belowEditor" : "aboveEditor";
 
     /**
      * @param {string} id
@@ -318,7 +294,7 @@ export function createPiWebHost({
         surfaces.set(id, {
             id,
             kind,
-            side: kind === "dock" ? (def.side ?? "right") : undefined,
+            side: kind === "dock" ? (def.side ?? "aboveEditor") : undefined,
             title: def.title,
             order: def.order ?? prev?.order ?? orderSeq++,
             // overlays start hidden; re-defining preserves visibility
@@ -349,7 +325,7 @@ export function createPiWebHost({
          *
          * @param {string} key
          * @param {string[]|object|undefined} content  plain lines, a WidgetDef, or undefined to remove
-         * @param {{placement?:"aboveEditor"|"belowEditor"|"left"|"right", title?:string, order?:number}} [options]
+         * @param {{placement?:"aboveEditor"|"belowEditor", title?:string, order?:number}} [options]
          */
         setWidget(
             key: string,
@@ -801,24 +777,14 @@ export function createPiWebHost({
         },
 
         /**
-         * Keyed bottom-bar status segment (mirrors pi-tui ui.setStatus, with an
-         * optional align/tone superset). Pass undefined/"" to clear.
+         * Keyed footer status segment (mirrors pi-tui ui.setStatus). Pass
+         * undefined/"" to clear.
          * @param {string} key
          * @param {string} [text]
-         * @param {{align?:"right", tone?:"warning"|"error"}} [opts]
          */
-        setStatus(
-            key: string,
-            text?: string,
-            opts?: { align?: "right"; tone?: "warning" | "error" },
-        ) {
+        setStatus(key: string, text?: string) {
             if (text == null || text === "") statuses.delete(key);
-            else
-                statuses.set(key, {
-                    text: String(text),
-                    align: opts?.align,
-                    tone: opts?.tone,
-                });
+            else statuses.set(key, { text: String(text) });
             push();
         },
 

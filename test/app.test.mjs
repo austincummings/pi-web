@@ -18,7 +18,7 @@ function startServer() {
     });
     // a counter panel mirroring hello-panel's state semantics
     piweb.dock("hello", {
-        side: "right",
+        side: "aboveEditor",
         title: "Hello",
         initialState: { count: 0, name: "world" },
         render: (s) => ({ type: "Text", text: `count=${s.count}` }),
@@ -89,8 +89,8 @@ test("MVP-0: health + SSE snapshot + action round-trip (no model)", async () => 
         const events = frameReader(await fetch(`${base}/events`));
         const first = await events.next();
         expect(first.kind).toBe("surfaces");
-        expect(first.surfaces.docks.right[0].id).toBe("hello");
-        expect(first.surfaces.docks.right[0].tree.text).toBe("count=0");
+        expect(first.surfaces.docks.aboveEditor[0].id).toBe("hello");
+        expect(first.surfaces.docks.aboveEditor[0].tree.text).toBe("count=0");
 
         // a panel action round-trips state back over SSE
         await fetch(`${base}/action`, {
@@ -100,7 +100,7 @@ test("MVP-0: health + SSE snapshot + action round-trip (no model)", async () => 
         });
         const second = await events.next();
         expect(second.kind).toBe("surfaces");
-        expect(second.surfaces.docks.right[0].tree.text).toBe("count=1");
+        expect(second.surfaces.docks.aboveEditor[0].tree.text).toBe("count=1");
 
         events.close();
     } finally {
@@ -815,7 +815,7 @@ test("piweb host: docks group by side, overlays toggle, notify broadcasts", asyn
         getPi: () => ({}),
     });
     host.dock("a", {
-        side: "left",
+        side: "aboveEditor",
         title: "A",
         render: () => ({ type: "Text", text: "x" }),
     });
@@ -826,7 +826,7 @@ test("piweb host: docks group by side, overlays toggle, notify broadcasts", asyn
     });
 
     const snap = host.snapshot();
-    expect(snap.docks.left[0].id).toBe("a");
+    expect(snap.docks.aboveEditor[0].id).toBe("a");
     expect(snap.overlays.length).toBe(0); // overlays start closed
 
     host.openOverlay("m");

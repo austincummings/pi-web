@@ -55,10 +55,8 @@ registerToolRenderer("edit", (info: ToolInfo) => {
 });
 
 const $transcript = document.getElementById("transcript")!;
-const $dockLeft = document.getElementById("dock-left")!;
-const $dockRight = document.getElementById("dock-right")!;
-const $dockBottom = document.getElementById("dock-bottom")!;
-const $dockFooter = document.getElementById("dock-footer")!;
+const $dockAboveEditor = document.getElementById("dock-above-editor")!;
+const $dockBelowEditor = document.getElementById("dock-below-editor")!;
 const $overlayLayer = document.getElementById("overlay-layer")!;
 const $toastLayer = document.getElementById("toast-layer")!;
 const $statusbar = document.getElementById("statusbar")!;
@@ -817,7 +815,7 @@ function renderNode(node: any, surfaceId: string | null) {
     }
 }
 
-// ---- surfaces: docks (left/right/bottom), overlays, status, toasts ----
+// ---- surfaces: docks (aboveEditor/belowEditor), overlays, status, toasts ----
 let openOverlays: string[] = []; // ids of currently-open extension overlays
 
 function surfaceCard(card: any) {
@@ -964,32 +962,22 @@ function renderStatus(segments: any[]) {
     $statusbar.innerHTML = "";
     const segs: any[] = segments || [];
     $statusbar.classList.toggle("show", segs.length > 0);
-    const left = segs.filter((s) => s.align !== "right");
-    const right = segs.filter((s) => s.align === "right");
-    const add = (s: any, pushRight: boolean) => {
+    // pi-tui setStatus segments are plain keyed text, rendered in key order.
+    for (const s of segs) {
         const el = document.createElement("span");
-        el.className =
-            "seg" +
-            (s.tone ? " tone-" + s.tone : "") +
-            (pushRight ? " right" : "");
+        el.className = "seg";
         el.textContent = s.text;
         $statusbar.appendChild(el);
-    };
-    left.forEach((s) => add(s, false));
-    // the first right-aligned segment carries margin-left:auto to push the
-    // group (e.g. model name) to the far right, like pi's footer
-    right.forEach((s, i) => add(s, i === 0));
+    }
 }
 
 function renderSurfaces(s: any) {
     // <pi-frame> elements are re-created on every surface render; each owns its
     // own message listener (added/removed via connected/disconnectedCallback),
     // so there's no central registry to reset here.
-    const docks = s?.docks ?? { left: [], right: [], bottom: [] };
-    renderDock($dockLeft, docks.left);
-    renderDock($dockRight, docks.right);
-    renderDock($dockBottom, docks.bottom);
-    renderDock($dockFooter, docks.footer);
+    const docks = s?.docks ?? { aboveEditor: [], belowEditor: [] };
+    renderDock($dockAboveEditor, docks.aboveEditor);
+    renderDock($dockBelowEditor, docks.belowEditor);
     renderOverlays(s?.overlays);
     renderStatus(s?.status);
     renderDialogs(s?.dialogs);
