@@ -983,7 +983,10 @@ function createThread(sm: SessionManager) {
         // /trust. A saved decision is honored; a project with nothing to gate is
         // trusted. reload() preserves this flag (it doesn't re-resolve), and the
         // SDK default would otherwise start every project trusted.
-        const settingsManager = SettingsManager.create(threadCwd, getAgentDir());
+        const settingsManager = SettingsManager.create(
+            threadCwd,
+            getAgentDir(),
+        );
         const savedTrust = trustStore.get(threadCwd); // boolean | null
         settingsManager.setProjectTrusted(
             savedTrust !== null

@@ -52,19 +52,19 @@ Simple, line-based backlog. Check items off as they land.
       `MarkdownTheme.highlightCode`).
 
       <sub>Original spec (kept for reference):</sub> override how a message / code block renders in the transcript
-                      (closely related to #10; the forcing function is a tree-sitter highlighter).
-                      Shape: `piweb.registerMessageRenderer(customType, (message, opts) => Node)`
-                      where the renderer returns a **serializable component tree** (the same
-                      `Stack/Row/Text/Button/Frame` node model as docks/overlays), not a TUI
-                      `Component`. The host keeps a `customType -> renderer` map; when a transcript
-                      entry carries a matching `customType` (or, for code blocks, a synthetic
-                      `"code"` type with `{ lang, text }`), it renders the returned tree via the
-                      existing `renderNode` path instead of the default markdown/`<pre>` output.
-                      Needs three small pieces: (a) the registry + `render` SSE frame carrying
-                      `{ customType, tree }`, (b) a new `Code` node type so a highlighter can emit
-                      spans without a `Frame`, (c) capturing the fenced-code language in
-                      `markdown.ts` so code blocks can be routed to a registered renderer.
-                      Stays portable: with no host present the call no-ops like the rest of `piweb`.
+                          (closely related to #10; the forcing function is a tree-sitter highlighter).
+                          Shape: `piweb.registerMessageRenderer(customType, (message, opts) => Node)`
+                          where the renderer returns a **serializable component tree** (the same
+                          `Stack/Row/Text/Button/Frame` node model as docks/overlays), not a TUI
+                          `Component`. The host keeps a `customType -> renderer` map; when a transcript
+                          entry carries a matching `customType` (or, for code blocks, a synthetic
+                          `"code"` type with `{ lang, text }`), it renders the returned tree via the
+                          existing `renderNode` path instead of the default markdown/`<pre>` output.
+                          Needs three small pieces: (a) the registry + `render` SSE frame carrying
+                          `{ customType, tree }`, (b) a new `Code` node type so a highlighter can emit
+                          spans without a `Frame`, (c) capturing the fenced-code language in
+                          `markdown.ts` so code blocks can be routed to a registered renderer.
+                          Stays portable: with no host present the call no-ops like the rest of `piweb`.
 
 - [x] 20. Rename the `dock`/`overlay` surface API toward pi parity: `dock` -> `setWidget`
       with a widened `placement` (`aboveEditor`/`belowEditor` aliases for today's
@@ -120,21 +120,24 @@ Simple, line-based backlog. Check items off as they land.
           re-broadcast (surfaces + welcome + thinking border). Web `/trust`
           opens the shared list-picker; toasts "Project trusted" / "…not
           trusted".
-          **First-load gate:** on connect, `handleConnect` emits a
-          `trust_required` frame when a thread's project has trust-requiring
-          `.pi` resources but no saved decision (`hasTrustRequiringProjectResources` + `trustStore.get === null`), once per thread per process
-          (`trustPrompted` set) so refreshes don't re-nag; the client shows a
-          notice and auto-opens the picker. It's a _soft_ gate: pi-web actually
-          auto-trusts (the SDK's default SettingsManager starts trusted and
-          pi-web reloads resources without `resolveProjectTrust`, so the live
-          flag is never downgraded), so resources load under the default-trusted
-          flag until the user decides; picking "Do not trust" flips the flag +
-          reloads to gate them. A _hard_ gate (untrusted-until-decided) would
-          need `createThread` to `setProjectTrusted(false)` + reload before first
-          use — a larger behavior change, left as a follow-up. Can't prompt
-          synchronously during creation: `handleConnect` awaits session creation
-          before tagging the client to the thread, so a blocking dialog there
-          would deadlock.
+          **Hard first-load gate:** `createThread` owns the `SettingsManager`
+          (`SettingsManager.create`, passed to both the `DefaultResourceLoader`
+          and `createAgentSession`) and pins the trust flag _before_ loading
+          resources: a project with trust-requiring `.pi` resources and no saved
+          decision starts UNTRUSTED, so its extensions/skills/prompts/settings
+          aren't loaded until the user decides (a saved decision is honored;
+          nothing-to-gate projects are trusted). Necessary because the SDK's
+          default SettingsManager starts _trusted_ and pi-web reloads without
+          `resolveProjectTrust`, so the flag is never otherwise downgraded —
+          pi-web used to auto-trust everything. On connect, `handleConnect`
+          emits a `trust_required` frame for such undecided projects
+          (`hasTrustRequiringProjectResources` + `trustStore.get === null`),
+          once per thread per process (`trustPrompted` set) so refreshes don't
+          re-nag; the client shows a notice + auto-opens the picker. Picking
+          Trust flips the flag + reloads to enable resources. The prompt can't
+          be synchronous during creation: `handleConnect` awaits session
+          creation before tagging the client to the thread, so a blocking dialog
+          there would deadlock — hence the frame-then-picker flow.
     - [x] `/fork` — new session from a previous user message.
           `GET /fork-messages` lists fork points; `POST /threads/fork`
           `forkFrom`s the session file and `branch()`es to the chosen entry
