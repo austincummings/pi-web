@@ -1358,35 +1358,12 @@
                 id="dock-above-editor"
                 class="dock above-editor empty-dock"
             ></div>
-            <div class="composer">
-                <div id="ac" class="ac"></div>
-                <div id="queued" class="queued" aria-live="polite"></div>
-                <div id="working" class="working" aria-live="polite">
-                    <span class="spin"></span
-                    ><span class="label">Working…</span>
-                </div>
-                <div
-                    id="attachments"
-                    class="attachments"
-                    aria-live="polite"
-                ></div>
-                <form id="ask">
-                    <div class="input-wrap">
-                        <div
-                            id="backdrop"
-                            class="backdrop"
-                            aria-hidden="true"
-                        ></div>
-                        <textarea
-                            id="prompt"
-                            rows="1"
-                            placeholder="message pi…  (/ commands · ! shell · @ files)"
-                            autocomplete="off"
-                            autofocus
-                        ></textarea>
-                    </div>
-                </form>
-            </div>
+            <!-- The composer is the <pi-composer> custom element (src/web/
+                 pi-composer.ts): it builds the #ac / #queued / #working /
+                 #attachments / #ask / #backdrop / #prompt markup in its
+                 connectedCallback and owns submit/history/queue/images. app.ts
+                 drives it via methods + listens for its pi-* events. -->
+            <pi-composer id="composer"></pi-composer>
             <div
                 id="dock-below-editor"
                 class="dock below-editor empty-dock"

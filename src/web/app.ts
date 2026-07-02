@@ -1,7 +1,7 @@
 // pi-web web client: transcript stream, extension panels, thread switching,
 // and a fuzzy command typeahead (ported from pi-tui's fuzzy matcher).
 import { fuzzyFilter } from "./fuzzy.ts";
-import { renderMarkdown, highlightComposer } from "./markdown.ts";
+import { renderMarkdown } from "./markdown.ts";
 import { registerToolRenderer, type ToolInfo } from "./tools.ts";
 import { renderDiffHtml } from "./diff.ts";
 import { renderStaticNode } from "./nodes.ts";
@@ -25,6 +25,8 @@ import "./pi-tool.ts";
 import "./pi-thinking.ts";
 import { setThinkingLabel } from "./pi-thinking.ts";
 import "./pi-bash.ts";
+import "./pi-composer.ts";
+import type { PiComposer } from "./pi-composer.ts";
 import type {
     PiFrame,
     PiFrameActionDetail,
@@ -67,31 +69,25 @@ const $overlay = document.getElementById("overlay")!;
 const $picker = document.getElementById("picker")!;
 const $dialog = document.getElementById("dialog")!;
 const $dialogCard = document.getElementById("dialog-card")!;
+// The composer is the <pi-composer> custom element; the side-effect import
+// above upgraded the in-DOM element synchronously, so its #prompt / #ac /
+// #backdrop / … children already exist. It owns submit / history / queue /
+// images / working; app.ts drives it via methods and reacts to its pi-* events.
+const composer = document.getElementById("composer") as PiComposer;
 const $prompt = document.getElementById("prompt") as HTMLTextAreaElement;
-const $backdrop = document.getElementById("backdrop") as HTMLElement;
-
-// Repaint the markdown-highlight backdrop behind the composer to mirror the
-// textarea's current value (see .backdrop in index.html).
-function syncHighlight() {
-    if ($backdrop) $backdrop.innerHTML = highlightComposer($prompt.value);
-}
-// Keep the backdrop's scroll locked to the textarea once content overflows.
-$prompt?.addEventListener("scroll", () => {
-    if (!$backdrop) return;
-    $backdrop.scrollTop = $prompt.scrollTop;
-    $backdrop.scrollLeft = $prompt.scrollLeft;
-});
-const $ask = document.getElementById("ask") as HTMLFormElement;
 const $ac = document.getElementById("ac")!;
-const $working = document.getElementById("working")!;
-const $queued = document.getElementById("queued")!;
-const $attachments = document.getElementById("attachments")!;
+
+// Legacy shim: <pi-composer> owns the highlight backdrop + autosize now, but a
+// few command / autocomplete flows still set the textarea value directly —
+// reflow() repaints + resizes without disturbing the caret.
+function syncHighlight() {
+    composer.reflow();
+}
 
 // ---- pasted/attached images (Ctrl+V into the composer) --------------------
 // Images pasted (or dropped) into the composer are held here as base64 until
 // the message is sent, and shown as removable thumbnail chips below the input.
 // Each entry: { data: base64 (no data: prefix), mimeType, url: data-URL }.
-let pendingImages: { data: string; mimeType: string; url: string }[] = [];
 const MAX_IMAGE_DIM = 2000; // downscale large pastes (mirrors the pi CLI cap)
 
 // Read a File as a data: URL.
@@ -140,43 +136,14 @@ async function fileToImage(file: File) {
     return { mimeType, data: outUrl.slice(comma + 1), url: outUrl };
 }
 
-// Ingest a pasted/dropped image file into the pending list.
+// Ingest a pasted/dropped image file, downscale it, and hand it to the composer
+// (which owns the pending-attachment chips).
 async function addImageFile(file: File) {
     try {
-        pendingImages.push(await fileToImage(file));
-        renderAttachments();
+        composer.addImage(await fileToImage(file));
     } catch {
         notice("could not read pasted image");
     }
-}
-
-// Paint the pending-image thumbnail chips below the composer.
-function renderAttachments() {
-    if (!$attachments) return;
-    $attachments.innerHTML = "";
-    if (!pendingImages.length) {
-        $attachments.classList.remove("show");
-        return;
-    }
-    pendingImages.forEach((img, i) => {
-        const chip = document.createElement("div");
-        chip.className = "attach-chip";
-        const thumb = document.createElement("img");
-        thumb.src = img.url;
-        thumb.alt = "pasted image";
-        const rm = document.createElement("button");
-        rm.type = "button";
-        rm.className = "attach-remove";
-        rm.textContent = "\u00d7";
-        rm.title = "Remove image";
-        rm.addEventListener("click", () => {
-            pendingImages.splice(i, 1);
-            renderAttachments();
-        });
-        chip.append(thumb, rm);
-        $attachments.appendChild(chip);
-    });
-    $attachments.classList.add("show");
 }
 
 // ---- steering queue (mirrors the pi TUI's pending-messages display) --------
@@ -187,34 +154,10 @@ function renderAttachments() {
 // or interrupt-and-restore with Esc.
 let queuedMessages: string[] = [];
 
-// Paint the pending-queue rows above the composer.
+// The <pi-composer> element paints the steering-queue rows; this shim keeps the
+// call sites (SSE `queue`, restoreQueue) unchanged.
 function renderQueue() {
-    if (!$queued) return;
-    $queued.innerHTML = "";
-    if (!queuedMessages.length) {
-        $queued.classList.remove("show");
-        return;
-    }
-    queuedMessages.forEach((text, i) => {
-        const row = document.createElement("div");
-        row.className = "queued-item";
-        row.title = "Edit queued messages (Alt+\u2191)";
-        const badge = document.createElement("span");
-        badge.className = "queued-badge";
-        badge.textContent = `↑${i + 1}`;
-        const body = document.createElement("span");
-        body.className = "queued-text";
-        body.textContent = text.replace(/\s+/g, " ").trim();
-        const hint = document.createElement("span");
-        hint.className = "queued-hint";
-        hint.textContent = "queued";
-        row.append(badge, body, hint);
-        // Clicking any row restores the whole queue to the composer to edit,
-        // matching the TUI (dequeue restores all messages joined together).
-        row.addEventListener("click", () => restoreQueue({ abort: false }));
-        $queued.appendChild(row);
-    });
-    $queued.classList.add("show");
+    composer.setQueue(queuedMessages);
 }
 
 // Pop the queued messages back into the composer for editing. Clears the host
@@ -242,75 +185,28 @@ async function restoreQueue({ abort }: { abort: boolean }) {
         .filter((t) => t.trim())
         .join("\n\n");
     $prompt.value = combined;
-    histIndex = null;
     autoGrow();
     $prompt.focus();
     const at = $prompt.value.length;
     $prompt.setSelectionRange(at, at);
 }
 
-// ---- "Working" spinner (mirrors pi-tui's Loader: braille frames @ 80ms) ----
-// Extensions can override the message / visibility / indicator via pi-tui's
-// ui.setWorking* (delivered as a `working_config` SSE frame). Undefined fields
-// fall back to these defaults.
-const SPIN_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-let spinTimer: ReturnType<typeof setInterval> | null = null;
-let spinIndex = 0;
-let workingBusy = false; // is the focused thread streaming?
-let workingCfg: {
+// ---- "Working" spinner ----------------------------------------------------
+// <pi-composer> owns the spinner + pi ui.setWorking* overrides; these thin
+// wrappers forward the SSE `working` / `working_config` frames to it and keep a
+// plain `working` flag so the Esc precedence knows the agent is streaming.
+let working = false;
+function setWorking(on: boolean) {
+    working = on;
+    composer.setWorking(on);
+}
+function setWorkingConfig(cfg: {
     message?: string;
     visible?: boolean;
     frames?: string[];
     intervalMs?: number;
-} = {};
-
-/** Mark the focused thread busy/idle, then reconcile the spinner row. */
-function setWorking(on: boolean) {
-    workingBusy = on;
-    applyWorking();
-}
-/** Apply an extension's working-indicator overrides (pi ui.setWorking*). */
-function setWorkingConfig(cfg: typeof workingCfg) {
-    workingCfg = cfg || {};
-    applyWorking();
-}
-/** Reconcile the working row from `workingBusy` + `workingCfg`. */
-function applyWorking() {
-    if (!$working) return;
-    const spin = $working.querySelector(".spin");
-    const label = $working.querySelector(".label");
-    if (spinTimer) {
-        clearInterval(spinTimer);
-        spinTimer = null;
-    }
-    // setWorkingVisible(false) hides the row even while busy.
-    const visible = workingBusy && workingCfg.visible !== false;
-    if (!visible) {
-        $working.classList.remove("show");
-        return;
-    }
-    if (label) label.textContent = workingCfg.message ?? "Working…";
-    // Omitted frames -> default braille; `frames: []` -> indicator hidden
-    // entirely (the message still shows); custom frames render verbatim.
-    const frames = Array.isArray(workingCfg.frames)
-        ? workingCfg.frames
-        : SPIN_FRAMES;
-    const interval =
-        typeof workingCfg.intervalMs === "number" && workingCfg.intervalMs > 0
-            ? workingCfg.intervalMs
-            : 80;
-    spinIndex = 0;
-    if (frames.length === 0) {
-        if (spin) spin.textContent = "";
-    } else {
-        if (spin) spin.textContent = frames[0];
-        if (frames.length > 1)
-            spinTimer = setInterval(() => {
-                spinIndex = (spinIndex + 1) % frames.length;
-                if (spin) spin.textContent = frames[spinIndex];
-            }, interval);
-    }
-    $working.classList.add("show");
+}) {
+    composer.setWorkingConfig(cfg || {});
 }
 
 let assistantEl: HTMLElement | null = null; // current streaming assistant bubble
@@ -704,13 +600,13 @@ function toggleThinking() {
 // the level color in CSS; `data-bash` overrides it green while the input is a
 // `!` shell command (matching the TUI bash-mode border). The border only shows
 // the tint when focused; otherwise it stays the default `--line`.
-const $composer = $prompt?.closest(".composer") as HTMLElement | null;
 function applyThinkingBorder() {
-    if (!$composer) return;
-    $composer.dataset.think = thinkingLevel || "off";
-    // match the pi TUI: leading whitespace is ignored when detecting `!` bash
-    const bash = ($prompt?.value ?? "").trimStart().startsWith("!");
-    $composer.toggleAttribute("data-bash", bash);
+    // <pi-composer> applies the reasoning-level border (data-think) and the `!`
+    // bash-mode override (data-bash); leading whitespace is ignored for `!`.
+    composer.setThinking(
+        thinkingLevel || "off",
+        composer.value.trimStart().startsWith("!"),
+    );
 }
 
 // Re-render the streaming assistant bubble as markdown, throttled to one paint
@@ -1466,79 +1362,11 @@ $overlayLayer?.addEventListener("click", (e) => {
     if (e.target === $overlayLayer) closeTopOverlay();
 });
 
-// ---- prompt input history (Up/Down browse, mirrors the pi TUI editor) ----
-// Per-thread, oldest -> newest. Seeded from `case "user"` SSE frames so it
-// covers both live sends and replay; cleared on `transcript_reset`.
-let promptHistory: string[] = [];
-// Browse cursor: null = editing the live draft; otherwise an index into
-// promptHistory. Up walks toward 0; Down walks past the end back to the draft.
-let histIndex: number | null = null;
-// The in-progress draft stashed on entering history; restored on the way down.
-let histDraft = "";
-
-// Record a submitted/replayed prompt, skipping consecutive duplicates.
+// ---- prompt input history -------------------------------------------------
+// Owned by the <pi-composer> element (Up/Down browse). The host replays each
+// thread's prior sends over SSE, which we seed via pushHistory() below.
 function pushHistory(text: string) {
-    const t = (text ?? "").replace(/\s+$/, "");
-    if (!t) return;
-    if (promptHistory[promptHistory.length - 1] === t) return;
-    promptHistory.push(t);
-}
-
-// True when the caret sits on the first logical line of the textarea.
-function caretOnFirstLine() {
-    const c = $prompt.selectionStart ?? 0;
-    return $prompt.value.lastIndexOf("\n", c - 1) === -1;
-}
-
-// True when the caret sits on the last logical line of the textarea.
-function caretOnLastLine() {
-    const c = $prompt.selectionStart ?? 0;
-    return $prompt.value.indexOf("\n", c) === -1;
-}
-
-// Show a recalled history entry, placing the caret at `pos`.
-function showHistory(idx: number, pos: number) {
-    histIndex = idx;
-    $prompt.value = promptHistory[idx];
-    autoGrow();
-    const at = pos < 0 ? $prompt.value.length : pos;
-    $prompt.setSelectionRange(at, at);
-}
-
-// Up arrow with the typeahead closed. Returns true when it consumed the key.
-function tryHistoryUp() {
-    if (!caretOnFirstLine()) return false; // let the caret move up a line
-    // Edge nudge (pi #5789): a non-empty draft jumps to the start of the line
-    // on the first Up; history browsing begins on the next press.
-    if (histIndex === null && ($prompt.selectionStart ?? 0) > 0) {
-        $prompt.setSelectionRange(0, 0);
-        return true;
-    }
-    if (!promptHistory.length) return false;
-    if (histIndex === null) {
-        histDraft = $prompt.value;
-        showHistory(promptHistory.length - 1, 0);
-    } else if (histIndex > 0) {
-        showHistory(histIndex - 1, 0); // caret at start when browsing up (#5454)
-    }
-    return true;
-}
-
-// Down arrow with the typeahead closed. Returns true when it consumed the key.
-function tryHistoryDown() {
-    if (histIndex === null) return false; // not browsing: default behavior
-    if (!caretOnLastLine()) return false; // let the caret move down a line
-    if (histIndex < promptHistory.length - 1) {
-        showHistory(histIndex + 1, -1); // caret at end when browsing down (#5454)
-    } else {
-        // Stepped past the newest entry: restore the stashed draft (#5494).
-        histIndex = null;
-        $prompt.value = histDraft;
-        autoGrow();
-        const at = $prompt.value.length;
-        $prompt.setSelectionRange(at, at);
-    }
-    return true;
+    composer.pushHistory(text ?? "");
 }
 
 // ---- fuzzy command + @file typeahead ----
@@ -2453,21 +2281,31 @@ function showHotkeys() {
 // Auto-grow the textarea to fit its content, up to a sensible cap (after which
 // it scrolls internally).
 function autoGrow() {
-    if (!$prompt) return;
-    $prompt.style.height = "auto";
-    $prompt.style.height = Math.min($prompt.scrollHeight, 200) + "px";
-    // autoGrow() runs after every value change (typing, history recall,
-    // autocomplete insert, clear), so repaint the highlight backdrop here too.
-    syncHighlight();
-    if ($backdrop) $backdrop.scrollTop = $prompt.scrollTop;
+    // <pi-composer> owns autosize + backdrop repaint; reflow() resizes + repaints
+    // after a direct textarea write (command / autocomplete flows), caret intact.
+    composer.reflow();
 }
 
-$prompt.addEventListener("input", () => {
-    histIndex = null; // typing over a recalled entry makes it the new draft
-    autoGrow();
+// Text changed: refresh autocomplete + the `!` bash-mode border (the element
+// owns autosize / highlight / history-reset).
+composer.addEventListener("pi-input", () => {
     updateAc();
-    applyThinkingBorder(); // live `!` bash-mode border toggle
+    applyThinkingBorder();
 });
+
+// The element emits submit / dequeue instead of app.ts owning the form + keys.
+composer.addEventListener("pi-submit", (e) => {
+    const detail = (e as CustomEvent).detail;
+    closeAc();
+    runInput(
+        detail.text,
+        (detail.images || []).map((img: any) => ({
+            data: img.data,
+            mimeType: img.mimeType,
+        })),
+    );
+});
+composer.addEventListener("pi-dequeue", () => restoreQueue({ abort: false }));
 
 // Ctrl/Cmd+V of an image (screenshot, copied file) attaches it to the message
 // rather than pasting garbage text. Plain-text pastes fall through untouched.
@@ -2497,21 +2335,22 @@ $prompt.addEventListener("drop", (e) => {
     e.preventDefault();
     files.forEach(addImageFile);
 });
-$prompt.addEventListener("keydown", (e) => {
-    // Shift+Tab cycles the reasoning level (mirrors the pi TUI). It's a browser
-    // focus-traversal key, so preventDefault to keep focus in the composer.
+// Autocomplete + thinking-cycle + dequeue claim keys *before* the composer's own
+// history / submit handling, via the element's keyGuard seam. Returning true
+// means "handled" (the composer then ignores the key). History and Enter-submit
+// are owned by <pi-composer>.
+composer.keyGuard = (e) => {
+    // Shift+Tab cycles the reasoning level (a browser focus-traversal key).
     if (e.key === "Tab" && e.shiftKey) {
         e.preventDefault();
         postThread("/thinking-level", { op: "cycle" });
-        return;
+        return true;
     }
-    // Alt+Up restores queued (steering/follow-up) messages back into the
-    // composer to edit, without interrupting the turn (mirrors the pi TUI's
-    // app.message.dequeue = alt+up). Esc is the interrupt-and-restore variant.
+    // Alt+Up restores queued (steering/follow-up) messages to the composer.
     if (e.key === "ArrowUp" && e.altKey && queuedMessages.length) {
         e.preventDefault();
         restoreQueue({ abort: false });
-        return;
+        return true;
     }
     if ($ac.classList.contains("show")) {
         switch (e.key) {
@@ -2519,66 +2358,44 @@ $prompt.addEventListener("keydown", (e) => {
                 e.preventDefault();
                 acIndex = (acIndex + 1) % acItems.length;
                 renderAc();
-                break;
+                return true;
             case "ArrowUp":
                 e.preventDefault();
                 acIndex = (acIndex - 1 + acItems.length) % acItems.length;
                 renderAc();
-                break;
+                return true;
             case "Tab":
                 e.preventDefault();
                 acceptAc(false);
-                break;
+                return true;
             case "Enter":
-                // In file mode and bash mode, Enter accepts the suggestion
-                // (and keeps editing) so you can chain further arguments;
-                // in command / dir mode it accepts + runs.
+                // file/bash: accept + keep editing; command/dir: accept + run.
                 e.preventDefault();
                 acceptAc(acMode !== "file" && acMode !== "bash");
-                break;
+                return true;
             case "Escape":
                 e.preventDefault();
                 closeAc();
-                break;
+                return true;
         }
-        return;
+        return false; // other keys fall through to the composer while AC is open
     }
     // No typeahead open: Tab force-opens file completion for a `!`/`!!` bash
-    // command (the pi TUI's forceFileAutocomplete). This is the only way bash
-    // completion appears — it isn't auto-triggered while typing — so the flow
-    // is "Tab to list, Tab again to accept". Falls through to default Tab
-    // otherwise (no focus traversal to worry about inside the textarea).
+    // command (the pi TUI's forceFileAutocomplete): "Tab to list, Tab to accept".
     if (e.key === "Tab" && !e.shiftKey) {
         const caret = $prompt.selectionStart ?? $prompt.value.length;
         const span = bashTokenSpan($prompt.value, caret);
-        // An empty token (e.g. `!!cat ` with a trailing space) is the
-        // "next argument" position — Tab there lists every file (empty query).
         if (span) {
             e.preventDefault();
             acMode = "bash";
             acAtStart = span.start;
             acAtEnd = span.end;
             showBashFileAc(span.token);
-            return;
+            return true;
         }
     }
-    // No typeahead open: Up/Down browse input history (mirrors the pi TUI),
-    // falling through to normal caret movement when not at a draft boundary.
-    if (e.key === "ArrowUp" && tryHistoryUp()) {
-        e.preventDefault();
-        return;
-    }
-    if (e.key === "ArrowDown" && tryHistoryDown()) {
-        e.preventDefault();
-        return;
-    }
-    // No typeahead open: Enter sends, Shift+Enter inserts a newline.
-    if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        if ($ask.requestSubmit) $ask.requestSubmit();
-        else $ask.dispatchEvent(new Event("submit", { cancelable: true }));
-    }
-});
+    return false; // let the composer handle history / Enter-submit
+};
 
 // Alt+T toggles thinking-block visibility (persisted to pi's settings). Alt+T
 // is not browser-reserved (unlike Ctrl+T), so preventDefault reliably works.
@@ -2667,7 +2484,7 @@ document.addEventListener("keydown", (e) => {
         closeTopOverlay();
         return;
     }
-    if (spinTimer) {
+    if (working) {
         // agent is working → mirror the pi TUI's Esc: restore any queued
         // (steering/follow-up) messages back into the composer *and* interrupt
         // this thread's turn (restoreQueuedMessagesToEditor({ abort: true })).
@@ -2682,23 +2499,8 @@ document.addEventListener("keydown", (e) => {
     }
 });
 
-$ask.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const text = $prompt.value;
-    const images = pendingImages.map(({ data, mimeType }) => ({
-        data,
-        mimeType,
-    }));
-    $prompt.value = "";
-    pendingImages = [];
-    renderAttachments();
-    histIndex = null; // leave history-browse on send
-    histDraft = "";
-    autoGrow();
-    applyThinkingBorder(); // clear any `!` bash-mode border
-    closeAc();
-    runInput(text, images);
-});
+// (Prompt submission + attachments are owned by <pi-composer>; the pi-submit
+// listener above calls runInput. The composer clears itself after emitting.)
 
 // ---- SSE stream ----
 // One EventSource at a time, scoped to the viewed thread via `?thread`.
@@ -2824,9 +2626,6 @@ function onSseMessage(e: MessageEvent) {
         case "transcript_reset":
             $transcript.innerHTML = '<div class="empty">new thread</div>';
             stickToBottom = true; // fresh thread starts pinned to the bottom
-            promptHistory = []; // input history is per-thread
-            histIndex = null;
-            histDraft = "";
             queuedMessages = []; // steering queue is per-thread
             renderQueue();
             renderWelcome(); // re-pin the banner as the first transcript entry
@@ -2848,7 +2647,6 @@ function onSseMessage(e: MessageEvent) {
         case "user":
             bubble("user", m.text, m.images);
             pushHistory(m.text); // seed/extend per-thread input history
-            histIndex = null;
             assistantEl = null;
             break;
         case "delta":

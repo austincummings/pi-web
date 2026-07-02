@@ -41,7 +41,11 @@ as a decision to justify, not the starting point.
 - **Runtime:** Bun (runs `.ts` directly). `bun start` / `bun dev` (dev sets
   `PI_WEB_DEV=1` for per-request rebuilds). `bun run build` bundles the front-end via
   `Bun.build`; `bun run typecheck` runs `tsc --noEmit`.
-- **Tests:** `bun test`. Keep the suite green before committing.
+- **Tests:** `bun test` (unit/DOM via happy-dom). Keep the suite green before
+  committing. Real-browser component tests live in `test/e2e/*.e2e.ts` and run
+  with `bun run e2e` (Playwright + the system Chrome, via a static harness that
+  mounts the bundled element — no agent host needed). They're named `.e2e.ts`
+  (not `.spec.ts`) so `bun test` ignores them.
 - **Format:** `bun run format` (prettier) before committing.
 - **Architecture:** `src/host/` is the agent-independent transport layer (node:http
   server, SSE + POST bus, `piweb` registry). `src/web/` is the browser front-end.
