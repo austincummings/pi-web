@@ -19,6 +19,13 @@ export interface AutocompleteContext {
     text: string;
     /** Caret offset within `text`. */
     caret: number;
+    /**
+     * The working directory of the thread the composer belongs to. Supplied by
+     * the pi-web host (it owns each thread's cwd); undefined under plain
+     * terminal pi. Providers that resolve filesystem paths should prefer this
+     * over `process.cwd()`, which under pi-web is the *server's* launch dir.
+     */
+    cwd?: string;
 }
 /** A single completion candidate. */
 export interface AutocompleteItem {

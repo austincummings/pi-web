@@ -22,8 +22,16 @@
  *
  * Commands:
  *   /cat <path>   — render a file with syntax highlighting (Tab to complete)
+ *
+ * Tools:
+ *   cat({ path })  — the same rich view, but callable by the agent. It renders
+ *     the file for the user AND returns the file's contents to the model, so a
+ *     single tool call both *shows* and *reads* the file.
  */
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+    createReadToolDefinition,
+    type ExtensionAPI,
+} from "@earendil-works/pi-coding-agent";
 import hljs from "highlight.js";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { basename, isAbsolute, relative, resolve } from "node:path";
@@ -323,12 +331,19 @@ export default function (pi: ExtensionAPI) {
     // Short-lived cache so the autocomplete provider doesn't re-walk per keystroke.
     let cache: { files: string[]; at: number } | null = null;
 
-    pi.on("session_start", (_event, ctx) => {
-        if (ctx?.cwd) {
-            if (ctx.cwd !== root) cache = null; // cwd changed → drop stale walk
-            root = ctx.cwd;
+    // Point `root` at the thread's cwd, dropping the stale walk when it moves.
+    const syncRoot = (cwd?: string): void => {
+        if (cwd && cwd !== root) {
+            root = cwd;
+            cache = null;
         }
-    });
+    };
+
+    // Under plain terminal pi, `session_start` carries the cwd. Under pi-web the
+    // host never emits it (it doesn't call session.bindExtensions), so the cwd
+    // instead arrives on the autocomplete context and the command handler ctx —
+    // both routed through syncRoot below.
+    pi.on("session_start", (_event, ctx) => syncRoot(ctx?.cwd));
 
     const toDisplay = (path: string): string => {
         const rel = relative(root, path);
@@ -343,7 +358,8 @@ export default function (pi: ExtensionAPI) {
         return files;
     };
 
-    piweb.addAutocompleteProvider(async ({ text, caret }) => {
+    piweb.addAutocompleteProvider(async ({ text, caret, cwd }) => {
+        syncRoot(cwd); // pi-web injects the thread's cwd here
         const before = text.slice(0, caret);
         const m = before.match(/^\/cat(\s+)(.*)$/s);
         if (!m) return null;
@@ -378,30 +394,56 @@ export default function (pi: ExtensionAPI) {
         return { type: "Frame", html: buildFrameHtml(path, content) };
     });
 
-    const emit = async (path: string): Promise<void> => {
+    // Read + validate a file for the cat view. Shared by the `/cat` command and
+    // the `cat` tool. Returns the text, or a human-readable reason it can't be
+    // shown (too large / unreadable / binary) plus the severity to surface.
+    const readForCat = async (
+        path: string,
+    ): Promise<{
+        disp: string;
+        content?: string;
+        error?: string;
+        severity?: "warning" | "error";
+    }> => {
         const abs = isAbsolute(path) ? path : resolve(root, path);
-        let content: string;
-        let size = 0;
+        const disp = toDisplay(abs);
         try {
-            size = (await stat(abs)).size;
-            if (size > 2 * 1024 * 1024) {
-                piweb.notify(
-                    `${toDisplay(abs)} is ${(size / 1024 / 1024).toFixed(1)} MB — too large to cat`,
-                    "warning",
-                );
-                return;
-            }
-            content = await readFile(abs, "utf8");
+            const size = (await stat(abs)).size;
+            if (size > 2 * 1024 * 1024)
+                return {
+                    disp,
+                    error: `${disp} is ${(size / 1024 / 1024).toFixed(1)} MB — too large to cat`,
+                    severity: "warning",
+                };
+            const content = await readFile(abs, "utf8");
+            // NUL byte ⇒ almost certainly binary; refuse rather than render garbage.
+            if (content.includes("\u0000"))
+                return { disp, error: `${disp} looks binary`, severity: "warning" };
+            return { disp, content };
         } catch (err: any) {
-            piweb.notify(
-                `Couldn't read ${toDisplay(abs)}: ${err?.message ?? err}`,
-                "error",
-            );
-            return;
+            return {
+                disp,
+                error: `Couldn't read ${disp}: ${err?.message ?? err}`,
+                severity: "error",
+            };
         }
-        // NUL byte ⇒ almost certainly binary; refuse rather than render garbage.
-        if (content.includes("\u0000")) {
-            piweb.notify(`${toDisplay(abs)} looks binary`, "warning");
+    };
+
+    // Push a rendered cat-file frame into the transcript. Returns the display
+    // path so callers can report/echo it, or undefined if nothing was emitted.
+    const showFrame = (disp: string, content: string): void => {
+        pi.sendMessage({
+            customType: "cat-file",
+            content: `cat: ${disp}`,
+            display: true,
+            details: { path: disp, content },
+        });
+    };
+
+    const emit = async (path: string): Promise<void> => {
+        const { disp, content, error, severity } = await readForCat(path);
+        if (error || content == null) {
+            piweb.notify(error ?? `Couldn't read ${disp}`, severity ?? "error");
             return;
         }
         if (!piweb.present) {
@@ -411,18 +453,14 @@ export default function (pi: ExtensionAPI) {
             );
             return;
         }
-        pi.sendMessage({
-            customType: "cat-file",
-            content: `cat: ${toDisplay(abs)}`,
-            display: true,
-            details: { path: toDisplay(abs), content },
-        });
+        showFrame(disp, content);
     };
 
     pi.registerCommand("cat", {
         description:
             "Render a file with syntax highlighting (Tab to complete the path)",
-        handler: async (args?: string) => {
+        handler: async (args, ctx) => {
+            syncRoot(ctx?.cwd); // keep path resolution scoped to this thread
             const arg = (args ?? "").trim();
             if (!arg) {
                 piweb.notify(
@@ -434,4 +472,58 @@ export default function (pi: ExtensionAPI) {
             await emit(arg);
         },
     });
+
+    // The agent-facing counterpart to `/cat`: a tool the model can call to both
+    // *show* the user a syntax-highlighted file (web UI) and *see* its contents
+    // itself (returned as tool output). Prefer this over the built-in `read`
+    // when the user should see the rendered file too.
+    //
+    // We borrow the built-in read tool's TypeBox schema for `parameters` (a
+    // project extension can't resolve @sinclair/typebox directly); only `path`
+    // is used here.
+    pi.registerTool({
+        name: "cat",
+        label: "Cat File",
+        description:
+            "Display a text file to the user with syntax highlighting in the " +
+            "transcript, and return its contents to you. Use this instead of " +
+            "`read` when you also want the user to see the rendered file. " +
+            "Argument: { path }.",
+        parameters: createReadToolDefinition(process.cwd()).parameters,
+        // Signature: execute(toolCallId, params, signal, onUpdate, ctx). The
+        // schema-validated arguments arrive as the *second* parameter.
+        async execute(_toolCallId: string, params: any, _signal, _onUpdate, ctx: any) {
+            syncRoot(ctx?.cwd); // scope path resolution to the calling thread
+            const rawPath =
+                typeof params?.path === "string" ? params.path.trim() : "";
+            if (!rawPath) {
+                return {
+                    content: [
+                        { type: "text", text: "cat: missing `path` argument." },
+                    ],
+                    isError: true,
+                };
+            }
+            const { disp, content, error } = await readForCat(rawPath);
+            if (error || content == null) {
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: `cat: ${error ?? `couldn't read ${disp}`}`,
+                        },
+                    ],
+                    isError: true,
+                };
+            }
+            // Render the frame for the user (no-ops under plain terminal pi).
+            if (piweb.present) showFrame(disp, content);
+            // Hand the contents back to the model as well.
+            return {
+                content: [{ type: "text", text: `${disp}:\n\n${content}` }],
+                details: { path: disp, bytes: content.length },
+                isError: false,
+            };
+        },
+    } as any);
 }

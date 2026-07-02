@@ -2051,9 +2051,14 @@ const server = createApp({
             (threadId ? threadRuntimes.get(threadId) : undefined)?.cwd,
         ),
     // Run this thread's registered autocomplete providers for the composer.
+    // The thread's cwd is injected here (the host owns it) so providers that
+    // resolve filesystem paths don't fall back to the server's launch dir —
+    // pi-web never emits `session_start`, so extensions can't learn the cwd
+    // that way.
     autocomplete: async (threadId, ctx) => {
         const t = threadId ? threadRuntimes.get(threadId) : null;
-        return (await t?.piweb?.autocomplete?.(ctx)) ?? null;
+        if (!t?.piweb?.autocomplete) return null;
+        return (await t.piweb.autocomplete({ ...ctx, cwd: t.cwd })) ?? null;
     },
     // Directory suggestions for the `/new <dir>` typeahead.
     listDirs: (q, threadId) => listProjectDirs(q, threadId),

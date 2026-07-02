@@ -544,7 +544,11 @@ export function createPiWebHost({
          * @param {{text?:string, caret?:number}} ctx
          * @returns {Promise<{start:number,end:number,items:{value:string,label:string,description?:string}[]}|null>}
          */
-        async autocomplete(ctx: { text?: string; caret?: number }) {
+        async autocomplete(ctx: {
+            text?: string;
+            caret?: number;
+            cwd?: string;
+        }) {
             const text = String(ctx?.text ?? "");
             const caret = Number.isInteger(ctx?.caret)
                 ? Math.max(0, Math.min(ctx.caret as number, text.length))
@@ -552,7 +556,10 @@ export function createPiWebHost({
             // Default span: the whitespace-delimited token ending at the caret.
             const tokenStart =
                 caret - (text.slice(0, caret).match(/\S*$/)?.[0].length ?? 0);
-            const base = { text, caret };
+            // Thread the owning thread's cwd through to providers (the host
+            // injects it) so filesystem-path providers resolve against the
+            // correct directory rather than the server's launch dir.
+            const base = { text, caret, cwd: ctx?.cwd };
             for (const provider of autocompleteProviders) {
                 let r;
                 try {

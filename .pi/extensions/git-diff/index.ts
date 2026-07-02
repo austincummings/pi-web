@@ -53,12 +53,7 @@ interface Hunk {
     header: string; // the section heading after "@@ … @@", if any
     lines: DiffLine[];
 }
-type FileStatus =
-    | "modified"
-    | "added"
-    | "deleted"
-    | "renamed"
-    | "binary";
+type FileStatus = "modified" | "added" | "deleted" | "renamed" | "binary";
 interface FileDiff {
     path: string; // new path (or old path for deletes)
     oldPath: string | null; // set when renamed
@@ -137,7 +132,8 @@ function parseGitDiff(text: string): FileDiff[] {
         // "--- a/path" / "+++ b/path": trust these for the real paths.
         if (raw.startsWith("--- ")) {
             const p = stripPrefix(raw.slice(4).trim());
-            if (p !== "/dev/null" && file.status !== "renamed") file.oldPath = p;
+            if (p !== "/dev/null" && file.status !== "renamed")
+                file.oldPath = p;
             continue;
         }
         if (raw.startsWith("+++ ")) {
@@ -502,7 +498,10 @@ export default function (pi: ExtensionAPI) {
         }
         const files = parseGitDiff(raw);
         if (!files.length) {
-            return { type: "Text", text: `git-diff: nothing to show (${label})` };
+            return {
+                type: "Text",
+                text: `git-diff: nothing to show (${label})`,
+            };
         }
         return { type: "Frame", html: buildDiffHtml(label, files) };
     });
@@ -515,20 +514,22 @@ export default function (pi: ExtensionAPI) {
         const query = m[2];
         const start = caret - query.length;
         const suggestions: { value: string; description: string }[] = [
-            { value: "--staged", description: "staged changes (index vs HEAD)" },
+            {
+                value: "--staged",
+                description: "staged changes (index vs HEAD)",
+            },
             { value: "HEAD", description: "working tree vs HEAD" },
             { value: "HEAD~1", description: "vs previous commit" },
             { value: "--stat", description: "(passed through to git)" },
         ];
         try {
-            const names = await runGit(root, [
-                "diff",
-                "--name-only",
-                "HEAD",
-            ]);
+            const names = await runGit(root, ["diff", "--name-only", "HEAD"]);
             for (const n of names.split("\n"))
                 if (n.trim())
-                    suggestions.push({ value: n.trim(), description: "changed file" });
+                    suggestions.push({
+                        value: n.trim(),
+                        description: "changed file",
+                    });
         } catch {
             /* not a repo / no HEAD — just offer flags */
         }
@@ -536,7 +537,11 @@ export default function (pi: ExtensionAPI) {
         const items = suggestions
             .filter((s) => !q || s.value.toLowerCase().includes(q))
             .slice(0, 20)
-            .map((s) => ({ value: s.value, label: s.value, description: s.description }));
+            .map((s) => ({
+                value: s.value,
+                label: s.value,
+                description: s.description,
+            }));
         if (!items.length) return null;
         return { start, end: caret, items };
     });
@@ -549,7 +554,10 @@ export default function (pi: ExtensionAPI) {
             if (ctx?.cwd) root = ctx.cwd;
             const arg = (args ?? "").trim();
             if (!piweb.present) {
-                piweb.notify("The side-by-side /gdiff view needs the web UI.", "info");
+                piweb.notify(
+                    "The side-by-side /gdiff view needs the web UI.",
+                    "info",
+                );
                 return;
             }
 
@@ -574,7 +582,10 @@ export default function (pi: ExtensionAPI) {
                     }
                 }
             } catch (err: any) {
-                piweb.notify(`git diff failed: ${err?.message ?? err}`, "error");
+                piweb.notify(
+                    `git diff failed: ${err?.message ?? err}`,
+                    "error",
+                );
                 return;
             }
 
