@@ -12,6 +12,13 @@
 
 type NotifyLevel = "info" | "warning" | "error";
 type DialogOptions = { signal?: AbortSignal; timeout?: number };
+/** Working-indicator configuration (mirrors pi-tui `WorkingIndicatorOptions`). */
+export interface WorkingIndicatorOptions {
+    /** Animation frames. `[]` hides the indicator; custom frames render verbatim. */
+    frames?: string[];
+    /** Frame interval in milliseconds for animated indicators (default 80). */
+    intervalMs?: number;
+}
 
 /** The composer snapshot passed to an autocomplete provider. */
 export interface AutocompleteContext {
@@ -106,6 +113,21 @@ export interface PiWebSurface {
     ): void;
     setTitle(text?: string): void;
     /**
+     * Set the working/loading message shown during streaming (mirrors pi-tui
+     * `ui.setWorkingMessage`). Call with no argument to restore the default.
+     */
+    setWorkingMessage(message?: string): void;
+    /**
+     * Show or hide the built-in working loader row during streaming (mirrors
+     * pi-tui `ui.setWorkingVisible`).
+     */
+    setWorkingVisible(visible: boolean): void;
+    /**
+     * Configure the working indicator (mirrors pi-tui `ui.setWorkingIndicator`):
+     * omit to restore the default animated spinner; `frames: []` hides it.
+     */
+    setWorkingIndicator(options?: WorkingIndicatorOptions): void;
+    /**
      * Label rendered in place of a collapsed thinking block (mirrors pi-tui
      * `ui.setHiddenThinkingLabel`). Empty/undefined restores the default.
      */
@@ -180,6 +202,9 @@ const stub = {
     custom: dialogNoop,
     notify: noop,
     setTitle: noop,
+    setWorkingMessage: noop,
+    setWorkingVisible: noop,
+    setWorkingIndicator: noop,
     setStatus: noop,
     setHiddenThinkingLabel: noop,
     registerMessageRenderer: noop,

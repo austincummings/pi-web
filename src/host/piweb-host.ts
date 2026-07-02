@@ -165,6 +165,17 @@ export function createPiWebHost({
     // like the page title; broadcast so every viewer renders the same text and
     // replayed on (re)connect from getHiddenThinkingLabel().
     let hiddenThinkingLabel = "Thinking...";
+    // Overrides for the streaming "working" indicator (pi-tui ui.setWorking*).
+    // Undefined fields mean "use the client default" (braille @ 80ms, label
+    // "Working…", shown while busy). Per-thread; broadcast + replayed on connect.
+    const workingConfig: {
+        message?: string;
+        visible?: boolean;
+        frames?: string[];
+        intervalMs?: number;
+    } = {};
+    const broadcastWorking = () =>
+        broadcast({ kind: "working_config", config: { ...workingConfig } });
 
     const renderCard = (s: Surface): SurfaceCard => {
         try {
@@ -736,6 +747,60 @@ export function createPiWebHost({
         },
 
         /**
+         * Set the working/loading message shown during streaming (mirrors
+         * pi-tui ui.setWorkingMessage). Pass undefined/"" to restore the default
+         * ("Working…").
+         * @param {string} [message]
+         */
+        setWorkingMessage(message?: string) {
+            workingConfig.message =
+                message == null || String(message) === ""
+                    ? undefined
+                    : String(message);
+            broadcastWorking();
+        },
+        /**
+         * Show or hide the built-in working loader row during streaming
+         * (mirrors pi-tui ui.setWorkingVisible). Default (no override) shows it
+         * while the thread is busy.
+         * @param {boolean} visible
+         */
+        setWorkingVisible(visible: boolean) {
+            workingConfig.visible = !!visible;
+            broadcastWorking();
+        },
+        /**
+         * Configure the working indicator (mirrors pi-tui ui.setWorkingIndicator):
+         * omit `options` to restore the default animated braille spinner;
+         * `frames: ["●"]` for a static glyph; `frames: []` to hide the indicator
+         * entirely; custom frames render verbatim at `intervalMs` (default 80).
+         * @param {{frames?:string[], intervalMs?:number}} [options]
+         */
+        setWorkingIndicator(options?: {
+            frames?: string[];
+            intervalMs?: number;
+        }) {
+            if (!options) {
+                workingConfig.frames = undefined;
+                workingConfig.intervalMs = undefined;
+            } else {
+                workingConfig.frames = Array.isArray(options.frames)
+                    ? options.frames.map((f) => String(f))
+                    : undefined;
+                workingConfig.intervalMs =
+                    typeof options.intervalMs === "number" &&
+                    options.intervalMs > 0
+                        ? options.intervalMs
+                        : undefined;
+            }
+            broadcastWorking();
+        },
+        /** Current working-indicator overrides (for connection replay). */
+        getWorkingConfig() {
+            return { ...workingConfig };
+        },
+
+        /**
          * Keyed bottom-bar status segment (mirrors pi-tui ui.setStatus, with an
          * optional align/tone superset). Pass undefined/"" to clear.
          * @param {string} key
@@ -763,6 +828,11 @@ export function createPiWebHost({
             messageRenderers.clear();
             composedAutocomplete = baseAutocomplete;
             autocompleteCount = 0;
+            workingConfig.message = undefined;
+            workingConfig.visible = undefined;
+            workingConfig.frames = undefined;
+            workingConfig.intervalMs = undefined;
+            broadcastWorking();
             // cancel any open dialogs so awaiting extensions unblock
             for (const e of [...pendingUi.values()]) e.settle(undefined);
             push();

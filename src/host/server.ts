@@ -349,6 +349,12 @@ const nullRegistry = {
     notify() {},
     setStatus() {},
     setTitle() {},
+    setWorkingMessage() {},
+    setWorkingVisible() {},
+    setWorkingIndicator() {},
+    getWorkingConfig() {
+        return {};
+    },
     setHiddenThinkingLabel() {},
     getHiddenThinkingLabel() {
         return "Thinking...";
@@ -413,6 +419,13 @@ const piweb = {
     notify: (...a: any[]) => activeRegistry().notify(...a),
     setStatus: (...a: any[]) => activeRegistry().setStatus(...a),
     setTitle: (...a: any[]) => activeRegistry().setTitle(...a),
+    // streaming working-indicator overrides (pi ui.setWorking*)
+    setWorkingMessage: (...a: any[]) =>
+        activeRegistry().setWorkingMessage(...a),
+    setWorkingVisible: (...a: any[]) =>
+        activeRegistry().setWorkingVisible(...a),
+    setWorkingIndicator: (...a: any[]) =>
+        activeRegistry().setWorkingIndicator(...a),
     setHiddenThinkingLabel: (...a: any[]) =>
         activeRegistry().setHiddenThinkingLabel(...a),
     // custom transcript-message renderers (customType -> serializable tree)
@@ -1280,6 +1293,11 @@ async function handleConnect(
     // reflect the thread's current activity (e.g. focusing a busy background
     // thread should show the spinner immediately)
     send({ kind: "working", busy: !!t.busy });
+    // reflect any working-indicator overrides (pi ui.setWorking*)
+    send({
+        kind: "working_config",
+        config: t.piweb.getWorkingConfig?.() ?? {},
+    });
     // First-load trust gate: pi-web resolves headless -> untrusted for projects
     // with trust-requiring .pi resources, silently ignoring them. When such a
     // project has no saved decision yet, nudge the browser to open the /trust

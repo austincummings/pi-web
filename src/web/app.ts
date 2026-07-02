@@ -252,29 +252,67 @@ async function restoreQueue({ abort }: { abort: boolean }) {
 }
 
 // ---- "Working" spinner (mirrors pi-tui's Loader: braille frames @ 80ms) ----
+// Extensions can override the message / visibility / indicator via pi-tui's
+// ui.setWorking* (delivered as a `working_config` SSE frame). Undefined fields
+// fall back to these defaults.
 const SPIN_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 let spinTimer: ReturnType<typeof setInterval> | null = null;
 let spinIndex = 0;
-/** Show/hide the spinner above the input while the focused thread is working. */
+let workingBusy = false; // is the focused thread streaming?
+let workingCfg: {
+    message?: string;
+    visible?: boolean;
+    frames?: string[];
+    intervalMs?: number;
+} = {};
+
+/** Mark the focused thread busy/idle, then reconcile the spinner row. */
 function setWorking(on: boolean) {
+    workingBusy = on;
+    applyWorking();
+}
+/** Apply an extension's working-indicator overrides (pi ui.setWorking*). */
+function setWorkingConfig(cfg: typeof workingCfg) {
+    workingCfg = cfg || {};
+    applyWorking();
+}
+/** Reconcile the working row from `workingBusy` + `workingCfg`. */
+function applyWorking() {
     if (!$working) return;
     const spin = $working.querySelector(".spin");
-    if (on) {
-        if (spinTimer) return; // already animating
-        spinIndex = 0;
-        if (spin) spin.textContent = SPIN_FRAMES[0];
-        $working.classList.add("show");
-        spinTimer = setInterval(() => {
-            spinIndex = (spinIndex + 1) % SPIN_FRAMES.length;
-            if (spin) spin.textContent = SPIN_FRAMES[spinIndex];
-        }, 80);
-    } else {
-        if (spinTimer) {
-            clearInterval(spinTimer);
-            spinTimer = null;
-        }
-        $working.classList.remove("show");
+    const label = $working.querySelector(".label");
+    if (spinTimer) {
+        clearInterval(spinTimer);
+        spinTimer = null;
     }
+    // setWorkingVisible(false) hides the row even while busy.
+    const visible = workingBusy && workingCfg.visible !== false;
+    if (!visible) {
+        $working.classList.remove("show");
+        return;
+    }
+    if (label) label.textContent = workingCfg.message ?? "Working…";
+    // Omitted frames -> default braille; `frames: []` -> indicator hidden
+    // entirely (the message still shows); custom frames render verbatim.
+    const frames = Array.isArray(workingCfg.frames)
+        ? workingCfg.frames
+        : SPIN_FRAMES;
+    const interval =
+        typeof workingCfg.intervalMs === "number" && workingCfg.intervalMs > 0
+            ? workingCfg.intervalMs
+            : 80;
+    spinIndex = 0;
+    if (frames.length === 0) {
+        if (spin) spin.textContent = "";
+    } else {
+        if (spin) spin.textContent = frames[0];
+        if (frames.length > 1)
+            spinTimer = setInterval(() => {
+                spinIndex = (spinIndex + 1) % frames.length;
+                if (spin) spin.textContent = frames[spinIndex];
+            }, interval);
+    }
+    $working.classList.add("show");
 }
 
 let assistantEl: HTMLElement | null = null; // current streaming assistant bubble
@@ -2766,9 +2804,16 @@ function onSseMessage(e: MessageEvent) {
             updateTitle();
             // load this thread's extension/prompt/skill commands for the palette
             refreshCommands();
+            // working-indicator overrides are per-thread; the connect replay
+            // re-sends this thread's `working_config` right after.
+            setWorkingConfig({});
             break;
         case "working":
             setWorking(!!m.busy);
+            break;
+        case "working_config":
+            // extension overrides for the streaming indicator (pi ui.setWorking*)
+            setWorkingConfig(m.config || {});
             break;
         case "trust_required":
             // First-load trust gate: this project ships trust-gated `.pi`

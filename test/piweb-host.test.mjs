@@ -256,3 +256,41 @@ test("custom() onHandle.close resolves and removes the surface", async () => {
     await expect(p).resolves.toBe("bye");
     expect(snap().overlays.length).toBe(0);
 });
+
+// ---- setWorking* (pi-tui streaming-indicator overrides) -------------------
+
+test("setWorkingMessage/Visible broadcast working_config + reflect in getWorkingConfig", () => {
+    const { host, frames } = makeHost();
+    host.setWorkingMessage("Compiling…");
+    host.setWorkingVisible(false);
+    expect(host.getWorkingConfig()).toEqual({
+        message: "Compiling…",
+        visible: false,
+    });
+    const last = frames.at(-1);
+    expect(last.kind).toBe("working_config");
+    expect(last.config).toEqual({ message: "Compiling…", visible: false });
+    // empty/undefined message restores the default (undefined)
+    host.setWorkingMessage("");
+    expect(host.getWorkingConfig().message).toBeUndefined();
+});
+
+test("setWorkingIndicator sets frames/intervalMs; no-arg restores defaults", () => {
+    const { host } = makeHost();
+    host.setWorkingIndicator({ frames: ["●", "○"], intervalMs: 200 });
+    expect(host.getWorkingConfig()).toEqual({
+        frames: ["●", "○"],
+        intervalMs: 200,
+    });
+    host.setWorkingIndicator(); // restore default spinner
+    expect(host.getWorkingConfig()).toEqual({
+        frames: undefined,
+        intervalMs: undefined,
+    });
+    // frames: [] hides the indicator; a non-positive interval is dropped
+    host.setWorkingIndicator({ frames: [], intervalMs: 0 });
+    expect(host.getWorkingConfig()).toEqual({
+        frames: [],
+        intervalMs: undefined,
+    });
+});
