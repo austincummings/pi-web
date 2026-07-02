@@ -641,6 +641,10 @@ function lastThinking(): PiThinking | null {
 }
 $transcript.addEventListener("pithinking-toggle", () => toggleThinking());
 $transcript.addEventListener("pithinking-render", () => followBottom());
+// <pi-frame> iframes auto-size asynchronously (they boot at an 80px placeholder,
+// then report their real height once loaded). followBottom() runs when we mount
+// the frame — too early — so re-follow when a frame grows (e.g. /gdiff, /cat).
+$transcript.addEventListener("piframe-resize", () => followBottom());
 
 // Apply the hidden state to the DOM (CSS collapses .think-body). When `persist`
 // is set, also write the new value back to pi's settings via the host.

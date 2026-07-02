@@ -276,7 +276,6 @@ function fileSection(f: FileHits): string {
     return (
         `<section class="file">` +
         `<div class="fhdr"><span class="tw">▾</span>` +
-        `<span class="chk"></span>` +
         `<span class="fname">${escapeHtml(base)}</span>` +
         `<span class="fdir">${escapeHtml(dir)}</span>` +
         `<span class="cnt">${matchCount} match${matchCount === 1 ? "" : "es"}</span></div>` +
@@ -302,8 +301,6 @@ const STYLE = `
           border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
   .fhdr:hover { background: var(--hover, rgba(255,255,255,.04)); }
   .fhdr .tw { width: 1ch; color: var(--muted); user-select: none; }
-  .fhdr .chk { width: 12px; height: 12px; border: 1px solid var(--line);
-               border-radius: 3px; flex: none; }
   .fhdr .fname { color: var(--txt); font-weight: 600; }
   .fhdr .fdir { color: var(--dim, #667); flex: 1; }
   .fhdr .cnt { color: var(--muted); }

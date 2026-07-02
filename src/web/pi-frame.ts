@@ -180,8 +180,17 @@ export class PiFrame extends HTMLElement {
                 level: msg.level,
             });
         } else if (msg.type === "height" && this.autoHeight) {
-            this.iframe.style.height =
+            const next =
                 Math.max(24, Math.min(Number(msg.height) || 0, 4000)) + "px";
+            if (next !== this.iframe.style.height) {
+                this.iframe.style.height = next;
+                // The iframe auto-sizes asynchronously (it boots at an 80px
+                // placeholder, then reports its real content height here). The
+                // host already ran followBottom() when it mounted us — while we
+                // were still 80px — so announce the growth and let it re-follow
+                // if the user was pinned to the bottom.
+                this.emit("piframe-resize", { surfaceId: this.surfaceId });
+            }
         }
     }
 
@@ -203,5 +212,6 @@ declare global {
     interface HTMLElementEventMap {
         "piframe-action": CustomEvent<PiFrameActionDetail>;
         "piframe-notify": CustomEvent<PiFrameNotifyDetail>;
+        "piframe-resize": CustomEvent<{ surfaceId: string }>;
     }
 }
