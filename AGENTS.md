@@ -18,6 +18,13 @@ Concretely:
 - **Reuse pi's names and concepts.** Keep pi's terminology where the concept maps
   (`notify`, `setStatus`, `setWidget`, thinking mode, `/` commands, `!` bash) so
   extensions and muscle memory carry over. See `TODO.md` #20 / `docs/widget.md`.
+  The extension surface (`src/sdk/piweb.ts`) is a subset of pi-tui's
+  `ExtensionUIContext`; the serializable **node** vocabulary mirrors pi-tui
+  components (`Box`/`Container`/`Text`/`Spacer`/`Image`/`Markdown`) except for a
+  small set of **sanctioned web-only nodes** the terminal has no equivalent for
+  (`Frame`, `Button`, `Input`, `Row`, `Divider`). Adding a web-only node is a
+  deliberate exception — document it in `docs/render-model-parity.md` §4.0 and
+  prefer a pi-tui-mirrored node when the concept already exists.
 - **Adopt the active pi theme.** Colors come from the theme at runtime; use the CSS
   variables (`--acc`, `--err`, `--dim`, …) rather than hard-coded values, and accent
   the same things the TUI accents (e.g. the bash command string uses `--acc`).

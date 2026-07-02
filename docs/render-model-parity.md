@@ -117,6 +117,31 @@ Two mitigating facts make this tractable:
 Extend the serializable vocabulary (current cases: `Box/Container`, `Row`, `Text`,
 `Divider`, `Button`, `Input`, `Markdown`, `Frame`):
 
+### 4.0 Which nodes mirror pi-tui, which are web-only
+
+The serializable node vocabulary splits into three groups. Only the first is
+expected to “match the TUI” by name; the rest are deliberate additions.
+
+- **pi-tui-mirrored** — same name and concept as a pi-tui component: `Box`,
+  `Container`, `Text`, `Spacer`, `Image`, `Markdown`. Author these 1:1 with the
+  TUI.
+- **Parity bridges** — nodes the host adapter emits to carry TUI output into the
+  DOM: `AnsiBlock` (§4.1) and the `<img>`-lifted `Image` (§4.2, §7.4).
+- **Sanctioned web-only nodes** — interactive/layout affordances the DOM has but
+  the terminal does not. These have **no pi-tui equivalent** and are intentional
+  divergences (like `Frame`), not names to reconcile:
+
+    | Node      | Role                                                 | Note                                                                                                                |
+    | --------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+    | `Frame`   | sandboxed raw HTML/CSS/JS in a `<pi-frame>`          | the original sanctioned exception                                                                                   |
+    | `Button`  | clickable action trigger (`{ label, action }`)       | dispatches a surface action via `host.dispatch`                                                                     |
+    | `Input`   | text form field (`{ placeholder?, value?, action }`) | **web-only concept**; _not_ pi-tui's `Input` (a focusable editor leaf) — the name overlaps but the semantics differ |
+    | `Row`     | horizontal flex container                            | pi-tui containers are vertical-only                                                                                 |
+    | `Divider` | horizontal rule                                      | —                                                                                                                   |
+
+    New web-only nodes are allowed, but each is a deliberate exception: prefer a
+    pi-tui-mirrored node whenever the concept already exists there.
+
 ### 4.1 `AnsiBlock`
 
 ```jsonc
