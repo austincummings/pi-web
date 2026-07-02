@@ -295,15 +295,19 @@ const STYLE = `
   .summary b { color: var(--txt); font-weight: 600; }
   .summary .q { color: var(--acc); font-style: italic; }
   .file { border-bottom: 1px solid var(--line, #333); }
-  .fhdr { display: flex; gap: 8px; align-items: center; cursor: pointer;
-          padding: 4px 12px; position: sticky; top: 0; z-index: 1;
+  .fhdr { display: flex; gap: 0; align-items: center; cursor: pointer;
+          padding: 4px 0; position: sticky; top: 0; z-index: 1;
           background: var(--panel, #1a1a1a);
           border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
   .fhdr:hover { background: var(--hover, rgba(255,255,255,.04)); }
-  .fhdr .tw { width: 1ch; color: var(--muted); user-select: none; }
-  .fhdr .fname { color: var(--txt); font-weight: 600; }
-  .fhdr .fdir { color: var(--dim, #667); flex: 1; }
-  .fhdr .cnt { color: var(--muted); }
+  /* twisty sits in a gutter column mirroring .no so its right border lines up
+     with the numbered-line divider (one continuous vertical rule). */
+  .fhdr .tw { flex: none; width: 4ch; padding: 0 12px 0 8px; text-align: right;
+              border-right: 1px solid var(--line);
+              color: var(--muted); user-select: none; }
+  .fhdr .fname { color: var(--txt); font-weight: 600; padding-left: 12px; }
+  .fhdr .fdir { color: var(--dim, #667); flex: 1; padding-left: 8px; }
+  .fhdr .cnt { color: var(--muted); padding-right: 12px; }
   .ln { display: flex; white-space: pre; }
   .ln:hover { background: var(--hover, rgba(255,255,255,.04)); }
   .no { flex: none; width: 4ch; padding: 0 12px 0 8px; text-align: right;
@@ -315,8 +319,10 @@ const STYLE = `
   .grow { display: flex; align-items: center; cursor: pointer; height: 1.4em;
           user-select: none; color: var(--dim, #666); }
   .grow:hover { background: var(--hover, rgba(255,255,255,.05)); }
+  /* enlarge the arrow glyph without widening the gutter box: 3.2ch @ 1.25em
+     == 4ch @ 1em, so the border-right stays aligned with .ln .no. */
   .grow .no { border-right: 1px solid var(--line);
-              font-size: 1.25em; line-height: 1; }
+              font-size: 1.25em; line-height: 1; width: 3.2ch; }
   .grow:hover .no { color: var(--acc); }
   .grow .gline { flex: 1; height: 0;
                  border-top: 1px dashed var(--line); margin: 0 12px; opacity: .6; }
