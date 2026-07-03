@@ -111,13 +111,27 @@ type AutocompleteProviderFactory = (
 export function createPiWebHost({
     broadcast,
     getPi,
+    requestFooter,
+    requestHeader,
 }: {
     broadcast: (frame: any) => void;
     getPi: () => any;
+    /**
+     * Ask the server to rebuild + rebroadcast this thread's footer frame (it
+     * owns the session data the footer needs). Invoked when an extension
+     * (re)sets a footer factory or calls `refreshFooter()`.
+     */
+    requestFooter?: () => void;
+    /** Same as `requestFooter`, for the custom header (setHeader). */
+    requestHeader?: () => void;
 }) {
     const surfaces = new Map<string, Surface>();
     /** keyed status segments */
     const statuses = new Map<string, { text: string }>();
+    /** extension footer factory (piweb.setFooter), or undefined for default. */
+    let footerFactory: ((data: any, theme: any) => any) | undefined;
+    /** extension header factory (piweb.setHeader), or undefined for default. */
+    let headerFactory: ((data: any, theme: any) => any) | undefined;
     /**
      * Open blocking dialogs awaiting a browser response.
      * @type {Map<string, {kind:string, spec:DialogSpec, settle:(v:any)=>void}>}
@@ -786,11 +800,73 @@ export function createPiWebHost({
             if (text == null || text === "") statuses.delete(key);
             else statuses.set(key, { text: String(text) });
             push();
+            // Status segments can be rendered inline by a custom footer, so a
+            // footer factory sees the change too.
+            if (footerFactory) requestFooter?.();
+        },
+
+        /**
+         * Extension footer segments, sorted by key (mirrors the status snapshot)
+         * so a custom footer can render them inline (pi-tui parity: the footer
+         * shows `setStatus` segments). Consumed host-side by `footerFrame`.
+         */
+        getStatuses() {
+            return [...statuses.entries()]
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([key, v]) => ({ key, text: v.text }));
+        },
+
+        /**
+         * Replace the default context bar with a serializable node tree (mirrors
+         * pi-tui `ui.setFooter`). Pass undefined to restore the default. The
+         * factory is stored and invoked host-side by `footerFrame` with fresh
+         * `FooterData` each time the footer is rebuilt.
+         * @param {(data:any)=>any} [factory]
+         */
+        setFooter(factory?: (data: any) => any) {
+            footerFactory = typeof factory === "function" ? factory : undefined;
+            requestFooter?.();
+        },
+
+        /** Rebuild + rebroadcast the footer now (e.g. after recomputing git). */
+        refreshFooter() {
+            requestFooter?.();
+        },
+
+        /** The current footer factory, or undefined. Consumed by `footerFrame`. */
+        getFooterFactory() {
+            return footerFactory;
+        },
+
+        /**
+         * Replace the built-in header with a serializable node tree (mirrors
+         * pi-tui `ui.setHeader`). Pass undefined to restore the default.
+         * @param {(data:any,theme:any)=>any} [factory]
+         */
+        setHeader(factory?: (data: any, theme: any) => any) {
+            headerFactory = typeof factory === "function" ? factory : undefined;
+            requestHeader?.();
+        },
+
+        /** Rebuild + rebroadcast the custom header now. */
+        refreshHeader() {
+            requestHeader?.();
+        },
+
+        /** The current header factory, or undefined. Consumed by `headerFrame`. */
+        getHeaderFactory() {
+            return headerFactory;
         },
 
         clear() {
             surfaces.clear();
             statuses.clear();
+            const hadFooter = !!footerFactory;
+            const hadHeader = !!headerFactory;
+            footerFactory = undefined;
+            headerFactory = undefined;
+            if (hadFooter) requestFooter?.();
+            if (hadHeader) requestHeader?.();
             messageRenderers.clear();
             composedAutocomplete = baseAutocomplete;
             autocompleteCount = 0;

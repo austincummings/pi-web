@@ -63,6 +63,7 @@ const $overlayLayer = document.getElementById("overlay-layer")!;
 const $toastLayer = document.getElementById("toast-layer")!;
 const $statusbar = document.getElementById("statusbar")!;
 const $contextbar = document.getElementById("contextbar")!;
+const $customheader = document.getElementById("customheader")!;
 const $status = document.getElementById("status")!;
 const $threadTitle = document.getElementById("threadTitle")!;
 const $overlay = document.getElementById("overlay")!;
@@ -807,10 +808,22 @@ function renderFooter(f: any) {
     if (!$contextbar) return;
     if (!f) {
         $contextbar.classList.remove("show");
+        $contextbar.classList.remove("custom");
         $contextbar.innerHTML = "";
         return;
     }
     $contextbar.innerHTML = "";
+
+    // An extension owns the footer (piweb.setFooter): render its serializable
+    // node tree in place of the default layout — the pi-web analog of pi-tui's
+    // `ctx.ui.setFooter(factory)`, which fully replaces the FooterComponent.
+    if (f.custom) {
+        $contextbar.classList.add("custom");
+        $contextbar.appendChild(renderNode(f.custom, null));
+        $contextbar.classList.add("show");
+        return;
+    }
+    $contextbar.classList.remove("custom");
 
     // line 1: pwd  •  session
     const l1 = document.createElement("div");
@@ -851,6 +864,23 @@ function renderFooter(f: any) {
     l2.append(left, ctx, right);
     $contextbar.append(l1, l2);
     $contextbar.classList.add("show");
+}
+
+/**
+ * Render an extension-owned custom header above the transcript from a `header`
+ * frame (pi-tui `ctx.ui.setHeader` parity). `custom === null` restores the
+ * built-in header (nothing shown here). @param {any} f
+ */
+function renderHeader(f: any) {
+    if (!$customheader) return;
+    $customheader.innerHTML = "";
+    const tree = f?.custom;
+    if (!tree) {
+        $customheader.classList.remove("show");
+        return;
+    }
+    $customheader.appendChild(renderNode(tree, null));
+    $customheader.classList.add("show");
 }
 
 function renderStatus(segments: any[]) {
@@ -2567,6 +2597,10 @@ function onSseMessage(e: MessageEvent) {
         case "footer":
             // default below-composer context bar (pwd/session + tokens + model)
             renderFooter(m);
+            break;
+        case "header":
+            // extension-owned custom header above the transcript (setHeader)
+            renderHeader(m);
             break;
         case "title":
             // extension-driven page (tab) title; "" restores the default

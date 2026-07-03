@@ -52,19 +52,19 @@ Simple, line-based backlog. Check items off as they land.
       `MarkdownTheme.highlightCode`).
 
       <sub>Original spec (kept for reference):</sub> override how a message / code block renders in the transcript
-                              (closely related to #10; the forcing function is a tree-sitter highlighter).
-                              Shape: `piweb.registerMessageRenderer(customType, (message, opts) => Node)`
-                              where the renderer returns a **serializable component tree** (the same
-                              `Stack/Row/Text/Button/Frame` node model as docks/overlays), not a TUI
-                              `Component`. The host keeps a `customType -> renderer` map; when a transcript
-                              entry carries a matching `customType` (or, for code blocks, a synthetic
-                              `"code"` type with `{ lang, text }`), it renders the returned tree via the
-                              existing `renderNode` path instead of the default markdown/`<pre>` output.
-                              Needs three small pieces: (a) the registry + `render` SSE frame carrying
-                              `{ customType, tree }`, (b) a new `Code` node type so a highlighter can emit
-                              spans without a `Frame`, (c) capturing the fenced-code language in
-                              `markdown.ts` so code blocks can be routed to a registered renderer.
-                              Stays portable: with no host present the call no-ops like the rest of `piweb`.
+                                                  (closely related to #10; the forcing function is a tree-sitter highlighter).
+                                                  Shape: `piweb.registerMessageRenderer(customType, (message, opts) => Node)`
+                                                  where the renderer returns a **serializable component tree** (the same
+                                                  `Stack/Row/Text/Button/Frame` node model as docks/overlays), not a TUI
+                                                  `Component`. The host keeps a `customType -> renderer` map; when a transcript
+                                                  entry carries a matching `customType` (or, for code blocks, a synthetic
+                                                  `"code"` type with `{ lang, text }`), it renders the returned tree via the
+                                                  existing `renderNode` path instead of the default markdown/`<pre>` output.
+                                                  Needs three small pieces: (a) the registry + `render` SSE frame carrying
+                                                  `{ customType, tree }`, (b) a new `Code` node type so a highlighter can emit
+                                                  spans without a `Frame`, (c) capturing the fenced-code language in
+                                                  `markdown.ts` so code blocks can be routed to a registered renderer.
+                                                  Stays portable: with no host present the call no-ops like the rest of `piweb`.
 
 - [x] 20. Rename the `dock`/`overlay` surface API toward pi parity: `dock` -> `setWidget`
       with a widened `placement` (`aboveEditor`/`belowEditor` aliases for today's
@@ -165,7 +165,7 @@ Simple, line-based backlog. Check items off as they land.
       cancel/timeout/abort→undef). Stubbed no-op under plain pi in
       `sdk/piweb.ts`. Web renders a `#dialog` modal (arrow/Enter select nav,
       Esc/backdrop cancel). - [x] `registerMessageRenderer` (folds in #19; core landed — custom-message
-      renderer + `Code` node; fenced-code auto-routing still pending) - [x] `setTitle` web page-title hook (folds in #8 — `piweb.setTitle`; `ctx.ui` wiring still pending) - [ ] `setFooter(factory)` — full footer replacement hook (with `footerData.getGitBranch()`, `getExtensionStatuses()`, `onBranchChange()`; the TUI's `setFooter` completely replaces the default footer, while pi-web has no equivalent — the `contextbar` is server-driven and non-replaceable) - [ ] `setWorkingMessage` / `setWorkingVisible` / `setWorkingIndicator` — spinner customization - [ ] `ctx.ui.custom(component, options?)` — general-purpose interactive component replacement (the TUI lets extensions render arbitrary custom components inline or as `{ overlay: true }` modals with positioning/sizing/anchor; pi-web only has the four blocking-dialog shorthands `select`/`confirm`/`input`/`editor`, not the general `custom()` entry point) - [ ] `setStatus()` rendering location divergence — TUI renders status segments **inside** the single footer line alongside tokens/model/cwd; pi-web renders them in a separate `#statusbar` above the `#contextbar`. Same API, different visual result. pi-web also adds `tone`/`align` options the TUI doesn't have. - [ ] `setEditorText` / `getEditorText` / `pasteToEditor` composer bridge - [ ] `addAutocompleteProvider` — extension-supplied completion - [ ] `getToolsExpanded` / `setToolsExpanded` programmatic control - [ ] theme API: `getAllThemes` / `getTheme` / `setTheme` / `theme.fg(...)` - [ ] `ctx.mode === "web"` so portable extensions can branch on the medium - [ ] N/A in a browser: `setEditorComponent` / `getEditorComponent` (TUI
+      renderer + `Code` node; fenced-code auto-routing still pending) - [x] `setTitle` web page-title hook (folds in #8 — `piweb.setTitle`; `ctx.ui` wiring still pending) - [x] `setFooter(factory)` — full footer replacement hook. Done: `piweb.setFooter(factory)` stores a factory on the per-thread host; `footerFrame()` calls it with live `FooterData` (cwd/session/model/thinking `level`/tokens/cost/context %+window/`statuses`) each time the footer is rebuilt (turn end, model/thinking change, compact, rename, or `piweb.refreshFooter()`), shipping the returned serializable node tree as `footer.custom`. The web `renderFooter()` renders that tree in `#contextbar` in place of the default two-line layout (`.contextbar.custom`), so a custom footer fully replaces the default (pi-tui `ctx.ui.setFooter` parity). `refreshFooter()` lets an extension rebuild on its own cadence (e.g. after recomputing git). No-op under plain pi. Reference extension: `.pi/extensions/status-footer` (cwd/session + git branch/diff + context meter + model • thinking on one line). `FooterData` is a faithful superset of pi-tui's `ReadonlyFooterDataProvider`: **host-native reactive `gitBranch`** (a per-thread `.git` watcher re-emits the footer on checkout — `getGitBranch`/`onBranchChange` parity), `availableModels` (`getAvailableProviderCount` parity), and inline `statuses`; the factory also receives the active theme vars so `Text` can take an explicit `color` (the `theme.fg(...)` analog). Sibling `setHeader(factory)` + `refreshHeader()` land the same way (custom `#customheader` above the transcript; `custom:null` restores the default). Node vocab gained `Text` `tone`/`color`/`bold` and `Row` `justify`/`gap`/`align`/`wrap`. Covered by `test/piweb-host.test.mjs` + `test/nodes.test.ts`. - [ ] `setWorkingMessage` / `setWorkingVisible` / `setWorkingIndicator` — spinner customization - [ ] `ctx.ui.custom(component, options?)` — general-purpose interactive component replacement (the TUI lets extensions render arbitrary custom components inline or as `{ overlay: true }` modals with positioning/sizing/anchor; pi-web only has the four blocking-dialog shorthands `select`/`confirm`/`input`/`editor`, not the general `custom()` entry point) - [x] `setStatus()` rendering location divergence — resolved for the footer-parity case by `setFooter`: `FooterData.statuses` carries the `setStatus` segments so a custom footer can render them **inline** on the single footer line (pi-tui parity). The standalone `#statusbar` band remains available for extensions that only use `setStatus`. (`Text` nodes gained a `tone` for theme-aware color; horizontal `align`/`justify` live on `Row`.) - [ ] `setEditorText` / `getEditorText` / `pasteToEditor` composer bridge - [ ] `addAutocompleteProvider` — extension-supplied completion - [ ] `getToolsExpanded` / `setToolsExpanded` programmatic control - [ ] theme API: `getAllThemes` / `getTheme` / `setTheme` / `theme.fg(...)` - [ ] `ctx.mode === "web"` so portable extensions can branch on the medium - [ ] N/A in a browser: `setEditorComponent` / `getEditorComponent` (TUI
       Component swap) — document as out of scope rather than implement
 
 - [x] 23. Reach theme-palette parity with the pi TUI. `loadPiTheme()` in
@@ -325,6 +325,8 @@ Simple, line-based backlog. Check items off as they land.
           `src/web/pi-frame.ts`, matching `piframe-action`/`piframe-notify`.
     - [ ] Run `bun run format` on `TODO.md` (only file failing `format:check`), or
           add it to `.prettierignore` if it's intentionally hand-formatted.
+
+<!-- (was #30 "Add setFooter to pi-web" — collapsed into #22's `setFooter` bullet, now done.) -->
 
 ## Docs
 

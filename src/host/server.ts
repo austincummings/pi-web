@@ -26,7 +26,8 @@
  * thread id it targets.
  */
 import { readFile, readdir, unlink } from "node:fs/promises";
-import { readFileSync, statSync, existsSync } from "node:fs";
+import { readFileSync, statSync, existsSync, watch } from "node:fs";
+import type { FSWatcher } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
     basename,
@@ -112,6 +113,14 @@ interface ThreadRuntime {
     resourceLoader: DefaultResourceLoader | null;
     unsubscribe: (() => void) | null;
     busy: boolean;
+    /** Live git-branch watcher (drives `FooterData.gitBranch` reactively). */
+    gitWatcher: GitBranchWatcher | null;
+}
+
+/** Cached git branch + a filesystem watcher that refreshes it on checkout. */
+interface GitBranchWatcher {
+    getBranch(): string | null;
+    dispose(): void;
 }
 
 /**
@@ -348,6 +357,19 @@ const nullRegistry = {
     },
     notify() {},
     setStatus() {},
+    getStatuses() {
+        return [];
+    },
+    setFooter() {},
+    refreshFooter() {},
+    getFooterFactory() {
+        return undefined;
+    },
+    setHeader() {},
+    refreshHeader() {},
+    getHeaderFactory() {
+        return undefined;
+    },
     setTitle() {},
     setWorkingMessage() {},
     setWorkingVisible() {},
@@ -418,6 +440,12 @@ const piweb = {
     custom: (...a: any[]) => activeRegistry().custom(...a),
     notify: (...a: any[]) => activeRegistry().notify(...a),
     setStatus: (...a: any[]) => activeRegistry().setStatus(...a),
+    // footer replacement (pi-tui `ctx.ui.setFooter`) + explicit refresh
+    setFooter: (...a: any[]) => activeRegistry().setFooter(...a),
+    refreshFooter: (...a: any[]) => activeRegistry().refreshFooter(...a),
+    // header replacement (pi-tui `ctx.ui.setHeader`) + explicit refresh
+    setHeader: (...a: any[]) => activeRegistry().setHeader(...a),
+    refreshHeader: (...a: any[]) => activeRegistry().refreshHeader(...a),
     setTitle: (...a: any[]) => activeRegistry().setTitle(...a),
     // streaming working-indicator overrides (pi ui.setWorking*)
     setWorkingMessage: (...a: any[]) =>
@@ -601,7 +629,130 @@ function formatCwdForFooter(dir: string, home: string) {
  * @param {AgentSession|null|undefined} s
  * @param {string} [threadCwd]
  */
-function footerFrame(s: AgentSession | null | undefined, threadCwd = "") {
+/**
+ * Find the surface registry that owns a given session (reverse lookup), so
+ * `footerFrame` can apply an extension's `setFooter` factory without every
+ * call site having to thread the registry through.
+ */
+// O(1) session -> thread index (self-healing): footer/header rebuilds resolve
+// the owning thread by session identity without an O(threads) scan each emit.
+const sessionIndex = new Map<AgentSession, ThreadRuntime>();
+function threadForSession(
+    s: AgentSession | null | undefined,
+): ThreadRuntime | null {
+    if (!s) return null;
+    const hit = sessionIndex.get(s);
+    if (hit && hit.session === s) return hit;
+    // Miss (or a session swapped after fork/switch): rebuild lazily.
+    for (const t of threadRuntimes.values()) {
+        if (t.session) sessionIndex.set(t.session, t);
+        if (t.session === s) return t;
+    }
+    return null;
+}
+function registryForSession(s: AgentSession | null | undefined): any {
+    return threadForSession(s)?.piweb ?? null;
+}
+
+/** Remove a thread from the registry, disposing its git watcher + index entry. */
+function evictThread(id: string) {
+    const t = threadRuntimes.get(id);
+    if (t) {
+        try {
+            t.gitWatcher?.dispose();
+        } catch {
+            /* ignore */
+        }
+        if (t.session) sessionIndex.delete(t.session);
+    }
+    threadRuntimes.delete(id);
+}
+
+/**
+ * Watch a repo's `.git` for HEAD/ref changes and keep the current branch name
+ * cached, calling `onChange` when it flips (checkout / detach) — the host side
+ * of `FooterData.gitBranch` (pi-tui `footerData.getGitBranch` + `onBranchChange`
+ * parity). Best-effort: outside a repo it simply reports `null`.
+ */
+function createGitBranchWatcher(
+    dir: string,
+    onChange: () => void,
+): GitBranchWatcher {
+    let branch: string | null = null;
+    let disposed = false;
+    let watcher: FSWatcher | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const set = (val: string | null) => {
+        if (disposed || val === branch) return;
+        branch = val;
+        onChange();
+    };
+    const refresh = () => {
+        execFile(
+            "git",
+            ["rev-parse", "--abbrev-ref", "HEAD"],
+            { cwd: dir, timeout: 5000 },
+            (err, out) => {
+                if (disposed) return;
+                if (err) return set(null);
+                const b = String(out).trim();
+                if (b !== "HEAD") return set(b);
+                // Detached HEAD -> short SHA.
+                execFile(
+                    "git",
+                    ["rev-parse", "--short", "HEAD"],
+                    { cwd: dir, timeout: 5000 },
+                    (e2, o2) =>
+                        disposed || set(e2 ? null : `@${String(o2).trim()}`),
+                );
+            },
+        );
+    };
+    const schedule = () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(refresh, 150); // debounce rapid .git churn
+    };
+    try {
+        watcher = watch(join(dir, ".git"), { persistent: false }, (_e, f) => {
+            const name = f ? String(f) : "";
+            // HEAD flips on checkout; refs/packed-refs on branch create/delete.
+            if (
+                !name ||
+                name === "HEAD" ||
+                name === "packed-refs" ||
+                name.startsWith("refs")
+            )
+                schedule();
+        });
+    } catch {
+        /* not a git repo (or .git missing) — branch stays null */
+    }
+    refresh();
+    return {
+        getBranch: () => branch,
+        dispose: () => {
+            disposed = true;
+            try {
+                watcher?.close();
+            } catch {
+                /* ignore */
+            }
+            if (timer) clearTimeout(timer);
+        },
+    };
+}
+
+/**
+ * Compute the live `FooterData` for a thread (shared by the footer and header
+ * frames). Best-effort: any missing piece degrades to a sane default.
+ */
+function buildFooterData(
+    s: AgentSession | null | undefined,
+    threadCwd: string,
+    thread: ThreadRuntime | null,
+    registry: any,
+) {
     let model = null;
     let reasoning = false;
     let level = "off";
@@ -644,8 +795,28 @@ function footerFrame(s: AgentSession | null | undefined, threadCwd = "") {
     } catch {
         /* best-effort */
     }
+    let statuses: { key: string; text: string }[] = [];
+    try {
+        statuses = registry?.getStatuses?.() ?? [];
+    } catch {
+        /* best-effort */
+    }
+    // Host-native git branch (pi-tui footerData.getGitBranch parity): read the
+    // thread's live watcher cache; null outside a repo / when unknown.
+    let gitBranch: string | null = null;
+    try {
+        gitBranch = thread?.gitWatcher?.getBranch?.() ?? null;
+    } catch {
+        /* best-effort */
+    }
+    // Count of selectable models (footerData.getAvailableProviderCount parity).
+    let availableModels = 0;
+    try {
+        availableModels = s?.modelRegistry?.getAvailable?.()?.length ?? 0;
+    } catch {
+        /* best-effort */
+    }
     return {
-        kind: "footer",
         cwd: formatCwdForFooter(cwdStr, homedir()),
         session,
         model,
@@ -656,7 +827,57 @@ function footerFrame(s: AgentSession | null | undefined, threadCwd = "") {
         sub,
         context,
         autoCompact,
+        gitBranch,
+        availableModels,
+        statuses,
     };
+}
+
+function footerFrame(
+    s: AgentSession | null | undefined,
+    threadCwd = "",
+    reg?: any,
+) {
+    const thread = threadForSession(s);
+    const registry = reg ?? thread?.piweb;
+    const base = buildFooterData(s, threadCwd || cwd, thread, registry);
+    // If an extension owns the footer (piweb.setFooter), call its factory with
+    // the live FooterData + theme vars and ship the returned node tree as
+    // `custom`. Any failure (or a falsy return) falls back to the default bar.
+    const factory = registry?.getFooterFactory?.();
+    if (factory) {
+        try {
+            const custom = factory({ ...base }, piTheme);
+            if (custom) return { kind: "footer" as const, ...base, custom };
+        } catch (err) {
+            console.error("setFooter factory threw:", err);
+        }
+    }
+    return { kind: "footer" as const, ...base };
+}
+
+/**
+ * Build the `header` frame: an extension-owned custom header above the
+ * transcript (pi-tui `ctx.ui.setHeader` parity). `custom` is null when no
+ * header factory is set, which restores the built-in header on the client.
+ */
+function headerFrame(
+    s: AgentSession | null | undefined,
+    threadCwd = "",
+    reg?: any,
+) {
+    const thread = threadForSession(s);
+    const registry = reg ?? thread?.piweb;
+    const factory = registry?.getHeaderFactory?.();
+    if (!factory) return { kind: "header" as const, custom: null };
+    try {
+        const base = buildFooterData(s, threadCwd || cwd, thread, registry);
+        const custom = factory({ ...base }, piTheme);
+        return { kind: "header" as const, custom: custom || null };
+    } catch (err) {
+        console.error("setHeader factory threw:", err);
+        return { kind: "header" as const, custom: null };
+    }
 }
 /**
  * Build the `queue` frame: the per-thread steering/follow-up messages waiting to
@@ -976,12 +1197,38 @@ function makeThread(sm: SessionManager): ThreadRuntime {
         resourceLoader: null,
         unsubscribe: null,
         busy: false,
+        gitWatcher: null,
     };
     thread.piweb = createPiWebHost({
         // panels reach only the clients viewing this thread
         // surface frames reach only the clients viewing this thread
         broadcast: (frame) => bus.broadcastToThread(thread.id, frame),
         getPi: () => thread.pi,
+        // rebuild + rebroadcast the footer (server owns the session data it
+        // needs) when an extension (re)sets or refreshes a footer factory
+        requestFooter: () =>
+            bus.broadcastToThread(
+                thread.id,
+                footerFrame(thread.session, thread.cwd, thread.piweb),
+            ),
+        // same, for a custom header (setHeader)
+        requestHeader: () =>
+            bus.broadcastToThread(
+                thread.id,
+                headerFrame(thread.session, thread.cwd, thread.piweb),
+            ),
+    });
+    // Live git-branch tracking for FooterData.gitBranch: refresh the footer
+    // (and header) whenever the branch flips under this thread's cwd.
+    thread.gitWatcher = createGitBranchWatcher(thread.cwd, () => {
+        bus.broadcastToThread(
+            thread.id,
+            footerFrame(thread.session, thread.cwd, thread.piweb),
+        );
+        bus.broadcastToThread(
+            thread.id,
+            headerFrame(thread.session, thread.cwd, thread.piweb),
+        );
     });
     return thread;
 }
@@ -1052,6 +1299,7 @@ function createThread(sm: SessionManager) {
         await pinModel(thread.session);
         thread.unsubscribe = subscribe(thread);
         threadRuntimes.set(thread.id, thread);
+        if (thread.session) sessionIndex.set(thread.session, thread);
         return thread;
     });
     createChain = run.then(
@@ -1286,6 +1534,8 @@ async function handleConnect(
     send(thinkingLevelFrame(t.session));
     // default below-composer context bar (pwd/session + tokens + model•thinking)
     send(footerFrame(t.session, t.cwd));
+    // extension-owned custom header above the transcript (setHeader), if any
+    send(headerFrame(t.session, t.cwd, t.piweb));
     replayTranscript(t.session, send);
     // pending steering/follow-up messages, so a refreshing viewer sees the queue
     send(queueFrame(t.session));
@@ -1468,13 +1718,13 @@ const threads = {
         if (!file) {
             // No session file yet (no assistant message flushed): nothing to
             // unlink, just drop it from the registry so it leaves the list.
-            threadRuntimes.delete(threadId);
+            evictThread(threadId);
             broadcastThreads();
             return { ok: true, method: "unlink" as const };
         }
         const result = await deleteSessionFile(file);
         if (result.ok) {
-            threadRuntimes.delete(threadId); // evict any live copy
+            evictThread(threadId); // evict any live copy (+ dispose git watcher)
             broadcastThreads(); // SSE → every client refreshes its list
         }
         return result;
@@ -2539,6 +2789,7 @@ process.on("SIGINT", () => {
         for (const t of threadRuntimes.values()) {
             try {
                 t.unsubscribe?.();
+                t.gitWatcher?.dispose();
                 t.session?.dispose();
             } catch {
                 /* best-effort */

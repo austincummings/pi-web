@@ -20,6 +20,73 @@ export interface WorkingIndicatorOptions {
     intervalMs?: number;
 }
 
+/**
+ * The live data handed to a `setFooter` factory each time the footer is rebuilt
+ * (turn end, model / thinking change, compaction, rename, or `refreshFooter()`).
+ * Mirrors the fields pi-tui exposes to a footer Component via its
+ * `ReadonlyFooterDataProvider`, in serializable form.
+ */
+export interface FooterData {
+    /** `~`-relative working directory (already collapsed for display). */
+    cwd: string;
+    /** Session display name, or null when unset. */
+    session: string | null;
+    /** Active model id, or null. */
+    model: string | null;
+    /** Whether the model supports reasoning/thinking. */
+    reasoning: boolean;
+    /** Current thinking level (`off` when disabled). */
+    level: string;
+    /** Cumulative token usage for the session. */
+    tokens: {
+        input: number;
+        output: number;
+        cacheRead: number;
+        cacheWrite: number;
+    };
+    /** Cumulative cost in USD. */
+    cost: number;
+    /** Whether the active model bills via a subscription/OAuth plan. */
+    sub: boolean;
+    /** Context-window usage: `percent` (null when unknown) of `window` tokens. */
+    context: { percent: number | null; window: number };
+    /** Whether auto-compaction is enabled. */
+    autoCompact: boolean;
+    /**
+     * Current git branch (or `@<sha>` when detached), host-provided and updated
+     * live when the branch changes — the serializable analog of pi-tui
+     * `footerData.getGitBranch()`. `null` when not a repo / unknown.
+     */
+    gitBranch: string | null;
+    /**
+     * Number of models available for selection (mirrors pi-tui
+     * `footerData.getAvailableProviderCount()`); useful to gate a model hint.
+     */
+    availableModels: number;
+    /** The extension `setStatus` segments, so a footer can render them inline. */
+    statuses: { key: string; text: string }[];
+}
+/**
+ * The active theme as a flat map of CSS custom properties (e.g. `--acc`,
+ * `--err`, `--dim`), the serializable analog of pi-tui's `Theme`/`theme.fg(...)`
+ * passed to a footer/header Component. A factory may read these to set an
+ * explicit `Text` `color`, beyond the named `tone` set.
+ */
+export type ThemeVars = Record<string, string>;
+/**
+ * A footer factory: given the current `FooterData` (and the active theme vars),
+ * return a serializable node tree to render in place of the default context
+ * bar, or a falsy value to fall back to the default footer. Mirrors pi-tui
+ * `ctx.ui.setFooter(factory)`.
+ */
+export type FooterFactory = (data: FooterData, theme: ThemeVars) => any;
+/**
+ * A header factory (mirrors pi-tui `ctx.ui.setHeader`): return a serializable
+ * node tree to render as a custom header above the transcript, or a falsy value
+ * to restore the built-in header. Receives the same live data + theme vars.
+ */
+export type HeaderFactory = (data: FooterData, theme: ThemeVars) => any;
+
 /** The composer snapshot passed to an autocomplete provider. */
 export interface AutocompleteContext {
     /** Full composer text. */
@@ -107,6 +174,27 @@ export interface PiWebSurface {
     // --- transient feedback ---
     notify(message: string, type?: NotifyLevel): void;
     setStatus(key: string, text?: string): void;
+    /**
+     * Replace the default below-composer footer (the pi-web analog of pi-tui
+     * `ctx.ui.setFooter`). The factory is called with the live `FooterData`
+     * whenever the footer is rebuilt and returns a serializable node tree; pass
+     * `undefined` to restore the default host-built context bar. No-ops under
+     * plain terminal pi.
+     */
+    setFooter(factory?: FooterFactory): void;
+    /**
+     * Ask the host to rebuild + rebroadcast the footer now (e.g. after the
+     * extension recomputes git state). No-op when no footer factory is set.
+     */
+    refreshFooter(): void;
+    /**
+     * Replace the built-in header above the transcript with a serializable node
+     * tree (the pi-web analog of pi-tui `ctx.ui.setHeader`). Pass `undefined` to
+     * restore the default. No-ops under plain terminal pi.
+     */
+    setHeader(factory?: HeaderFactory): void;
+    /** Rebuild + rebroadcast the custom header now. */
+    refreshHeader(): void;
     setTitle(text?: string): void;
     /**
      * Set the working/loading message shown during streaming (mirrors pi-tui
@@ -192,6 +280,10 @@ const stub = {
     setWidget: noop,
     custom: dialogNoop,
     notify: noop,
+    setFooter: noop,
+    refreshFooter: noop,
+    setHeader: noop,
+    refreshHeader: noop,
     setTitle: noop,
     setWorkingMessage: noop,
     setWorkingVisible: noop,

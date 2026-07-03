@@ -10,12 +10,82 @@ import { createPiWebHost } from "../src/host/piweb-host.ts";
 /** Build a host whose broadcasts are captured, exposing the latest snapshot. */
 function makeHost() {
     const frames = [];
+    const calls = { footer: 0, header: 0 };
     const host = createPiWebHost({
         broadcast: (f) => frames.push(f),
         getPi: () => ({}),
+        requestFooter: () => calls.footer++,
+        requestHeader: () => calls.header++,
     });
-    return { host, frames, snap: () => host.snapshot() };
+    return { host, frames, calls, snap: () => host.snapshot() };
 }
+
+// ---- setFooter / setHeader (pi-tui ctx.ui.setFooter/setHeader parity) -----
+
+test("setFooter stores the factory, exposes it, and requests a footer rebuild", () => {
+    const { host, calls } = makeHost();
+    expect(host.getFooterFactory()).toBeUndefined();
+    const factory = (data) => ({ type: "Text", text: data.model });
+    host.setFooter(factory);
+    expect(host.getFooterFactory()).toBe(factory);
+    expect(calls.footer).toBe(1);
+    // clearing (undefined / non-function) restores the default + rebuilds
+    host.setFooter(undefined);
+    expect(host.getFooterFactory()).toBeUndefined();
+    expect(calls.footer).toBe(2);
+});
+
+test("refreshFooter/refreshHeader request a rebuild without changing the factory", () => {
+    const { host, calls } = makeHost();
+    const f = () => ({ type: "Text", text: "x" });
+    host.setFooter(f);
+    host.refreshFooter();
+    expect(calls.footer).toBe(2); // set + refresh
+    expect(host.getFooterFactory()).toBe(f);
+    host.refreshHeader();
+    expect(calls.header).toBe(1);
+});
+
+test("getStatuses returns setStatus segments sorted by key", () => {
+    const { host } = makeHost();
+    host.setStatus("b", "second");
+    host.setStatus("a", "first");
+    host.setStatus("c", "third");
+    expect(host.getStatuses()).toEqual([
+        { key: "a", text: "first" },
+        { key: "b", text: "second" },
+        { key: "c", text: "third" },
+    ]);
+});
+
+test("setStatus triggers a footer rebuild only when a footer factory is active", () => {
+    const { host, calls } = makeHost();
+    host.setStatus("a", "x"); // no factory yet
+    expect(calls.footer).toBe(0);
+    host.setFooter(() => ({ type: "Text", text: "f" })); // footer:1
+    host.setStatus("b", "y"); // footer:2 (statuses can render inline)
+    expect(calls.footer).toBe(2);
+});
+
+test("setHeader stores + exposes the factory and requests a header rebuild", () => {
+    const { host, calls } = makeHost();
+    expect(host.getHeaderFactory()).toBeUndefined();
+    const factory = () => ({ type: "Text", text: "hdr" });
+    host.setHeader(factory);
+    expect(host.getHeaderFactory()).toBe(factory);
+    expect(calls.header).toBe(1);
+});
+
+test("clear() drops footer + header factories and requests rebuilds for each", () => {
+    const { host, calls } = makeHost();
+    host.setFooter(() => ({ type: "Text", text: "f" })); // footer:1
+    host.setHeader(() => ({ type: "Text", text: "h" })); // header:1
+    host.clear();
+    expect(host.getFooterFactory()).toBeUndefined();
+    expect(host.getHeaderFactory()).toBeUndefined();
+    expect(calls.footer).toBe(2); // set + clear
+    expect(calls.header).toBe(2); // set + clear
+});
 
 test("setWidget with string[] renders a Box of Text rows at the default (aboveEditor) slot", () => {
     const { host, snap } = makeHost();

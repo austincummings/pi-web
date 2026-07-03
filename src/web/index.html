@@ -269,26 +269,51 @@
             .statusbar .seg.right {
                 margin-left: auto;
             }
-            .statusbar .tone-accent {
+            /* tone classes (Text node `tone`): global so custom footers/docks
+               can color segments the same way the status band does. */
+            .tone-accent {
                 color: var(--acc);
             }
-            .statusbar .tone-text {
+            .tone-text {
                 color: var(--txt);
             }
-            .statusbar .tone-muted {
+            .tone-muted {
                 color: var(--muted);
             }
-            .statusbar .tone-dim {
+            .tone-dim {
                 color: var(--dim);
             }
-            .statusbar .tone-success {
+            .tone-success {
                 color: var(--ok);
             }
-            .statusbar .tone-warning {
+            .tone-warning {
                 color: var(--warn);
             }
-            .statusbar .tone-error {
+            .tone-error {
                 color: var(--err);
+            }
+            /* A custom header (piweb.setHeader) above the transcript. Hidden
+               until an extension mounts one. */
+            .customheader {
+                display: none;
+                padding: 6px 14px;
+                border-bottom: 1px solid var(--line);
+                background: var(--panel);
+            }
+            .customheader.show {
+                display: block;
+            }
+            /* A custom footer (piweb.setFooter) owns the whole context bar: it
+               renders a serializable node tree in place of the default two-line
+               layout, so drop the default flex-column gap and let the tree lay
+               itself out (Rows with justify=between, etc.). */
+            .contextbar.custom {
+                gap: 2px;
+            }
+            .contextbar.custom .row {
+                width: 100%;
+                flex-wrap: nowrap;
+                min-width: 0;
             }
             /* extension overlays (modal surfaces) */
             #overlay-layer {
@@ -1346,6 +1371,7 @@
                 <span class="sp"></span>
                 <span id="status" class="empty">connecting…</span>
             </header>
+            <div id="customheader" class="customheader"></div>
             <div id="transcript">
                 <div class="empty">
                     Ask pi something…

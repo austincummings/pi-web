@@ -60,12 +60,35 @@ export function renderStaticNode(
         case "Row": {
             const d = document.createElement("div");
             d.className = "row";
+            // Optional horizontal layout controls (used by e.g. custom footers):
+            // justify=start|between|end|center, numeric gap, align-items, wrap.
+            if (node.justify) {
+                d.style.justifyContent =
+                    node.justify === "between"
+                        ? "space-between"
+                        : node.justify === "end"
+                          ? "flex-end"
+                          : node.justify === "center"
+                            ? "center"
+                            : "flex-start";
+            }
+            if (node.align) d.style.alignItems = String(node.align);
+            if (typeof node.gap === "number") d.style.gap = `${node.gap}px`;
+            if (node.wrap === false) d.style.flexWrap = "nowrap";
             (node.children || []).forEach((c: Node) => d.appendChild(recur(c)));
             return d;
         }
         case "Text": {
             const d = document.createElement("div");
             d.textContent = node.text ?? "";
+            // Optional theme-aware styling (mirrors pi-tui `theme.fg(...)` tones):
+            // tone maps to a `--acc/--err/--dim/…` CSS var; dim/bold are shortcuts.
+            if (node.tone) d.classList.add(`tone-${node.tone}`);
+            if (node.dim) d.classList.add("tone-dim");
+            // An explicit color (e.g. resolved from theme vars) wins over tone —
+            // the serializable analog of pi-tui `theme.fg(...)`.
+            if (node.color) d.style.color = String(node.color);
+            if (node.bold) d.style.fontWeight = "600";
             return d;
         }
         case "Divider": {
