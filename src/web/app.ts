@@ -27,6 +27,8 @@ import { setThinkingLabel } from "./pi-thinking.ts";
 import "./pi-bash.ts";
 import "./pi-composer.ts";
 import type { PiComposer } from "./pi-composer.ts";
+import "./pi-dialog.ts";
+import type { PiDialog } from "./pi-dialog.ts";
 import type {
     PiFrame,
     PiFrameActionDetail,
@@ -68,8 +70,10 @@ const $status = document.getElementById("status")!;
 const $threadTitle = document.getElementById("threadTitle")!;
 const $overlay = document.getElementById("overlay")!;
 const $picker = document.getElementById("picker")!;
-const $dialog = document.getElementById("dialog")!;
-const $dialogCard = document.getElementById("dialog-card")!;
+// <pi-dialog> owns the blocking modal dialogs (select/confirm/input/editor);
+// it self-manages its capture-phase keydown + backdrop click and emits
+// pi-dialog-answer / pi-dialog-open (wired below).
+const dialog = document.getElementById("dialog") as PiDialog;
 // The composer is the <pi-composer> custom element; the side-effect import
 // above upgraded the in-DOM element synchronously, so its #prompt / #ac /
 // #backdrop / … children already exist. It owns submit / history / queue /
@@ -697,6 +701,9 @@ function renderNode(node: any, surfaceId: string | null) {
             frame.surfaceId = surfaceId ?? "";
             frame.frameHtml = node.html ?? "";
             if (node.height != null) frame.frameHeight = node.height;
+            // Optional data payload for the postMessage channel (persistent
+            // frames that update in place — e.g. the custom footer).
+            if (node.data !== undefined) frame.frameData = node.data;
             return frame;
         }
         // Everything else (Box/Row/Text/Markdown/AnsiBlock/Spacer/Image, …) is
@@ -812,18 +819,44 @@ function renderFooter(f: any) {
         $contextbar.innerHTML = "";
         return;
     }
-    $contextbar.innerHTML = "";
 
     // An extension owns the footer (piweb.setFooter): render its serializable
     // node tree in place of the default layout — the pi-web analog of pi-tui's
     // `ctx.ui.setFooter(factory)`, which fully replaces the FooterComponent.
     if (f.custom) {
+        // Persistence fast-path: when the custom footer is a Frame and one is
+        // already mounted, update it *in place* (push new html/data via
+        // postMessage) instead of re-creating the <pi-frame> — no iframe reload
+        // / flicker on every footer rebuild. Falls back to a fresh mount when
+        // switching from the default bar or a non-Frame custom tree.
+        if (
+            f.custom.type === "Frame" &&
+            $contextbar.classList.contains("custom")
+        ) {
+            const existing = $contextbar.firstElementChild as any;
+            if (
+                existing &&
+                existing.tagName === "PI-FRAME" &&
+                existing.update
+            ) {
+                existing.update(
+                    f.custom.html ?? "",
+                    f.custom.height ?? null,
+                    f.custom.data,
+                );
+                $contextbar.classList.add("show");
+                return;
+            }
+        }
+        $contextbar.innerHTML = "";
         $contextbar.classList.add("custom");
         $contextbar.appendChild(renderNode(f.custom, null));
         $contextbar.classList.add("show");
         return;
     }
+    // Default host-built context bar: rebuild from scratch each time.
     $contextbar.classList.remove("custom");
+    $contextbar.innerHTML = "";
 
     // line 1: pwd  •  session
     const l1 = document.createElement("div");
@@ -906,7 +939,7 @@ function renderSurfaces(s: any) {
     renderDock($dockBelowEditor, docks.belowEditor);
     renderOverlays(s?.overlays);
     renderStatus(s?.status);
-    renderDialogs(s?.dialogs);
+    dialog.render(s?.dialogs);
 }
 
 // Close the top extension overlay (Esc / backdrop). Server-driven: it toggles
@@ -917,170 +950,17 @@ function closeTopOverlay() {
 }
 
 // ---- blocking dialogs (select / confirm / input / editor) ----------------
-// The host's `piweb.select/confirm/input/editor` open a modal here and await
-// the answer; we POST /ui-response to unblock the extension. The open dialog
-// travels in the surfaces snapshot, so a refresh replays it (see host
+// <pi-dialog> owns the modal DOM, its capture-phase keyboard nav, and the
+// backdrop click. It emits pi-dialog-answer when the user answers/cancels; we
+// forward that to /ui-response to unblock the awaiting extension. The open
+// dialog travels in the surfaces snapshot, so a refresh replays it (see host
 // piweb-host.ts requestUi).
-/** @type {any} */
-let activeDialog: any = null;
-let dialogSel = 0; // highlighted option index (select dialogs)
-
-// Send the browser's answer back to the awaiting extension. `value` is the
-// chosen string / boolean / text, or null to cancel (host maps null ->
-// undefined for select/input/editor, false for confirm).
-function answerDialog(value: any) {
-    if (!activeDialog) return;
-    const id = activeDialog.id;
-    activeDialog = null;
-    postThread("/ui-response", { requestId: id, value });
-}
-
-function setDialogSel(i: number, rows: HTMLElement[]) {
-    if (!rows.length) return;
-    dialogSel = (i + rows.length) % rows.length;
-    rows.forEach((el, idx) => el.classList.toggle("sel", idx === dialogSel));
-    rows[dialogSel].scrollIntoView({ block: "nearest" });
-}
-
-// Build the modal DOM for one dialog spec and wire its submit/cancel paths.
-function buildDialog(d: any) {
-    $dialogCard.innerHTML = "";
-    dialogSel = 0;
-    const h = document.createElement("h3");
-    h.textContent = d.title || "";
-    $dialogCard.appendChild(h);
-    const body = document.createElement("div");
-    body.className = "dialog-body";
-    $dialogCard.appendChild(body);
-
-    if (d.dialog === "select") {
-        const rows: HTMLElement[] = [];
-        (d.options || []).forEach((opt: any, i: number) => {
-            const row = document.createElement("div");
-            row.className = "item";
-            row.textContent = opt;
-            row.onclick = () => answerDialog(opt);
-            row.onmouseenter = () => setDialogSel(i, rows);
-            body.appendChild(row);
-            rows.push(row);
-        });
-        activeDialog.rows = rows;
-        setDialogSel(0, rows);
-    } else if (d.dialog === "confirm") {
-        const msg = document.createElement("div");
-        msg.className = "dialog-msg";
-        msg.textContent = d.message || "";
-        body.appendChild(msg);
-        const btns = document.createElement("div");
-        btns.className = "dialog-btns";
-        const cancel = document.createElement("button");
-        cancel.textContent = "Cancel";
-        cancel.onclick = () => answerDialog(false);
-        const ok = document.createElement("button");
-        ok.className = "primary";
-        ok.textContent = "OK";
-        ok.onclick = () => answerDialog(true);
-        btns.append(cancel, ok);
-        body.appendChild(btns);
-        setTimeout(() => ok.focus(), 0);
-    } else if (d.dialog === "input" || d.dialog === "editor") {
-        const multiline = d.dialog === "editor";
-        const field = document.createElement(
-            multiline ? "textarea" : "input",
-        ) as HTMLInputElement | HTMLTextAreaElement;
-        field.className = "dialog-field";
-        if (multiline) {
-            (field as HTMLTextAreaElement).rows = 8;
-            field.value = d.prefill || "";
-        } else {
-            (field as HTMLInputElement).type = "text";
-            field.placeholder = d.placeholder || "";
-        }
-        body.appendChild(field);
-        const btns = document.createElement("div");
-        btns.className = "dialog-btns";
-        const cancel = document.createElement("button");
-        cancel.textContent = "Cancel";
-        cancel.onclick = () => answerDialog(null);
-        const ok = document.createElement("button");
-        ok.className = "primary";
-        ok.textContent = multiline ? "Save" : "OK";
-        ok.onclick = () => answerDialog(field.value);
-        btns.append(cancel, ok);
-        body.appendChild(btns);
-        // Enter submits a single-line input; the editor keeps Enter for newlines
-        // (submit via the button or Ctrl/Cmd+Enter).
-        (field as HTMLElement).addEventListener("keydown", (e: any) => {
-            if (e.key === "Enter" && (!multiline || e.ctrlKey || e.metaKey)) {
-                e.preventDefault();
-                answerDialog(field.value);
-            }
-        });
-        setTimeout(() => field.focus(), 0);
-    }
-}
-
-// Render the open dialog (the most-recently-opened wins if several stack). Skips
-// a rebuild when the same dialog id is already shown, so unrelated surface
-// pushes don't wipe a half-typed input.
-function renderDialogs(dialogs: any[]) {
-    if (!$dialog || !$dialogCard) return;
-    const list = dialogs || [];
-    const d = list.length ? list[list.length - 1] : null;
-    if (!d) {
-        activeDialog = null;
-        $dialog.classList.remove("show");
-        $dialogCard.innerHTML = "";
-        return;
-    }
-    if (activeDialog && activeDialog.id === d.id) return; // already showing
-    activeDialog = { id: d.id, dialog: d.dialog, rows: [] };
-    buildDialog(d);
-    $dialog.classList.add("show");
-    $prompt?.blur();
-}
-
-// Dialog keyboard handling (capture phase, highest precedence): arrows/Enter
-// drive a select; Escape cancels any dialog. Runs before the picker/overlay/
-// interrupt Escape handlers below.
-document.addEventListener(
-    "keydown",
-    (e) => {
-        if (!activeDialog) return;
-        if (e.key === "Escape") {
-            e.preventDefault();
-            e.stopPropagation();
-            answerDialog(activeDialog.dialog === "confirm" ? false : null);
-            return;
-        }
-        if (activeDialog.dialog !== "select") return;
-        const rows = activeDialog.rows || [];
-        switch (e.key) {
-            case "ArrowDown":
-                e.preventDefault();
-                e.stopPropagation();
-                setDialogSel(dialogSel + 1, rows);
-                break;
-            case "ArrowUp":
-                e.preventDefault();
-                e.stopPropagation();
-                setDialogSel(dialogSel - 1, rows);
-                break;
-            case "Enter":
-                e.preventDefault();
-                e.stopPropagation();
-                rows[dialogSel]?.click();
-                break;
-        }
-    },
-    true,
-);
-
-// Cancel a dialog by clicking its backdrop (mirrors Esc).
-$dialog?.addEventListener("click", (e) => {
-    if (e.target === $dialog && activeDialog)
-        answerDialog(activeDialog.dialog === "confirm" ? false : null);
+dialog.addEventListener("pi-dialog-answer", (e) => {
+    const { requestId, value } = (e as CustomEvent).detail;
+    postThread("/ui-response", { requestId, value });
 });
+// Drop composer focus when a dialog opens so its capture-phase keys win.
+dialog.addEventListener("pi-dialog-open", () => $prompt?.blur());
 
 // Route events bubbling out of <pi-frame> sandboxed frames to the host: surface
 // actions go to the active thread; notify() calls become toasts.

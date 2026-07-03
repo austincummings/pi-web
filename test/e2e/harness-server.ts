@@ -22,9 +22,9 @@ const WEB = join(
 );
 const PORT = Number(process.env.HARNESS_PORT ?? 4399);
 
-async function bundle(): Promise<string> {
+async function bundle(entry: string): Promise<string> {
     const result = await Bun.build({
-        entrypoints: [join(WEB, "pi-composer.ts")],
+        entrypoints: [join(WEB, entry)],
         target: "browser",
         format: "esm",
         sourcemap: "inline",
@@ -53,13 +53,56 @@ const PAGE = `<!doctype html>
 </body>
 </html>`;
 
+// <pi-dialog> harness: mounts the real bundled element (plus the app's dialog
+// CSS so real clicks/backdrop hit-testing behave) and records its CustomEvents.
+const DIALOG_PAGE = `<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>pi-dialog harness</title>
+<style>
+  #dialog { position: fixed; inset: 0; background: rgba(0,0,0,.5);
+    display: none; align-items: flex-start; justify-content: center; z-index: 60; }
+  #dialog.show { display: flex; }
+  .dialog-card { margin-top: 16vh; background: #222; border: 1px solid #444;
+    border-radius: 10px; width: min(560px, 90vw); max-height: 68vh; overflow: auto; }
+  .dialog-card h3 { margin: 0; padding: 12px 14px; }
+  .dialog-body { padding: 12px 14px; }
+  .dialog-card .item { padding: 9px 12px; border: 1px solid #444;
+    border-radius: 6px; margin-bottom: 6px; cursor: pointer; }
+  .dialog-card .item.sel { border-color: #6cf; }
+  .dialog-field { display: block; width: 100%; box-sizing: border-box;
+    padding: 8px 10px; margin-bottom: 12px; }
+  .dialog-btns { display: flex; gap: 8px; justify-content: flex-end; }
+</style>
+</head>
+<body>
+  <pi-dialog id="dialog"></pi-dialog>
+  <script type="module">
+    import "/pi-dialog.js";
+    window.__events = [];
+    const record = (name) => (e) =>
+      window.__events.push({ name, detail: e.detail ?? null });
+    const el = document.getElementById("dialog");
+    for (const evt of ["pi-dialog-answer", "pi-dialog-open"])
+      el.addEventListener(evt, record(evt));
+    window.dialog = el;
+    window.__ready = true;
+  </script>
+</body>
+</html>`;
+
+const JS: Record<string, string> = {
+    "/pi-composer.js": "pi-composer.ts",
+    "/pi-dialog.js": "pi-dialog.ts",
+};
+
 Bun.serve({
     port: PORT,
     async fetch(req) {
         const url = new URL(req.url);
-        if (url.pathname === "/pi-composer.js") {
+        const entry = JS[url.pathname];
+        if (entry) {
             try {
-                return new Response(await bundle(), {
+                return new Response(await bundle(entry), {
                     headers: {
                         "Content-Type": "text/javascript; charset=utf-8",
                     },
@@ -76,7 +119,8 @@ Bun.serve({
                 );
             }
         }
-        return new Response(PAGE, {
+        const body = url.pathname === "/dialog" ? DIALOG_PAGE : PAGE;
+        return new Response(body, {
             headers: { "Content-Type": "text/html; charset=utf-8" },
         });
     },
