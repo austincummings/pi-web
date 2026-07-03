@@ -29,6 +29,8 @@ import "./pi-composer.ts";
 import type { PiComposer } from "./pi-composer.ts";
 import "./pi-dialog.ts";
 import type { PiDialog } from "./pi-dialog.ts";
+import "./pi-picker.ts";
+import type { PiPicker } from "./pi-picker.ts";
 import type {
     PiFrame,
     PiFrameActionDetail,
@@ -68,8 +70,13 @@ const $contextbar = document.getElementById("contextbar")!;
 const $customheader = document.getElementById("customheader")!;
 const $status = document.getElementById("status")!;
 const $threadTitle = document.getElementById("threadTitle")!;
-const $overlay = document.getElementById("overlay")!;
-const $picker = document.getElementById("picker")!;
+// <pi-picker> owns the overlay backdrop (#overlay) + .picker card, its
+// show/hide + backdrop click, and the generic Up/Down/Home/End/Enter nav loop.
+// Builders below populate `$picker` (its inner card); host-specific keys (the
+// resume picker's Ctrl+D delete + delete-confirm) are claimed via keyGuard
+// (wired next to closePicker).
+const picker = document.getElementById("overlay") as PiPicker;
+const $picker = picker.card;
 // <pi-dialog> owns the blocking modal dialogs (select/confirm/input/editor);
 // it self-manages its capture-phase keydown + backdrop click and emits
 // pi-dialog-answer / pi-dialog-open (wired below).
@@ -1067,31 +1074,18 @@ function updateTitle() {
     }
 }
 
-// Selectable rows in the resume picker, in visual order, for keyboard nav.
-// `pickerNav` gates the arrow/Enter handling so the generic showOverlay()
-// dialog (which reuses #picker) isn't affected.
-let pickerItems: HTMLElement[] = [];
-let pickerIndex = -1;
-let pickerNav = false;
+// The selectable rows + highlight index + nav gate now live on <pi-picker>
+// (picker.items / picker.index / picker.nav / picker.setSel).
 // threadId of the row awaiting a delete confirmation (Ctrl+D), or null. While
 // set, the picker swallows every key but Enter (confirm) / Esc (cancel), just
 // like the pi TUI's session-selector delete flow.
 let pickerConfirmId: string | null = null;
 
-function setPickerSel(i: number) {
-    if (!pickerItems.length) return;
-    pickerIndex = (i + pickerItems.length) % pickerItems.length;
-    pickerItems.forEach((el, idx) =>
-        el.classList.toggle("sel", idx === pickerIndex),
-    );
-    pickerItems[pickerIndex].scrollIntoView({ block: "nearest" });
-}
-
 function openPicker() {
-    if (!$overlay) return;
+    if (!picker) return;
     $picker.innerHTML = "<h3>Resume thread</h3>";
-    pickerItems = [];
-    pickerNav = true;
+    picker.items = [];
+    picker.nav = true;
     pickerConfirmId = null;
 
     // Hint line under the title, mirroring the TUI selector header. Updated in
@@ -1127,7 +1121,7 @@ function openPicker() {
             newThread(cwd);
         }),
     );
-    pickerItems.push($picker.lastElementChild as HTMLElement);
+    picker.items.push($picker.lastElementChild as HTMLElement);
 
     // Group threads by working directory (sessions are partitioned per-cwd), so
     // it's clear where each thread runs. The active thread's group sorts first.
@@ -1174,27 +1168,24 @@ function openPicker() {
                 !(t.id === activeThreadId || t.running),
             );
             $picker.appendChild(item);
-            pickerItems.push(item);
+            picker.items.push(item);
         }
     }
     // Preselect the active thread (else the first row) so Enter has a target.
-    const activeIdx = pickerItems.findIndex((el) =>
+    const activeIdx = picker.items.findIndex((el) =>
         el.classList.contains("active"),
     );
-    setPickerSel(activeIdx >= 0 ? activeIdx : 0);
+    picker.setSel(activeIdx >= 0 ? activeIdx : 0);
     renderPickerHint();
     // Blur the composer so its Up/Down history-browse handler doesn't compete
     // with the picker's arrow-key navigation while the modal is open.
     $prompt?.blur();
-    $overlay.classList.add("show");
+    picker.show();
 }
 
 function closePicker() {
-    const wasNav = pickerNav || modelNav;
-    $overlay?.classList.remove("show");
-    pickerNav = false;
-    pickerItems = [];
-    pickerIndex = -1;
+    const wasNav = picker.nav || modelNav;
+    picker.hide(); // removes .show + resets picker.nav / items / index
     pickerConfirmId = null;
     modelNav = false;
     modelRows = [];
@@ -1218,7 +1209,7 @@ function renderPickerHint() {
 // Begin a delete confirmation on the highlighted row. No-ops on the "New
 // thread" row and refuses the active/running thread (TUI parity).
 function startDeleteConfirmForSelected() {
-    const el = pickerItems[pickerIndex];
+    const el = picker.items[picker.index];
     const id = el?.dataset?.threadId;
     if (!id) return; // "＋ New thread" or a non-thread row
     if (el.dataset.deletable !== "true") {
@@ -1231,7 +1222,7 @@ function startDeleteConfirmForSelected() {
 }
 
 function cancelDeleteThread() {
-    pickerItems.forEach((el) => el.classList.remove("confirm-delete"));
+    picker.items.forEach((el) => el.classList.remove("confirm-delete"));
     pickerConfirmId = null;
     renderPickerHint();
 }
@@ -1256,16 +1247,39 @@ async function confirmDeleteThread() {
         );
         // broadcastThreads() refreshes threadItems over SSE; rebuild the open
         // picker from the new list so the row disappears immediately.
-        if ($overlay?.classList.contains("show")) openPicker();
+        if (picker.visible) openPicker();
     } else {
         toast(`Failed to delete: ${r?.error ?? "unknown error"}`, "error");
         renderPickerHint();
     }
 }
 
-$overlay?.addEventListener("click", (e) => {
-    if (e.target === $overlay) closePicker();
-});
+// Backdrop click closes the picker (mirrors Esc). The element emits the intent;
+// closePicker() runs the host-side reset (model state, composer refocus).
+picker.addEventListener("pi-picker-backdrop", () => closePicker());
+
+// The resume picker's feature keys, claimed before <pi-picker>'s generic nav
+// loop: Ctrl+D (or Ctrl+Backspace) starts a delete confirmation on the
+// highlighted row; while a confirmation is pending we swallow every key but
+// Enter (confirm) / Esc (cancel), mirroring the pi TUI selector.
+picker.keyGuard = (e) => {
+    if (pickerConfirmId) {
+        e.preventDefault();
+        if (e.key === "Enter") confirmDeleteThread();
+        else if (e.key === "Escape") {
+            // Stop the global Escape handler from also closing the picker.
+            e.stopImmediatePropagation();
+            cancelDeleteThread();
+        }
+        return true;
+    }
+    if (e.ctrlKey && (e.key === "d" || e.key === "Backspace")) {
+        e.preventDefault();
+        startDeleteConfirmForSelected();
+        return true;
+    }
+    return false;
+};
 
 // clicking the overlay backdrop (not a card) closes the top extension overlay
 $overlayLayer?.addEventListener("click", (e) => {
@@ -1674,8 +1688,8 @@ async function getJson(path: string) {
 }
 
 function showOverlay(title: string, contentEl: HTMLElement) {
-    if (!$overlay) return;
-    pickerNav = false;
+    if (!picker) return;
+    picker.nav = false;
     $picker.innerHTML = "";
     const h = document.createElement("h3");
     h.textContent = title;
@@ -1683,7 +1697,7 @@ function showOverlay(title: string, contentEl: HTMLElement) {
     body.style.padding = "12px 14px";
     body.appendChild(contentEl);
     $picker.append(h, body);
-    $overlay.classList.add("show");
+    picker.show();
 }
 
 function runInput(text: string, images: any[] = []) {
@@ -1822,16 +1836,16 @@ function withThread(path: string) {
 }
 
 // Generic single-column selector that reuses the resume-picker chrome and its
-// shared keyboard navigation (Up/Down/Enter/Home/End via the pickerNav
+// shared keyboard navigation (Up/Down/Enter/Home/End via the picker.nav
 // listener). `rows` is ordered; each is { name, meta?, cls?, title?, onClick }.
 function openListPicker(title: string, rows: any[], selectIndex = 0) {
-    if (!$overlay) return;
+    if (!picker) return;
     $picker.innerHTML = "";
     const h = document.createElement("h3");
     h.textContent = title;
     $picker.appendChild(h);
-    pickerItems = [];
-    pickerNav = true;
+    picker.items = [];
+    picker.nav = true;
     if (!rows.length) {
         const empty = document.createElement("div");
         empty.className = "item";
@@ -1854,14 +1868,14 @@ function openListPicker(title: string, rows: any[], selectIndex = 0) {
             row.onClick();
         };
         $picker.appendChild(item);
-        pickerItems.push(item);
+        picker.items.push(item);
     }
-    if (pickerItems.length)
-        setPickerSel(
-            Math.max(0, Math.min(selectIndex, pickerItems.length - 1)),
+    if (picker.items.length)
+        picker.setSel(
+            Math.max(0, Math.min(selectIndex, picker.items.length - 1)),
         );
     $prompt?.blur(); // don't let the composer's history keys fight the picker
-    $overlay.classList.add("show");
+    picker.show();
 }
 
 // ---- /trust: set project-trust for this thread's working directory -------
@@ -2107,7 +2121,7 @@ async function chooseModel(m: any) {
 }
 
 async function openModelPicker(query = "") {
-    if (!$overlay) return;
+    if (!picker) return;
     const data = await getJson(
         "/models" +
             (activeThreadId
@@ -2115,7 +2129,7 @@ async function openModelPicker(query = "") {
                 : ""),
     );
     modelList = data?.items || [];
-    pickerNav = false; // this picker runs its own key handling
+    picker.nav = false; // this picker runs its own key handling
     modelNav = true;
     modelIndex = 0;
 
@@ -2156,7 +2170,7 @@ async function openModelPicker(query = "") {
         }
     });
 
-    $overlay.classList.add("show");
+    picker.show();
     search.focus();
 }
 
@@ -2331,54 +2345,9 @@ document.addEventListener("keydown", (e) => {
     }
 });
 
-// Resume picker keyboard nav: Up/Down move the selection, Enter activates the
-// highlighted row, Home/End jump to the ends. Escape is handled below.
-document.addEventListener("keydown", (e) => {
-    if (!pickerNav || !$overlay?.classList.contains("show")) return;
-    // Ignore the very keystroke that opened the picker (e.g. the Enter that
-    // submitted `/resume`), which calls preventDefault() before bubbling here.
-    if (e.defaultPrevented) return;
-    // Delete confirmation active: swallow every key but Enter/Esc (TUI parity).
-    if (pickerConfirmId) {
-        e.preventDefault();
-        if (e.key === "Enter") confirmDeleteThread();
-        else if (e.key === "Escape") {
-            // Stop the global Escape handler from also closing the picker.
-            e.stopImmediatePropagation();
-            cancelDeleteThread();
-        }
-        return;
-    }
-    // Ctrl+D or Ctrl+Backspace → start a delete confirmation on the selection.
-    // preventDefault stops the browser's bookmark (Ctrl+D) shortcut.
-    if (e.ctrlKey && (e.key === "d" || e.key === "Backspace")) {
-        e.preventDefault();
-        startDeleteConfirmForSelected();
-        return;
-    }
-    switch (e.key) {
-        case "ArrowDown":
-            e.preventDefault();
-            setPickerSel(pickerIndex + 1);
-            break;
-        case "ArrowUp":
-            e.preventDefault();
-            setPickerSel(pickerIndex - 1);
-            break;
-        case "Home":
-            e.preventDefault();
-            setPickerSel(0);
-            break;
-        case "End":
-            e.preventDefault();
-            setPickerSel(pickerItems.length - 1);
-            break;
-        case "Enter":
-            e.preventDefault();
-            pickerItems[pickerIndex]?.click();
-            break;
-    }
-});
+// The resume/list picker's Up/Down/Home/End/Enter navigation now lives in
+// <pi-picker> (gated by picker.nav); its feature keys are claimed by the
+// keyGuard wired above. Escape is handled below.
 
 // Escape precedence: close the command typeahead, else close an open overlay,
 // else interrupt the working agent, else cancel a running shell command, else
@@ -2386,7 +2355,7 @@ document.addEventListener("keydown", (e) => {
 document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     if ($ac.classList.contains("show")) return; // handled by the prompt keydown
-    if ($overlay?.classList.contains("show")) {
+    if (picker.visible) {
         closePicker();
         return;
     }
@@ -2491,7 +2460,7 @@ function onSseMessage(e: MessageEvent) {
             updateTitle();
             // Refresh an open resume picker, but not mid delete-confirmation
             // (openPicker() would reset pickerConfirmId and drop the prompt).
-            if ($overlay?.classList.contains("show") && !pickerConfirmId)
+            if (picker.visible && !pickerConfirmId)
                 openPicker();
             break;
         case "thread_switched":
@@ -2529,7 +2498,7 @@ function onSseMessage(e: MessageEvent) {
                 "This project isn't trusted — its .pi extensions/skills are disabled. Pick a trust option, or run /trust later.",
             );
             setTimeout(() => {
-                if (!$overlay?.classList.contains("show")) openTrustPicker();
+                if (!picker.visible) openTrustPicker();
             }, 400);
             break;
         case "queue":

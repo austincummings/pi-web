@@ -90,9 +90,60 @@ const DIALOG_PAGE = `<!doctype html>
 </body>
 </html>`;
 
+// <pi-picker> harness: mounts the real bundled element with the app's overlay
+// CSS so real clicks/backdrop hit-testing behave, exposes window.openList() to
+// populate + open a nav picker, and records row activations + backdrop events.
+const PICKER_PAGE = `<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>pi-picker harness</title>
+<style>
+  #overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5);
+    display: none; align-items: flex-start; justify-content: center; z-index: 60; }
+  #overlay.show { display: flex; }
+  .picker { margin-top: 12vh; background: #222; border: 1px solid #444;
+    border-radius: 10px; width: min(620px, 92vw); max-height: 74vh; overflow: auto; }
+  .picker h3 { margin: 0; padding: 12px 14px; }
+  .picker .item { display: flex; justify-content: space-between; gap: 12px;
+    padding: 9px 12px; border: 1px solid #444; border-radius: 6px;
+    margin: 6px 12px; cursor: pointer; }
+  .picker .item.sel { border-color: #6cf; box-shadow: inset 2px 0 0 #6cf; }
+</style>
+</head>
+<body>
+  <pi-picker id="overlay"></pi-picker>
+  <script type="module">
+    import "/pi-picker.js";
+    window.__events = [];
+    const el = document.getElementById("overlay");
+    el.addEventListener("pi-picker-backdrop", () =>
+      window.__events.push({ name: "pi-picker-backdrop", detail: null }));
+    // Build a nav picker of the given labels (mirrors app.ts openListPicker).
+    window.openList = (labels) => {
+      el.card.innerHTML = "<h3>Pick</h3>";
+      el.items = [];
+      el.nav = true;
+      labels.forEach((label, i) => {
+        const item = document.createElement("div");
+        item.className = "item";
+        item.textContent = label;
+        item.onclick = () =>
+          window.__events.push({ name: "row-click", detail: { i, label } });
+        el.card.appendChild(item);
+        el.items.push(item);
+      });
+      el.setSel(0);
+      el.show();
+    };
+    window.picker = el;
+    window.__ready = true;
+  </script>
+</body>
+</html>`;
+
 const JS: Record<string, string> = {
     "/pi-composer.js": "pi-composer.ts",
     "/pi-dialog.js": "pi-dialog.ts",
+    "/pi-picker.js": "pi-picker.ts",
 };
 
 Bun.serve({
@@ -119,7 +170,12 @@ Bun.serve({
                 );
             }
         }
-        const body = url.pathname === "/dialog" ? DIALOG_PAGE : PAGE;
+        const body =
+            url.pathname === "/dialog"
+                ? DIALOG_PAGE
+                : url.pathname === "/picker"
+                  ? PICKER_PAGE
+                  : PAGE;
         return new Response(body, {
             headers: { "Content-Type": "text/html; charset=utf-8" },
         });
