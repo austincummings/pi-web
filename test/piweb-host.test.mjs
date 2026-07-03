@@ -367,3 +367,103 @@ test("setWorkingIndicator sets frames/intervalMs; no-arg restores defaults", () 
         intervalMs: undefined,
     });
 });
+
+// ---- editor-text bridge (pi-tui ui.setEditorText/getEditorText/pasteToEditor) --
+
+test("setEditorText broadcasts an editor set frame and updates the shadow", () => {
+    const { host, frames } = makeHost();
+    expect(host.getEditorText()).toBe("");
+    host.setEditorText("hello world");
+    expect(host.getEditorText()).toBe("hello world");
+    const f = frames.filter((x) => x.kind === "editor").at(-1);
+    expect(f).toEqual({ kind: "editor", op: "set", text: "hello world" });
+    // null/undefined normalizes to ""
+    host.setEditorText(undefined);
+    expect(host.getEditorText()).toBe("");
+});
+
+test("pasteToEditor broadcasts a paste frame without touching the shadow", () => {
+    const { host, frames } = makeHost();
+    host.setEditorText("base");
+    host.pasteToEditor("+more");
+    const f = frames.filter((x) => x.kind === "editor").at(-1);
+    expect(f).toEqual({ kind: "editor", op: "paste", text: "+more" });
+    // paste doesn't change the shadow; the client echoes the merged text back
+    expect(host.getEditorText()).toBe("base");
+    host.updateEditorText("base+more");
+    expect(host.getEditorText()).toBe("base+more");
+});
+
+// ---- tool-output expansion (pi-tui ui.getToolsExpanded/setToolsExpanded) -----
+
+test("setToolsExpanded broadcasts a tools_expanded frame and reflects state", () => {
+    const { host, frames } = makeHost();
+    expect(host.getToolsExpanded()).toBe(false);
+    host.setToolsExpanded(true);
+    expect(host.getToolsExpanded()).toBe(true);
+    expect(frames.filter((x) => x.kind === "tools_expanded").at(-1)).toEqual({
+        kind: "tools_expanded",
+        expanded: true,
+    });
+    // clear() resets the default + broadcasts collapse
+    host.clear();
+    expect(host.getToolsExpanded()).toBe(false);
+    expect(frames.filter((x) => x.kind === "tools_expanded").at(-1)).toEqual({
+        kind: "tools_expanded",
+        expanded: false,
+    });
+});
+
+// ---- mode + theme API (pi-tui ctx.mode / ui.getAllThemes/getTheme/setTheme) --
+
+test("host advertises mode === 'web'", () => {
+    const { host } = makeHost();
+    expect(host.mode).toBe("web");
+});
+
+test("theme API delegates to themeApi (list/get/set) and exposes the shim", () => {
+    const frames = [];
+    const themes = [
+        { name: "dark", path: "/t/dark.json" },
+        { name: "light", path: "/t/light.json" },
+    ];
+    let setArg = null;
+    const host = createPiWebHost({
+        broadcast: (f) => frames.push(f),
+        getPi: () => ({}),
+        themeApi: {
+            list: () => themes,
+            set: (name) => {
+                setArg = name;
+                return { success: true };
+            },
+        },
+    });
+    // theme shim exposes theme.fg(...)
+    expect(typeof host.theme.fg).toBe("function");
+    expect(host.getAllThemes()).toEqual(themes);
+    // getTheme returns the shim for a known name, undefined otherwise
+    expect(host.getTheme("dark")).toBe(host.theme);
+    expect(host.getTheme("nope")).toBeUndefined();
+    // setTheme forwards the name and returns the api result
+    expect(host.setTheme("light")).toEqual({ success: true });
+    expect(setArg).toBe("light");
+    // a Theme-ish object is accepted via its .name
+    host.setTheme({ name: "dark" });
+    expect(setArg).toBe("dark");
+    // empty name is rejected without touching the api
+    expect(host.setTheme("")).toEqual({
+        success: false,
+        error: "no theme name",
+    });
+});
+
+test("theme API degrades when no themeApi is wired", () => {
+    const { host } = makeHost();
+    expect(host.getAllThemes()).toEqual([]);
+    expect(host.getTheme("dark")).toBeUndefined();
+    expect(host.setTheme("dark")).toEqual({
+        success: false,
+        error: "theme switching unsupported",
+    });
+});

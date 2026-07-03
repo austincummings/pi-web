@@ -26,7 +26,14 @@
  * thread id it targets.
  */
 import { readFile, readdir, unlink } from "node:fs/promises";
-import { readFileSync, statSync, existsSync, watch } from "node:fs";
+import {
+    readFileSync,
+    writeFileSync,
+    readdirSync,
+    statSync,
+    existsSync,
+    watch,
+} from "node:fs";
 import type { FSWatcher } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
@@ -381,6 +388,26 @@ const nullRegistry = {
     getHiddenThinkingLabel() {
         return "Thinking...";
     },
+    setEditorText() {},
+    getEditorText() {
+        return "";
+    },
+    pasteToEditor() {},
+    updateEditorText() {},
+    getToolsExpanded() {
+        return false;
+    },
+    setToolsExpanded() {},
+    theme: undefined,
+    getAllThemes() {
+        return [];
+    },
+    getTheme() {
+        return undefined;
+    },
+    setTheme() {
+        return { success: false, error: "no active thread" };
+    },
     registerMessageRenderer() {},
     hasMessageRenderer() {
         return false;
@@ -426,6 +453,9 @@ const activeRegistry = (): any =>
     nullRegistry;
 const piweb = {
     present: true,
+    // medium marker (pi-tui `ctx.mode` analog): portable extensions branch on
+    // `piweb.mode === "web"`.
+    mode: "web" as const,
     setWidget: (...a: any[]) => activeRegistry().setWidget(...a),
     removeWidget: (...a: any[]) => activeRegistry().removeWidget(...a),
     dock: (...a: any[]) => activeRegistry().dock(...a),
@@ -456,6 +486,20 @@ const piweb = {
         activeRegistry().setWorkingIndicator(...a),
     setHiddenThinkingLabel: (...a: any[]) =>
         activeRegistry().setHiddenThinkingLabel(...a),
+    // composer text bridge (pi ui.setEditorText/getEditorText/pasteToEditor)
+    setEditorText: (...a: any[]) => activeRegistry().setEditorText(...a),
+    getEditorText: (...a: any[]) => activeRegistry().getEditorText(...a),
+    pasteToEditor: (...a: any[]) => activeRegistry().pasteToEditor(...a),
+    // tool-output expansion (pi ui.getToolsExpanded/setToolsExpanded)
+    getToolsExpanded: (...a: any[]) => activeRegistry().getToolsExpanded(...a),
+    setToolsExpanded: (...a: any[]) => activeRegistry().setToolsExpanded(...a),
+    // theme API (pi ui.theme/getAllThemes/getTheme/setTheme)
+    get theme() {
+        return activeRegistry().theme;
+    },
+    getAllThemes: (...a: any[]) => activeRegistry().getAllThemes(...a),
+    getTheme: (...a: any[]) => activeRegistry().getTheme(...a),
+    setTheme: (...a: any[]) => activeRegistry().setTheme(...a),
     // custom transcript-message renderers (customType -> serializable tree)
     registerMessageRenderer: (...a: any[]) =>
         activeRegistry().registerMessageRenderer(...a),
@@ -1217,6 +1261,12 @@ function makeThread(sm: SessionManager): ThreadRuntime {
                 thread.id,
                 headerFrame(thread.session, thread.cwd, thread.piweb),
             ),
+        // theme API (pi ui.getAllThemes/setTheme): list loadable themes and
+        // switch+persist+rebroadcast the palette (globally — theme is app-wide).
+        themeApi: {
+            list: () => listThemeNames(),
+            set: (name: string) => applyTheme(name),
+        },
     });
     // Live git-branch tracking for FooterData.gitBranch: refresh the footer
     // (and header) whenever the branch flips under this thread's cwd.
@@ -1548,6 +1598,15 @@ async function handleConnect(
         kind: "working_config",
         config: t.piweb.getWorkingConfig?.() ?? {},
     });
+    // reflect the programmatic tool-output expansion default (pi ui.setToolsExpanded)
+    send({
+        kind: "tools_expanded",
+        expanded: t.piweb.getToolsExpanded?.() ?? false,
+    });
+    // restore any extension-set composer text (pi ui.setEditorText): the fresh
+    // browser <textarea> is empty on (re)connect, so replay a non-empty shadow.
+    const draft = t.piweb.getEditorText?.() ?? "";
+    if (draft) send({ kind: "editor", op: "set", text: draft });
     // First-load trust gate: pi-web resolves headless -> untrusted for projects
     // with trust-requiring .pi resources, silently ignoring them. When such a
     // project has no saved decision yet, nudge the browser to open the /trust
@@ -2238,17 +2297,45 @@ defaultThread = await createThread(SessionManager.continueRecent(cwd));
 // Mirror the active pi theme into the web UI: read settings.json ->
 // themes/<name>.json under the agent dir and resolve to web UI CSS variables.
 // Missing tokens fall back to the client's :root defaults.
-function loadPiTheme() {
+// pi's built-in themes (dark/light + others) ship *inside* the package, not in
+// ~/.pi/agent/themes. This is the dir that holds their JSON definitions.
+function builtinThemesDir(): string {
+    return join(getPackageDir(), "dist", "modes", "interactive", "theme");
+}
+
+// Resolve a theme name to its JSON file, preferring the user's agent themes dir
+// and falling back to pi's built-in themes. Returns null if neither has it.
+function resolveThemeFile(name: string): string | null {
+    for (const base of [join(getAgentDir(), "themes"), builtinThemesDir()]) {
+        const p = join(base, `${name}.json`);
+        if (existsSync(p)) return p;
+    }
+    return null;
+}
+
+function loadPiTheme(nameOverride?: string) {
     try {
-        const dir = getAgentDir();
-        const settings = JSON.parse(
-            readFileSync(join(dir, "settings.json"), "utf8"),
-        );
-        const name = settings.theme;
-        if (!name) return {};
-        const theme = JSON.parse(
-            readFileSync(join(dir, "themes", `${name}.json`), "utf8"),
-        );
+        // Resolve the active theme name: explicit override > settings.json >
+        // pi's built-in default. A web server has no TTY for pi's terminal-bg
+        // detection (getDefaultTheme), so we mirror its headless fallback: dark.
+        let name = nameOverride;
+        if (!name) {
+            try {
+                const settings = JSON.parse(
+                    readFileSync(join(getAgentDir(), "settings.json"), "utf8"),
+                );
+                name = settings.theme;
+            } catch {
+                /* no/unreadable settings.json — fall through to the default */
+            }
+        }
+        // pi's "auto"/"auto:light=…,dark=…" settings pick by terminal background;
+        // headless, we mirror its dark fallback.
+        if (!name || name === "auto" || String(name).startsWith("auto:"))
+            name = "dark";
+        const file = resolveThemeFile(name);
+        if (!file) return {};
+        const theme = JSON.parse(readFileSync(file, "utf8"));
         const vars = theme.vars ?? {};
         const colors = theme.colors ?? {};
         const pick = (t: string) => vars[colors[t] ?? t] ?? vars[t] ?? null;
@@ -2353,6 +2440,99 @@ var piThemeCache: Record<string, string> | undefined;
 function piThemeVars(): Record<string, string> {
     if (piThemeCache === undefined) piThemeCache = loadPiTheme();
     return piThemeCache;
+}
+
+// Keys sent in the most recent `theme` frame (seeded lazily from the initial
+// palette). Used to compute which CSS vars to *reset* when the theme changes
+// and drops tokens: disabling a theme yields `{}`, but the client only ever
+// *sets* vars, so without an explicit reset the old colors would stay stuck.
+let lastThemeKeys: string[] | undefined;
+
+// Rebroadcast the active palette to every viewer. Any key present last time but
+// absent now is sent as "" so the client removes the custom property and falls
+// back to its :root default (full reset on theme-disable).
+function broadcastTheme(vars: Record<string, string>) {
+    if (lastThemeKeys === undefined)
+        lastThemeKeys = Object.keys(piThemeVars());
+    const frame: Record<string, string> = { ...vars };
+    for (const k of lastThemeKeys) if (!(k in frame)) frame[k] = "";
+    lastThemeKeys = Object.keys(vars);
+    bus.broadcast({ kind: "theme", vars: frame });
+}
+
+// Re-read the theme from disk (settings.json -> themes/<name>.json), refresh the
+// memoized cache, and push it to every viewer. Invoked by the settings watcher
+// so external theme changes (the pi TUI switching/disabling the theme, or a
+// hand edit) go live instead of waiting for a restart.
+function refreshPiTheme() {
+    piThemeCache = loadPiTheme();
+    broadcastTheme(piThemeCache);
+}
+
+// Live-reload the palette when settings.json or a theme file changes outside
+// pi-web. Without this, the cache is only refreshed by the in-app setTheme, so
+// external edits wouldn't reach the browser until the binary restarts.
+try {
+    const dir = getAgentDir();
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    const bump = () => {
+        // Editors/tools emit several events per save; coalesce them.
+        if (debounce) clearTimeout(debounce);
+        debounce = setTimeout(refreshPiTheme, 80);
+    };
+    watch(join(dir, "settings.json"), { persistent: false }, bump);
+    watch(join(dir, "themes"), { persistent: false }, bump);
+} catch {
+    /* watching is best-effort; the in-app theme switch still works */
+}
+
+/**
+ * Enumerate the themes pi-web can actually load (JSON files in the agent's
+ * `themes/` dir), the web analog of pi-tui `ui.getAllThemes`. Names are the
+ * bare filenames (sans `.json`), matching what `loadPiTheme(name)` expects.
+ */
+function listThemeNames(): { name: string; path: string }[] {
+    // Merge pi's built-in themes with the user's agent themes; a same-named
+    // agent theme overrides the built-in (matches resolveThemeFile's priority).
+    const seen = new Map<string, string>();
+    for (const base of [builtinThemesDir(), join(getAgentDir(), "themes")]) {
+        try {
+            for (const f of readdirSync(base)) {
+                if (!f.endsWith(".json") || f === "theme-schema.json") continue;
+                seen.set(f.slice(0, -".json".length), join(base, f));
+            }
+        } catch {
+            /* dir may not exist (e.g. no agent themes yet) */
+        }
+    }
+    return [...seen]
+        .map(([name, path]) => ({ name, path }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Switch the active theme (pi-tui `ui.setTheme` analog): recompute the web
+ * CSS-var palette for `name`, persist it to the agent's settings.json, and
+ * rebroadcast a `theme` frame to every viewer. Returns `{ success }`.
+ */
+function applyTheme(name: string): { success: boolean; error?: string } {
+    const vars = loadPiTheme(name);
+    if (!vars || Object.keys(vars).length === 0)
+        return { success: false, error: `theme not found: ${name}` };
+    piThemeCache = vars;
+    // Persist the choice so a reload / new session keeps it (mirrors the TUI
+    // writing the theme to settings). Best-effort: a read-only settings file
+    // still switches the live UI for this process.
+    try {
+        const settingsPath = join(getAgentDir(), "settings.json");
+        const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+        settings.theme = name;
+        writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+    } catch {
+        /* live switch still applies even if persistence fails */
+    }
+    broadcastTheme(vars);
+    return { success: true };
 }
 
 // ---- http -----------------------------------------------------------------
@@ -2566,6 +2746,16 @@ const server = createApp({
         const t = threadId ? threadRuntimes.get(threadId) : null;
         if (!t?.piweb || !requestId) return;
         t.piweb.resolveUiRequest(requestId, value);
+    },
+    /**
+     * Store the browser's composer-text echo so `piweb.getEditorText()` returns
+     * the live value (pi-tui parity). Per-thread; the client debounces sends.
+     * @param {string|undefined} threadId
+     * @param {string} text
+     */
+    onEditorText: (threadId, text) => {
+        const t = threadId ? threadRuntimes.get(threadId) : null;
+        t?.piweb?.updateEditorText?.(text);
     },
     /**
      * @param {string} text

@@ -18,12 +18,13 @@ export interface WelcomeInfo {
 
 /**
  * The compact key-hint strip under the logo, mirroring the TUI's
- * `compactInstructions`. Adapted to the browser: Ctrl+O is reserved, so the
- * "more" affordance is Alt+O (matching the tool/thinking expand keys).
+ * `compactInstructions`. Adapted to the browser: Ctrl+C/Ctrl+D are reserved by
+ * the browser (copy / bookmark), so the TUI's Ctrl+C interrupt is folded into
+ * Esc here; likewise Ctrl+O is reserved, so the "more" affordance is Alt+O
+ * (matching the tool/thinking expand keys).
  */
 export const KEY_HINTS: ReadonlyArray<readonly [string, string]> = [
     ["esc", "interrupt"],
-    ["ctrl+c/ctrl+d", "clear/exit"],
     ["/", "commands"],
     ["!", "bash"],
     ["alt+o", "more"],

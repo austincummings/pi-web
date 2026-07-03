@@ -90,6 +90,16 @@ export class PiTool extends HTMLElement {
         this.render();
     }
 
+    /**
+     * Set the expand/collapse state directly (pi ui.setToolsExpanded fan-out).
+     * No-ops (no re-render) when already in the requested state.
+     */
+    setExpanded(on: boolean): void {
+        if (this.info.expanded === !!on) return;
+        this.info.expanded = !!on;
+        this.render();
+    }
+
     private render(): void {
         const info = this.info;
         this.className =

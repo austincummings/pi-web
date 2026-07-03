@@ -108,6 +108,27 @@ test("long results collapse with an 'earlier lines' hint until expanded", () => 
     el.remove();
 });
 
+test("setExpanded drives state idempotently (pi ui.setToolsExpanded fan-out)", () => {
+    const el = mount();
+    const long = Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n");
+    el.apply({ id: "t1", name: "bash", status: "start" }, "/repo");
+    el.apply({ id: "t1", status: "end", result: long }, "/repo");
+
+    const lineCount = () =>
+        el.querySelector(".tool-body")!.textContent!.split("\n").length;
+    expect(lineCount()).toBeLessThan(40); // collapsed by default
+    el.setExpanded(true);
+    expect(el.info.expanded).toBe(true);
+    expect(lineCount()).toBe(40);
+    // idempotent: setting the same state is a no-op
+    el.setExpanded(true);
+    expect(lineCount()).toBe(40);
+    el.setExpanded(false);
+    expect(lineCount()).toBeLessThan(40);
+
+    el.remove();
+});
+
 test("clicking the collapsed 'more' affordance expands the body", () => {
     const el = mount();
     const long = Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n");

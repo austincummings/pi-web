@@ -145,6 +145,13 @@ export type AutocompleteProviderFactory = (
 export interface PiWebSurface {
     /** Host present? `false` under plain terminal pi (calls no-op). */
     present: boolean;
+    /**
+     * The medium being bridged. `"web"` under a pi-web host; `undefined` under
+     * plain terminal pi (the no-op stub). The pi-web analog of pi-tui's
+     * `ctx.mode` — portable extensions branch on `piweb.mode === "web"` (or
+     * `piweb.present`) to light up web-only UI.
+     */
+    mode?: "web";
     // --- persistent surfaces ---
     /** Mount/replace a widget; pass `undefined` content to remove it. */
     setWidget(
@@ -216,6 +223,36 @@ export interface PiWebSurface {
      * `ui.setHiddenThinkingLabel`). Empty/undefined restores the default.
      */
     setHiddenThinkingLabel(label?: string): void;
+    // --- composer text bridge (mirrors pi-tui ui.setEditorText/…) ---
+    /** Replace the composer text (mirrors pi-tui `ui.setEditorText`). */
+    setEditorText(text: string): void;
+    /** The current composer text (mirrors pi-tui `ui.getEditorText`). */
+    getEditorText(): string;
+    /**
+     * Insert text at the composer caret, triggering paste handling (mirrors
+     * pi-tui `ui.pasteToEditor`).
+     */
+    pasteToEditor(text: string): void;
+    // --- tool-output expansion (mirrors pi-tui ui.getToolsExpanded/…) ---
+    /** Current tool-output expansion default (mirrors pi-tui `ui.getToolsExpanded`). */
+    getToolsExpanded(): boolean;
+    /** Set the tool-output expansion default (mirrors pi-tui `ui.setToolsExpanded`). */
+    setToolsExpanded(expanded: boolean): void;
+    // --- theme API (mirrors pi-tui ui.theme/getAllThemes/getTheme/setTheme) ---
+    /** The active theme as a pi-tui `Theme` shim (`theme.fg(...)`). */
+    readonly theme: any;
+    /** All loadable themes with names/paths (mirrors pi-tui `ui.getAllThemes`). */
+    getAllThemes(): { name: string; path?: string }[];
+    /** Load a theme by name without switching (mirrors pi-tui `ui.getTheme`). */
+    getTheme(name: string): any | undefined;
+    /**
+     * Switch + persist the active theme, rebroadcasting the palette to every
+     * viewer (mirrors pi-tui `ui.setTheme`). Returns `{ success }`.
+     */
+    setTheme(theme: string | { name?: string }): {
+        success: boolean;
+        error?: string;
+    };
     // --- custom transcript-message renderers ---
     /**
      * Register a serializable-tree renderer for messages of `customType`.
@@ -290,6 +327,15 @@ const stub = {
     setWorkingIndicator: noop,
     setStatus: noop,
     setHiddenThinkingLabel: noop,
+    setEditorText: noop,
+    getEditorText: () => "",
+    pasteToEditor: noop,
+    getToolsExpanded: () => false,
+    setToolsExpanded: noop,
+    theme: undefined,
+    getAllThemes: () => [],
+    getTheme: () => undefined,
+    setTheme: () => ({ success: false }),
     registerMessageRenderer: noop,
     hasMessageRenderer: () => false,
     renderMessage: () => null,

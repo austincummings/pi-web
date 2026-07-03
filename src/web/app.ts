@@ -567,10 +567,23 @@ function applyToolFrame(m: any) {
         el = document.createElement("pi-tool") as PiTool;
         el.callId = m.id;
         el.setAttribute("call-id", m.id);
+        // Honor the extension-set expansion default (pi ui.setToolsExpanded)
+        // for freshly created cards.
+        if (toolsExpandedDefault) el.info.expanded = true;
         $transcript.appendChild(el);
     }
     el.apply(m, cwd);
     followBottom();
+}
+
+// Programmatic tool-output expansion default (pi ui.getToolsExpanded /
+// setToolsExpanded), driven by the host's `tools_expanded` SSE frame. Applied
+// to every existing card and honored for new ones.
+let toolsExpandedDefault = false;
+function setAllToolsExpanded(expanded: boolean) {
+    toolsExpandedDefault = !!expanded;
+    for (const el of $transcript.querySelectorAll("pi-tool"))
+        (el as PiTool).setExpanded(toolsExpandedDefault);
 }
 
 // A streaming thinking/reasoning trace, owned by the <pi-thinking> custom
@@ -2106,11 +2119,24 @@ function autoGrow() {
     composer.reflow();
 }
 
+// Echo the composer text up to the host (debounced) so an extension's
+// piweb.getEditorText() can read the live value (pi-tui parity). Coalesced to
+// avoid a POST per keystroke.
+let editorEchoTimer: ReturnType<typeof setTimeout> | null = null;
+function pushEditorText() {
+    if (editorEchoTimer) clearTimeout(editorEchoTimer);
+    editorEchoTimer = setTimeout(() => {
+        editorEchoTimer = null;
+        postThread("/editor-text", { text: composer.value });
+    }, 150);
+}
+
 // Text changed: refresh autocomplete + the `!` bash-mode border (the element
-// owns autosize / highlight / history-reset).
+// owns autosize / highlight / history-reset), and echo the text to the host.
 composer.addEventListener("pi-input", () => {
     updateAc();
     applyThinkingBorder();
+    pushEditorText();
 });
 
 // The element emits submit / dequeue instead of app.ts owning the form + keys.
@@ -2124,6 +2150,8 @@ composer.addEventListener("pi-submit", (e) => {
             mimeType: img.mimeType,
         })),
     );
+    // the composer self-clears after submit; sync the host's editor shadow
+    pushEditorText();
 });
 composer.addEventListener("pi-dequeue", () => restoreQueue({ abort: false }));
 
@@ -2356,8 +2384,7 @@ function onSseMessage(e: MessageEvent) {
             updateTitle();
             // Refresh an open resume picker, but not mid delete-confirmation
             // (openPicker() would reset pickerConfirmId and drop the prompt).
-            if (picker.visible && !pickerConfirmId)
-                openPicker();
+            if (picker.visible && !pickerConfirmId) openPicker();
             break;
         case "thread_switched":
             // the host tells us which thread this connection resolved to;
@@ -2422,6 +2449,24 @@ function onSseMessage(e: MessageEvent) {
         case "thinking_label":
             // pi-tui ui.setHiddenThinkingLabel: relabel the collapsed trace.
             setThinkingLabel(m.label);
+            break;
+        case "editor":
+            // pi-tui ui.setEditorText / pasteToEditor: the host writes the
+            // composer. `set` replaces; `paste` inserts at the caret. Echo the
+            // resulting text back so getEditorText() stays in sync.
+            if (m.op === "paste") {
+                const c = composer.getCaret();
+                composer.spliceRange(c, c, String(m.text ?? ""));
+            } else {
+                composer.value = String(m.text ?? "");
+                composer.focusInput();
+            }
+            pushEditorText();
+            break;
+        case "tools_expanded":
+            // pi-tui ui.setToolsExpanded: expand/collapse all tool cards + set
+            // the default for new ones.
+            setAllToolsExpanded(!!m.expanded);
             break;
         case "user":
             bubble("user", m.text, m.images);

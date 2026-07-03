@@ -113,6 +113,7 @@ export function createPiWebHost({
     getPi,
     requestFooter,
     requestHeader,
+    themeApi,
 }: {
     broadcast: (frame: any) => void;
     getPi: () => any;
@@ -124,6 +125,17 @@ export function createPiWebHost({
     requestFooter?: () => void;
     /** Same as `requestFooter`, for the custom header (setHeader). */
     requestHeader?: () => void;
+    /**
+     * Bridge to the host's theme system (the web analog of pi-tui's theme API:
+     * `getAllThemes`/`setTheme`). `list()` enumerates the loadable themes;
+     * `set(name)` switches + persists the active theme and rebroadcasts the
+     * `theme` CSS-var frame to every viewer. The server owns settings.json +
+     * the themes dir, so it supplies these.
+     */
+    themeApi?: {
+        list?: () => { name: string; path?: string }[];
+        set?: (theme: string) => { success: boolean; error?: string };
+    };
 }) {
     const surfaces = new Map<string, Surface>();
     /** keyed status segments */
@@ -185,6 +197,17 @@ export function createPiWebHost({
     } = {};
     const broadcastWorking = () =>
         broadcast({ kind: "working_config", config: { ...workingConfig } });
+
+    // Host-side shadow of the composer text (pi-tui ui.getEditorText). The
+    // browser owns the real <textarea>; it echoes changes up via /editor-text
+    // so a synchronous getEditorText() can return the last-known value.
+    // setEditorText/pasteToEditor push the other way (broadcast an `editor`
+    // frame the client applies).
+    let editorText = "";
+    // Programmatic tool-output expansion default (pi-tui ui.getToolsExpanded /
+    // setToolsExpanded). Broadcast as a `tools_expanded` frame + replayed on
+    // connect; the client applies it to existing + future tool cards.
+    let toolsExpanded = false;
 
     const renderCard = (s: Surface): SurfaceCard => {
         try {
@@ -330,6 +353,14 @@ export function createPiWebHost({
 
     const host = {
         present: true,
+        /**
+         * The medium this extension surface is bridging to. The pi-web analog of
+         * pi-tui's `ctx.mode` (`"tui"|"rpc"|"json"|"print"`): portable
+         * extensions branch on `piweb.mode === "web"` (or `piweb.present`) to
+         * light up web-only UI. The no-op stub under plain terminal pi leaves
+         * this `undefined`.
+         */
+        mode: "web" as const,
 
         /**
          * Mount/replace a sticky widget (pi-parity name for the legacy `dock`).
@@ -791,6 +822,127 @@ export function createPiWebHost({
         },
 
         /**
+         * Replace the composer text (mirrors pi-tui ui.setEditorText). Broadcasts
+         * an `editor` frame the browser applies to its <textarea>; the client
+         * echoes the result back so `getEditorText()` stays in sync.
+         * @param {string} text
+         */
+        setEditorText(text: string) {
+            editorText = text == null ? "" : String(text);
+            broadcast({ kind: "editor", op: "set", text: editorText });
+        },
+        /**
+         * Insert text at the composer caret, triggering the client's paste
+         * handling (mirrors pi-tui ui.pasteToEditor). The client echoes the new
+         * full text back to update the shadow.
+         * @param {string} text
+         */
+        pasteToEditor(text: string) {
+            broadcast({
+                kind: "editor",
+                op: "paste",
+                text: text == null ? "" : String(text),
+            });
+        },
+        /**
+         * The current composer text (mirrors pi-tui ui.getEditorText). Returns
+         * the host's shadow of the browser <textarea>, kept current by the
+         * client's `/editor-text` echoes; "" before the first echo / under the
+         * no-op stub.
+         * @returns {string}
+         */
+        getEditorText() {
+            return editorText;
+        },
+        /**
+         * Update the host's editor-text shadow from the browser (called by the
+         * server when a `/editor-text` echo arrives). Not part of the public
+         * pi-tui-parity surface — plumbing for `getEditorText()`.
+         * @param {string} text
+         */
+        updateEditorText(text: string) {
+            editorText = text == null ? "" : String(text);
+        },
+
+        /**
+         * Current tool-output expansion default (mirrors pi-tui
+         * ui.getToolsExpanded).
+         * @returns {boolean}
+         */
+        getToolsExpanded() {
+            return toolsExpanded;
+        },
+        /**
+         * Set the tool-output expansion default (mirrors pi-tui
+         * ui.setToolsExpanded). Broadcasts a `tools_expanded` frame; the client
+         * expands/collapses existing cards and honors it for new ones.
+         * @param {boolean} expanded
+         */
+        setToolsExpanded(expanded: boolean) {
+            toolsExpanded = !!expanded;
+            broadcast({ kind: "tools_expanded", expanded: toolsExpanded });
+        },
+
+        /**
+         * The active theme, as a pi-tui `Theme` shim (`theme.fg(...)` etc.).
+         * Mirrors pi-tui's readonly `ctx.ui.theme`; the web-palette shim emits
+         * ANSI in the web CSS-var colors (see tui-theme.ts).
+         */
+        get theme() {
+            return webPaletteTheme;
+        },
+        /**
+         * All loadable themes with their names/paths (mirrors pi-tui
+         * ui.getAllThemes). Sourced from the host's themes dir.
+         * @returns {{name:string, path?:string}[]}
+         */
+        getAllThemes() {
+            try {
+                return themeApi?.list?.() ?? [];
+            } catch {
+                return [];
+            }
+        },
+        /**
+         * Load a theme by name without switching to it (mirrors pi-tui
+         * ui.getTheme). Returns the web-palette `Theme` shim when the name is
+         * loadable, else undefined. (The shim's palette is fixed to the web
+         * vars; per-theme color extraction isn't recoverable without pi
+         * internals — the honest ceiling, like the render-model spec's leaves.)
+         * @param {string} name
+         */
+        getTheme(name: string) {
+            return host.getAllThemes().some((t) => t.name === name)
+                ? webPaletteTheme
+                : undefined;
+        },
+        /**
+         * Switch the active theme by name (mirrors pi-tui ui.setTheme). Persists
+         * it and rebroadcasts the web CSS-var palette to every viewer. Accepts a
+         * name or a Theme-ish object with a `.name`. Returns `{ success }`.
+         * @param {string|{name?:string}} theme
+         * @returns {{success:boolean, error?:string}}
+         */
+        setTheme(theme: string | { name?: string }) {
+            const name =
+                typeof theme === "string" ? theme : (theme?.name ?? "");
+            if (!name) return { success: false, error: "no theme name" };
+            try {
+                return (
+                    themeApi?.set?.(name) ?? {
+                        success: false,
+                        error: "theme switching unsupported",
+                    }
+                );
+            } catch (err) {
+                return {
+                    success: false,
+                    error: String((err as any)?.message ?? err),
+                };
+            }
+        },
+
+        /**
          * Keyed footer status segment (mirrors pi-tui ui.setStatus). Pass
          * undefined/"" to clear.
          * @param {string} key
@@ -875,6 +1027,12 @@ export function createPiWebHost({
             workingConfig.frames = undefined;
             workingConfig.intervalMs = undefined;
             broadcastWorking();
+            // reset the programmatic tool-expansion default (extensions re-set
+            // it on reload); the editor-text shadow is user state, left as-is.
+            if (toolsExpanded) {
+                toolsExpanded = false;
+                broadcast({ kind: "tools_expanded", expanded: false });
+            }
             // cancel any open dialogs so awaiting extensions unblock
             for (const e of [...pendingUi.values()]) e.settle(undefined);
             push();

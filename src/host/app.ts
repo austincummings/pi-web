@@ -65,6 +65,12 @@ export interface AppOptions {
         requestId: string,
         value: unknown,
     ) => void;
+    /**
+     * The browser echoes its composer text so the host can answer
+     * `piweb.getEditorText()` synchronously (pi-tui parity). Debounced client
+     * side; the host just stores the last-known value per thread.
+     */
+    onEditorText?: (threadId: string | undefined, text: string) => void;
     onThinkingVisibility?: (hidden: boolean, threadId?: string) => void;
     onThinkingLevel?: (
         op: "cycle" | "set",
@@ -237,6 +243,7 @@ export function createApp({
     onInterrupt,
     onSurface,
     onUiResponse,
+    onEditorText,
     onThinkingVisibility,
     onThinkingLevel,
     listFiles,
@@ -452,6 +459,11 @@ export function createApp({
     // answer to a blocking dialog (select/confirm/input/editor)
     router.post("/ui-response", ({ res, body }) => {
         onUiResponse?.(body.threadId || undefined, body.requestId, body.value);
+        res.writeHead(202).end();
+    });
+    // composer-text echo, so piweb.getEditorText() can read the live value
+    router.post("/editor-text", ({ res, body }) => {
+        onEditorText?.(body.threadId || undefined, String(body.text ?? ""));
         res.writeHead(202).end();
     });
     router.post("/session/name", async ({ res, body }) => {
