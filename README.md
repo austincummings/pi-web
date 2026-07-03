@@ -34,7 +34,11 @@ browser web UI  ──SSE/POST──►  host (Bun)
 | `src/host/build-web.ts`  | bundles the TS front-end (`src/web/*.ts`) via Bun → `/app.js`       |
 | `src/sdk/piweb.ts`       | `@pi-web/sdk` shim extensions import (resolves to host or no-op)    |
 | `src/web/`               | Browser web UI: transcript + component-tree renderer                |
-| `.pi/extensions/`        | Project extensions (e.g. `context-bar/` — the glass-cockpit footer) |
+
+> **Extensions** live in `~/.dotfiles/config/pi/.pi/agent/extensions/` (vendored
+> from this repo, stowed into `~/.pi/agent/extensions/`), so pi/pi-web auto-load
+> them **globally**. They import the vendored `_shared/piweb.ts` shim rather than
+> this repo's `src/sdk/piweb.ts`.
 
 ## Run
 
@@ -48,9 +52,9 @@ Open the web UI:
 
 - **Chat** with pi in the center (streaming transcript, tool calls).
 - **Docks** (left/right rails, bottom tray) + the below-prompt **context bar**
-  are registered by extensions in `.pi/extensions/` — e.g. `context-bar`, which
-  mirrors the pi-tui glass-cockpit footer (dir, branch, model, context-window
-  usage bar, session cost).
+  are registered by the global extensions in `~/.pi/agent/extensions/` — e.g.
+  `status-footer`, which mirrors the pi-tui glass-cockpit footer (dir, branch,
+  model, context-window usage bar, session cost).
 
 > Model selection follows this precedence: (1) `PI_PROVIDER` / `PI_MODEL` env
 > vars, (2) pi's own `settings.json` default (`defaultProvider`/`defaultModel`,

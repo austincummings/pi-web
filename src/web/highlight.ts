@@ -6,7 +6,7 @@
  * same in the browser so the web transcript matches: hljs emits `hljs-*`
  * classes, which `index.html` maps to the theme's `--syn-*` palette — the same
  * class→palette convention the project's tree-sitter extensions already use
- * (`.pi/extensions/_shared/ts-highlight.ts`), so a transcript code block and an
+ * (`~/.pi/agent/extensions/_shared/ts-highlight.ts`), so a transcript code block and an
  * extension-rendered one look identical.
  *
  * We use `highlight.js/lib/core` + an explicit language set (pi's

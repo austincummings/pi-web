@@ -14,6 +14,6 @@
         "strict": true,
         "forceConsistentCasingInFileNames": true
     },
-    "include": ["src", "test", ".pi/extensions"],
+    "include": ["src", "test"],
     "exclude": ["node_modules", "dist"]
 }
