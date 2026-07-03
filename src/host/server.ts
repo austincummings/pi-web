@@ -847,7 +847,7 @@ function footerFrame(
     const factory = registry?.getFooterFactory?.();
     if (factory) {
         try {
-            const custom = factory({ ...base }, piTheme);
+            const custom = factory({ ...base }, piThemeVars());
             if (custom) return { kind: "footer" as const, ...base, custom };
         } catch (err) {
             console.error("setFooter factory threw:", err);
@@ -872,7 +872,7 @@ function headerFrame(
     if (!factory) return { kind: "header" as const, custom: null };
     try {
         const base = buildFooterData(s, threadCwd || cwd, thread, registry);
-        const custom = factory({ ...base }, piTheme);
+        const custom = factory({ ...base }, piThemeVars());
         return { kind: "header" as const, custom: custom || null };
     } catch (err) {
         console.error("setHeader factory threw:", err);
@@ -2338,7 +2338,22 @@ function loadPiTheme() {
         return {};
     }
 }
-const piTheme = loadPiTheme();
+// Active pi theme palette (settings.json -> themes/<name>.json), memoized on
+// first use. Accessed via `piThemeVars()` rather than a module-level `const`
+// because the default thread — and thus extension loading — runs during module
+// init (partly behind a top-level await). An extension calling `piweb.setFooter`
+// during load triggers `requestFooter -> footerFrame`, which reads the theme; a
+// `const` declared here would still be in its temporal dead zone at that point
+// and throw, aborting the extension's registration and breaking the footer.
+// `var` is hoisted + initialized to `undefined` (no TDZ) and `loadPiTheme` is a
+// hoisted function declaration depending only on imports, so `piThemeVars()` is
+// safe to call at any point during module evaluation.
+// eslint-disable-next-line no-var
+var piThemeCache: Record<string, string> | undefined;
+function piThemeVars(): Record<string, string> {
+    if (piThemeCache === undefined) piThemeCache = loadPiTheme();
+    return piThemeCache;
+}
 
 // ---- http -----------------------------------------------------------------
 // Web assets: from disk under `bun run` / `bun dev`; from the copy embedded at
@@ -2483,7 +2498,7 @@ const trustApi = {
 const server = createApp({
     web: WEB,
     indexHtmlPath,
-    theme: piTheme,
+    theme: piThemeVars(),
     bus,
     piweb,
     // TS front-end bundle (cached in prod, rebuilt per-request when PI_WEB_DEV=1)

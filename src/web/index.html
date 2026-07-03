@@ -1179,7 +1179,8 @@
                 white-space: nowrap;
             }
             /* /resume thread picker overlay */
-            #overlay {
+            #overlay,
+            pi-model-picker {
                 position: fixed;
                 inset: 0;
                 background: rgba(0, 0, 0, 0.5);
@@ -1187,7 +1188,8 @@
                 align-items: flex-start;
                 justify-content: center;
             }
-            #overlay.show {
+            #overlay.show,
+            pi-model-picker.show {
                 display: flex;
             }
             .picker {
@@ -1401,6 +1403,7 @@
         <div id="overlay-layer"></div>
         <div id="toast-layer"></div>
         <pi-picker id="overlay"></pi-picker>
+        <pi-model-picker id="model-picker"></pi-model-picker>
         <pi-dialog id="dialog"></pi-dialog>
         <script type="module" src="/app.js"></script>
     </body>

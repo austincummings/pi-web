@@ -115,6 +115,41 @@ test("relays a frame `notify` postMessage as a bubbling piframe-notify event", (
     expect(detail?.level).toBe("warn");
 });
 
+test("srcdoc bootstraps the host->frame data channel (onData / __pihost)", () => {
+    const el = mount();
+    const srcdoc = el.querySelector("iframe")!.getAttribute("srcdoc") ?? "";
+    expect(srcdoc).toContain("onData");
+    expect(srcdoc).toContain("__pihost");
+});
+
+test("update() with unchanged html reuses the iframe (no reload) and swaps data", () => {
+    const el = mount({ html: "<div id='x'></div>", height: 40 });
+    const iframe = el.querySelector("iframe")!;
+    const before = iframe.getAttribute("srcdoc");
+    el.update("<div id='x'></div>", 40, { a: 1 });
+    // same document (not rebuilt) and same iframe element
+    expect(iframe.getAttribute("srcdoc")).toBe(before);
+    expect(el.querySelector("iframe")).toBe(iframe);
+    expect(el.frameData).toEqual({ a: 1 });
+});
+
+test("update() with changed html rebuilds the srcdoc document", () => {
+    const el = mount({ html: "<div>a</div>" });
+    const iframe = el.querySelector("iframe")!;
+    const before = iframe.getAttribute("srcdoc");
+    el.update("<div>b</div>", null, {});
+    const after = iframe.getAttribute("srcdoc") ?? "";
+    expect(after).not.toBe(before);
+    expect(after).toContain("<div>b</div>");
+});
+
+test("update() adjusts a fixed height in place", () => {
+    const el = mount({ height: 40 });
+    const iframe = el.querySelector("iframe")!;
+    el.update(el.frameHtml, 60, {});
+    expect(iframe.style.height).toBe("60px");
+});
+
 test("ignores messages that are not from this frame's window", () => {
     const el = mount();
     let fired = false;

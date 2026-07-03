@@ -114,8 +114,14 @@ function wrapFrameDoc(html: string): string {
         `code,pre{background:#0c1117;border:1px solid var(--line);border-radius:4px}` +
         `</style></head><body>${html}<script>(function(){` +
         `function send(m){m.__piweb=true;parent.postMessage(m,'*');}` +
-        `window.piweb={action:function(a,p){send({type:'action',action:a,payload:p||{}});},` +
+        `window.piweb={data:undefined,onData:null,` +
+        `action:function(a,p){send({type:'action',action:a,payload:p||{}});},` +
         `notify:function(msg,l){send({type:'notify',message:msg,level:l||'info'});}};` +
+        // host -> frame data channel (postMessage): persists across footer/widget
+        // refreshes so the frame updates in place instead of reloading.
+        `window.addEventListener('message',function(e){var m=e.data;` +
+        `if(!m||m.__pihost!==true)return;if(m.type==='data'){window.piweb.data=m.data;` +
+        `if(typeof window.piweb.onData==='function'){try{window.piweb.onData(m.data);}catch(_){}}}});` +
         `document.addEventListener('click',function(e){var el=e.target.closest&&e.target.closest('[data-action]');` +
         `if(el){send({type:'action',action:el.getAttribute('data-action'),payload:{}});}});` +
         `function report(){send({type:'height',height:document.documentElement.scrollHeight});}` +
@@ -131,8 +137,11 @@ export class PiFrame extends HTMLElement {
     frameHtml = "";
     /** Fixed pixel height, or null to auto-size to content. */
     frameHeight: number | null = null;
+    /** Optional data payload pushed into the frame (postMessage) after load. */
+    frameData: unknown = undefined;
 
     private iframe: HTMLIFrameElement | null = null;
+    private loaded = false;
     private readonly onMessage = (e: MessageEvent) => this.handleMessage(e);
 
     private get autoHeight(): boolean {
@@ -159,9 +168,43 @@ export class PiFrame extends HTMLElement {
         iframe.style.border = "0";
         iframe.style.display = "block";
         iframe.style.height = (this.autoHeight ? 80 : this.frameHeight) + "px";
+        iframe.addEventListener("load", () => {
+            this.loaded = true;
+            this.postData();
+        });
         iframe.srcdoc = wrapFrameDoc(this.frameHtml);
         this.iframe = iframe;
         this.appendChild(iframe);
+    }
+
+    /** Push the current data payload into the (loaded) frame. */
+    private postData(): void {
+        if (!this.loaded || this.frameData === undefined) return;
+        this.iframe?.contentWindow?.postMessage(
+            { __pihost: true, type: "data", data: this.frameData },
+            "*",
+        );
+    }
+
+    /**
+     * Update an already-mounted frame in place. If `html` is unchanged, the
+     * iframe is *not* reloaded — only the new `data` is posted (no flicker);
+     * otherwise the document is rebuilt. Used by the persistent footer path.
+     */
+    update(html: string, height: number | null, data?: unknown): void {
+        this.frameData = data;
+        if (height != null && height !== this.frameHeight) {
+            this.frameHeight = height;
+            if (this.iframe) this.iframe.style.height = `${height}px`;
+        }
+        if (html !== this.frameHtml) {
+            this.frameHtml = html;
+            this.loaded = false;
+            if (this.iframe) this.iframe.srcdoc = wrapFrameDoc(html);
+            // the load handler posts `data` once the new document is ready
+        } else {
+            this.postData(); // same shell -> just refresh the data
+        }
     }
 
     private handleMessage(e: MessageEvent): void {

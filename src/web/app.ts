@@ -31,6 +31,8 @@ import "./pi-dialog.ts";
 import type { PiDialog } from "./pi-dialog.ts";
 import "./pi-picker.ts";
 import type { PiPicker } from "./pi-picker.ts";
+import "./pi-model-picker.ts";
+import type { PiModelPicker } from "./pi-model-picker.ts";
 import type {
     PiFrame,
     PiFrameActionDetail,
@@ -1184,11 +1186,9 @@ function openPicker() {
 }
 
 function closePicker() {
-    const wasNav = picker.nav || modelNav;
+    const wasNav = picker.nav;
     picker.hide(); // removes .show + resets picker.nav / items / index
     pickerConfirmId = null;
-    modelNav = false;
-    modelRows = [];
     if (wasNav) $prompt?.focus(); // return focus to the composer
 }
 
@@ -2045,133 +2045,29 @@ async function showChangelog() {
 }
 
 // ---- /model picker -------------------------------------------------------
-// A searchable model picker mirroring the pi TUI's /model selector: a search
-// box plus a keyboard-navigable list (the active model is marked, subscription
-// models tagged). Selecting one POSTs /model; the host switches the thread's
-// model and re-broadcasts the footer + thinking-level frames.
-let modelList: any[] = []; // all models from /models
-let modelRows: HTMLElement[] = []; // rendered rows (filtered)
-let modelFiltered: any[] = []; // data behind modelRows
-let modelIndex = 0;
-let modelNav = false; // gates the model picker's key handling
+// The searchable /model selector lives in <pi-model-picker>; app.ts only
+// fetches the thread's model list and reacts to the element's choose/cancel.
+const modelPicker = document.getElementById("model-picker") as PiModelPicker;
 
-function modelMeta(m: any) {
-    const parts: string[] = [];
-    if (m.contextWindow) parts.push(`${fmtTokens(m.contextWindow)} ctx`);
-    if (m.reasoning) parts.push("thinking");
-    if (m.sub) parts.push("subscription");
-    return parts.join(" · ");
-}
-
-// Fuzzy-search text mirroring the TUI's getModelSelectorSearchText (provider
-// first so provider-prefixed queries rank ahead of proxy-provider ids).
-function modelSearchText(m: any) {
-    const name = m.name ? ` ${m.name}` : "";
-    return `${m.provider} ${m.provider}/${m.id} ${m.provider} ${m.id}${name}`;
-}
-
-function setModelSel(i: number) {
-    if (!modelRows.length) return;
-    modelIndex = (i + modelRows.length) % modelRows.length;
-    modelRows.forEach((el, idx) =>
-        el.classList.toggle("sel", idx === modelIndex),
-    );
-    modelRows[modelIndex].scrollIntoView({ block: "nearest" });
-}
-
-function renderModelList(container: HTMLElement, query: string) {
-    const ranked = query
-        ? fuzzyFilter(modelList, query, (m) => modelSearchText(m))
-        : modelList;
-    modelFiltered = ranked;
-    modelRows = [];
-    container.innerHTML = "";
-    if (!ranked.length) {
-        const empty = document.createElement("div");
-        empty.className = "item";
-        empty.innerHTML = '<span class="name hint">no matching models</span>';
-        container.appendChild(empty);
-        return;
-    }
-    ranked.forEach((m, i) => {
-        const item = document.createElement("div");
-        item.className = "item" + (m.current ? " active" : "");
-        const n = document.createElement("span");
-        n.className = "name";
-        n.textContent = `${m.provider}/${m.id}`;
-        const meta = document.createElement("span");
-        meta.className = "meta";
-        meta.textContent = modelMeta(m);
-        item.append(n, meta);
-        item.onclick = () => chooseModel(m);
-        container.appendChild(item);
-        modelRows.push(item);
-    });
-    // preselect the active model, else the first row
-    const activeIdx = ranked.findIndex((m) => m.current);
-    setModelSel(activeIdx >= 0 ? activeIdx : 0);
-}
-
-async function chooseModel(m: any) {
-    closePicker();
-    const r = await (
-        await postThread("/model", { provider: m.provider, id: m.id })
-    ).json();
+// Apply the user's pick: switch the thread's model (the host re-broadcasts the
+// footer + thinking-level frames), returning focus to the composer.
+modelPicker.addEventListener("pi-model-choose", async (e) => {
+    const { provider, id } = (e as CustomEvent).detail;
+    $prompt?.focus();
+    const r = await (await postThread("/model", { provider, id })).json();
     if (r?.error) notice("model switch failed: " + r.error);
-}
+});
+modelPicker.addEventListener("pi-model-cancel", () => $prompt?.focus());
 
+// `/model [query]` — fetch the thread's available models and open the picker.
 async function openModelPicker(query = "") {
-    if (!picker) return;
     const data = await getJson(
         "/models" +
             (activeThreadId
                 ? "?thread=" + encodeURIComponent(activeThreadId)
                 : ""),
     );
-    modelList = data?.items || [];
-    picker.nav = false; // this picker runs its own key handling
-    modelNav = true;
-    modelIndex = 0;
-
-    $picker.innerHTML = "";
-    const h = document.createElement("h3");
-    h.textContent = "Select model";
-    const search = document.createElement("input");
-    search.type = "text";
-    search.className = "model-search";
-    search.placeholder = "search models…";
-    search.value = query;
-    const list = document.createElement("div");
-    list.className = "model-list";
-    $picker.append(h, search, list);
-
-    renderModelList(list, query);
-    search.addEventListener("input", () => renderModelList(list, search.value));
-    search.addEventListener("keydown", (e) => {
-        switch (e.key) {
-            case "ArrowDown":
-                e.preventDefault();
-                setModelSel(modelIndex + 1);
-                break;
-            case "ArrowUp":
-                e.preventDefault();
-                setModelSel(modelIndex - 1);
-                break;
-            case "Enter": {
-                e.preventDefault();
-                const m = modelFiltered[modelIndex];
-                if (m) chooseModel(m);
-                break;
-            }
-            case "Escape":
-                e.preventDefault();
-                closePicker();
-                break;
-        }
-    });
-
-    picker.show();
-    search.focus();
+    modelPicker.open(data?.items || [], query);
 }
 
 function showHotkeys() {

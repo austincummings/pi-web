@@ -51,3 +51,14 @@ as a decision to justify, not the starting point.
   server, SSE + POST bus, `piweb` registry). `src/web/` is the browser front-end.
   Thread ids travel in the POST body (`body.threadId`) or `?thread=` query — no path
   params.
+- **Extensions vs. host — do not bake features into the host.** User-facing
+  features (slash commands, widgets, overlays, footers/headers, message
+  renderers, autocomplete) are **extensions**, not host code. Author them as
+  file-based pi extensions under `.pi/extensions/<name>/`, importing the
+  `@pi-web/sdk` shim (`src/sdk/piweb.ts`) plus `pi.registerCommand`/`pi.on` so
+  they stay portable (a no-op under plain terminal pi). **Never** wire a feature
+  into `src/host/**` — in particular do not add it to the `extensionFactories`
+  array in `src/host/server.ts`; that array is reserved for host plumbing (e.g.
+  capturing the thread's live `ExtensionAPI`), not shipped features. If a task
+  says "add an extension" and no `.pi/extensions/` home is obvious, **ask where
+  it should live rather than defaulting to the host.**
