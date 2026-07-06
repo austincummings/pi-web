@@ -26,14 +26,7 @@
  * thread id it targets.
  */
 import { readFile, readdir, unlink } from "node:fs/promises";
-import {
-    readFileSync,
-    writeFileSync,
-    readdirSync,
-    statSync,
-    existsSync,
-    watch,
-} from "node:fs";
+import { statSync, existsSync, watch } from "node:fs";
 import type { FSWatcher } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
@@ -91,6 +84,7 @@ import { createPiWebHost } from "./piweb-host.ts";
 import { makeWebBundler } from "./build-web.ts";
 import { createBus, createApp } from "./app.ts";
 import { openApp, probeRunningInstance, browserHost } from "./open-app.ts";
+import { createThemeManager } from "./theme.ts";
 import { createRequire } from "node:module";
 
 // pi version, for the startup banner (mirrors the TUI's `pi v<version>` logo).
@@ -328,6 +322,12 @@ async function listProjectDirs(q: string, threadId?: string) {
 // ---- browser bus (SSE) ----------------------------------------------------
 const bus = createBus();
 const broadcast = bus.broadcast;
+
+// ---- theme (pi settings.json -> web CSS vars) -----------------------------
+// Constructed before any thread is created: extensions loaded during
+// createThread can call piweb.setFooter -> footerFrame -> theme.vars(), so the
+// manager (and its lazy palette cache) must already exist. See ./theme.ts.
+const theme = createThemeManager(bus.broadcast);
 
 // ---- thread registry ------------------------------------------------------
 const threadRuntimes = new Map<string, ThreadRuntime>();
@@ -891,7 +891,7 @@ function footerFrame(
     const factory = registry?.getFooterFactory?.();
     if (factory) {
         try {
-            const custom = factory({ ...base }, piThemeVars());
+            const custom = factory({ ...base }, theme.vars());
             if (custom) return { kind: "footer" as const, ...base, custom };
         } catch (err) {
             console.error("setFooter factory threw:", err);
@@ -916,7 +916,7 @@ function headerFrame(
     if (!factory) return { kind: "header" as const, custom: null };
     try {
         const base = buildFooterData(s, threadCwd || cwd, thread, registry);
-        const custom = factory({ ...base }, piThemeVars());
+        const custom = factory({ ...base }, theme.vars());
         return { kind: "header" as const, custom: custom || null };
     } catch (err) {
         console.error("setHeader factory threw:", err);
@@ -1264,8 +1264,8 @@ function makeThread(sm: SessionManager): ThreadRuntime {
         // theme API (pi ui.getAllThemes/setTheme): list loadable themes and
         // switch+persist+rebroadcast the palette (globally — theme is app-wide).
         themeApi: {
-            list: () => listThemeNames(),
-            set: (name: string) => applyTheme(name),
+            list: () => theme.list(),
+            set: (name: string) => theme.apply(name),
         },
     });
     // Live git-branch tracking for FooterData.gitBranch: refresh the footer
@@ -2314,245 +2314,9 @@ async function runBash(
 // default thread for clients that connect without a `?thread`.
 defaultThread = await createThread(SessionManager.continueRecent(cwd));
 
-// Mirror the active pi theme into the web UI: read settings.json ->
-// themes/<name>.json under the agent dir and resolve to web UI CSS variables.
-// Missing tokens fall back to the client's :root defaults.
-// pi's built-in themes (dark/light + others) ship *inside* the package, not in
-// ~/.pi/agent/themes. This is the dir that holds their JSON definitions.
-function builtinThemesDir(): string {
-    return join(getPackageDir(), "dist", "modes", "interactive", "theme");
-}
-
-// Resolve a theme name to its JSON file, preferring the user's agent themes dir
-// and falling back to pi's built-in themes. Returns null if neither has it.
-function resolveThemeFile(name: string): string | null {
-    for (const base of [join(getAgentDir(), "themes"), builtinThemesDir()]) {
-        const p = join(base, `${name}.json`);
-        if (existsSync(p)) return p;
-    }
-    return null;
-}
-
-function loadPiTheme(nameOverride?: string) {
-    try {
-        // Resolve the active theme name: explicit override > settings.json >
-        // pi's built-in default. A web server has no TTY for pi's terminal-bg
-        // detection (getDefaultTheme), so we mirror its headless fallback: dark.
-        let name = nameOverride;
-        if (!name) {
-            try {
-                const settings = JSON.parse(
-                    readFileSync(join(getAgentDir(), "settings.json"), "utf8"),
-                );
-                name = settings.theme;
-            } catch {
-                /* no/unreadable settings.json — fall through to the default */
-            }
-        }
-        // pi's "auto"/"auto:light=…,dark=…" settings pick by terminal background;
-        // headless, we mirror its dark fallback.
-        if (!name || name === "auto" || String(name).startsWith("auto:"))
-            name = "dark";
-        const file = resolveThemeFile(name);
-        if (!file) return {};
-        const theme = JSON.parse(readFileSync(file, "utf8"));
-        const vars = theme.vars ?? {};
-        const colors = theme.colors ?? {};
-        const pick = (t: string) => vars[colors[t] ?? t] ?? vars[t] ?? null;
-        // Like pick, but tolerates direct hex literals in `colors` (the thinking
-        // tokens are a mix of named refs e.g. "darkGray" and raw hex "#81a2be").
-        const resolve = (x: any) =>
-            typeof x === "string" && x.startsWith("#") ? x : (vars[x] ?? null);
-        const pickC = (t: string) => resolve(colors[t] ?? t);
-        // Resolve the `export` block (raw var refs, e.g. { pageBg: "bg" }).
-        const exp = theme.export ?? {};
-        const pickE = (t: string) => (exp[t] != null ? resolve(exp[t]) : null);
-        const map = {
-            "--bg": pick("bg"),
-            "--panel": vars.surface ?? null,
-            "--line": pick("border"),
-            "--txt": pick("text"),
-            "--muted": pick("muted"),
-            "--dim": pick("dim"),
-            "--acc": pick("accent"),
-            "--acc2": vars.magenta ?? pick("accent"),
-            "--ok": pick("success"),
-            "--warn": pick("warning"),
-            "--err": pick("error"),
-            // thinking-level composer border colors (mirror the pi TUI theme)
-            "--think-off": pickC("thinkingOff"),
-            "--think-minimal": pickC("thinkingMinimal"),
-            "--think-low": pickC("thinkingLow"),
-            "--think-medium": pickC("thinkingMedium"),
-            "--think-high": pickC("thinkingHigh"),
-            "--think-xhigh": pickC("thinkingXhigh"),
-            "--bash-mode": pickC("bashMode"),
-            // tool-card status tints + title/output (literal theme slots, so the
-            // web washes cards with the exact colors the TUI uses — no color-mix)
-            "--tool-pending-bg": pick("toolPendingBg"),
-            "--tool-success-bg": pick("toolSuccessBg"),
-            "--tool-error-bg": pick("toolErrorBg"),
-            "--tool-title": pick("toolTitle"),
-            "--tool-output": pick("toolOutput"),
-            // markdown styling
-            "--md-heading": pick("mdHeading"),
-            "--md-link": pick("mdLink"),
-            "--md-link-url": pick("mdLinkUrl"),
-            "--md-code": pick("mdCode"),
-            "--md-code-block": pick("mdCodeBlock"),
-            "--md-code-block-border": pick("mdCodeBlockBorder"),
-            "--md-quote": pick("mdQuote"),
-            "--md-quote-border": pick("mdQuoteBorder"),
-            "--md-hr": pick("mdHr"),
-            "--md-list-bullet": pick("mdListBullet"),
-            // diff colors (pairs with #19 syntax/diff rendering)
-            "--diff-added": pick("toolDiffAdded"),
-            "--diff-removed": pick("toolDiffRemoved"),
-            "--diff-context": pick("toolDiffContext"),
-            // syntax highlighting slots (pairs with #19)
-            "--syn-comment": pick("syntaxComment"),
-            "--syn-keyword": pick("syntaxKeyword"),
-            "--syn-function": pick("syntaxFunction"),
-            "--syn-variable": pick("syntaxVariable"),
-            "--syn-string": pick("syntaxString"),
-            "--syn-number": pick("syntaxNumber"),
-            "--syn-type": pick("syntaxType"),
-            "--syn-operator": pick("syntaxOperator"),
-            "--syn-punctuation": pick("syntaxPunctuation"),
-            // message styling
-            "--selected-bg": pick("selectedBg"),
-            "--user-msg-bg": pick("userMessageBg"),
-            "--user-msg-text": pick("userMessageText"),
-            "--custom-msg-bg": pick("customMessageBg"),
-            "--custom-msg-text": pick("customMessageText"),
-            "--custom-msg-label": pick("customMessageLabel"),
-            // misc raw palette slots exposed for extensions / future use
-            "--hover": pick("hover"),
-            "--border-variant": pick("borderVariant"),
-            "--comment": pick("comment"),
-            "--cyan": pick("cyan"),
-            "--bright-cyan": pick("brightCyan"),
-            "--dim-blue": pick("dimBlue"),
-            // export block (TUI HTML-export palette; surfaced for parity)
-            "--export-page-bg": pickE("pageBg"),
-            "--export-card-bg": pickE("cardBg"),
-            "--export-info-bg": pickE("infoBg"),
-        };
-        const out: Record<string, string> = {};
-        for (const [k, v] of Object.entries(map)) if (v) out[k] = v;
-        return out;
-    } catch {
-        return {};
-    }
-}
-// Active pi theme palette (settings.json -> themes/<name>.json), memoized on
-// first use. Accessed via `piThemeVars()` rather than a module-level `const`
-// because the default thread — and thus extension loading — runs during module
-// init (partly behind a top-level await). An extension calling `piweb.setFooter`
-// during load triggers `requestFooter -> footerFrame`, which reads the theme; a
-// `const` declared here would still be in its temporal dead zone at that point
-// and throw, aborting the extension's registration and breaking the footer.
-// `var` is hoisted + initialized to `undefined` (no TDZ) and `loadPiTheme` is a
-// hoisted function declaration depending only on imports, so `piThemeVars()` is
-// safe to call at any point during module evaluation.
-// eslint-disable-next-line no-var
-var piThemeCache: Record<string, string> | undefined;
-function piThemeVars(): Record<string, string> {
-    if (piThemeCache === undefined) piThemeCache = loadPiTheme();
-    return piThemeCache;
-}
-
-// Keys sent in the most recent `theme` frame (seeded lazily from the initial
-// palette). Used to compute which CSS vars to *reset* when the theme changes
-// and drops tokens: disabling a theme yields `{}`, but the client only ever
-// *sets* vars, so without an explicit reset the old colors would stay stuck.
-let lastThemeKeys: string[] | undefined;
-
-// Rebroadcast the active palette to every viewer. Any key present last time but
-// absent now is sent as "" so the client removes the custom property and falls
-// back to its :root default (full reset on theme-disable).
-function broadcastTheme(vars: Record<string, string>) {
-    if (lastThemeKeys === undefined) lastThemeKeys = Object.keys(piThemeVars());
-    const frame: Record<string, string> = { ...vars };
-    for (const k of lastThemeKeys) if (!(k in frame)) frame[k] = "";
-    lastThemeKeys = Object.keys(vars);
-    bus.broadcast({ kind: "theme", vars: frame });
-}
-
-// Re-read the theme from disk (settings.json -> themes/<name>.json), refresh the
-// memoized cache, and push it to every viewer. Invoked by the settings watcher
-// so external theme changes (the pi TUI switching/disabling the theme, or a
-// hand edit) go live instead of waiting for a restart.
-function refreshPiTheme() {
-    piThemeCache = loadPiTheme();
-    broadcastTheme(piThemeCache);
-}
-
-// Live-reload the palette when settings.json or a theme file changes outside
-// pi-web. Without this, the cache is only refreshed by the in-app setTheme, so
-// external edits wouldn't reach the browser until the binary restarts.
-try {
-    const dir = getAgentDir();
-    let debounce: ReturnType<typeof setTimeout> | null = null;
-    const bump = () => {
-        // Editors/tools emit several events per save; coalesce them.
-        if (debounce) clearTimeout(debounce);
-        debounce = setTimeout(refreshPiTheme, 80);
-    };
-    watch(join(dir, "settings.json"), { persistent: false }, bump);
-    watch(join(dir, "themes"), { persistent: false }, bump);
-} catch {
-    /* watching is best-effort; the in-app theme switch still works */
-}
-
-/**
- * Enumerate the themes pi-web can actually load (JSON files in the agent's
- * `themes/` dir), the web analog of pi-tui `ui.getAllThemes`. Names are the
- * bare filenames (sans `.json`), matching what `loadPiTheme(name)` expects.
- */
-function listThemeNames(): { name: string; path: string }[] {
-    // Merge pi's built-in themes with the user's agent themes; a same-named
-    // agent theme overrides the built-in (matches resolveThemeFile's priority).
-    const seen = new Map<string, string>();
-    for (const base of [builtinThemesDir(), join(getAgentDir(), "themes")]) {
-        try {
-            for (const f of readdirSync(base)) {
-                if (!f.endsWith(".json") || f === "theme-schema.json") continue;
-                seen.set(f.slice(0, -".json".length), join(base, f));
-            }
-        } catch {
-            /* dir may not exist (e.g. no agent themes yet) */
-        }
-    }
-    return [...seen]
-        .map(([name, path]) => ({ name, path }))
-        .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-/**
- * Switch the active theme (pi-tui `ui.setTheme` analog): recompute the web
- * CSS-var palette for `name`, persist it to the agent's settings.json, and
- * rebroadcast a `theme` frame to every viewer. Returns `{ success }`.
- */
-function applyTheme(name: string): { success: boolean; error?: string } {
-    const vars = loadPiTheme(name);
-    if (!vars || Object.keys(vars).length === 0)
-        return { success: false, error: `theme not found: ${name}` };
-    piThemeCache = vars;
-    // Persist the choice so a reload / new session keeps it (mirrors the TUI
-    // writing the theme to settings). Best-effort: a read-only settings file
-    // still switches the live UI for this process.
-    try {
-        const settingsPath = join(getAgentDir(), "settings.json");
-        const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
-        settings.theme = name;
-        writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
-    } catch {
-        /* live switch still applies even if persistence fails */
-    }
-    broadcastTheme(vars);
-    return { success: true };
-}
+// Live-reload the palette on external settings.json / theme edits. Theme
+// resolution, switching, and enumeration now live in ./theme.ts.
+theme.watch();
 
 // ---- http -----------------------------------------------------------------
 // Web assets: from disk under `bun run` / `bun dev`; from the copy embedded at
@@ -3061,7 +2825,7 @@ const loginApi = {
 const server = createApp({
     web: WEB,
     indexHtmlPath,
-    theme: piThemeVars(),
+    theme: theme.vars(),
     bus,
     piweb,
     // TS front-end bundle (cached in prod, rebuilt per-request when PI_WEB_DEV=1)
