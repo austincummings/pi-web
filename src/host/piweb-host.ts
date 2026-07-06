@@ -1,3 +1,4 @@
+import type { FrameNode } from "../shared/frames.ts";
 import { webPaletteTheme } from "./tui-theme.ts";
 
 /**
@@ -72,7 +73,7 @@ interface Surface {
     order: number;
     open: boolean;
     options?: Record<string, any>;
-    render: (state: any) => any;
+    render: (state: any) => FrameNode;
     actions: Record<string, (ctx: any) => any>;
     state: any;
 }
@@ -80,7 +81,7 @@ interface Surface {
 interface SurfaceCard {
     id: string;
     title?: string;
-    tree: any;
+    tree: FrameNode;
     options?: Record<string, any>;
 }
 
@@ -141,9 +142,11 @@ export function createPiWebHost({
     /** keyed status segments */
     const statuses = new Map<string, { text: string }>();
     /** extension footer factory (piweb.setFooter), or undefined for default. */
-    let footerFactory: ((data: any, theme: any) => any) | undefined;
+    let footerFactory:
+        ((data: any, theme: any) => FrameNode | null | undefined) | undefined;
     /** extension header factory (piweb.setHeader), or undefined for default. */
-    let headerFactory: ((data: any, theme: any) => any) | undefined;
+    let headerFactory:
+        ((data: any, theme: any) => FrameNode | null | undefined) | undefined;
     /**
      * Open blocking dialogs awaiting a browser response.
      * @type {Map<string, {kind:string, spec:DialogSpec, settle:(v:any)=>void}>}
@@ -163,7 +166,7 @@ export function createPiWebHost({
      */
     const messageRenderers = new Map<
         string,
-        (message: any, options: any, theme: any) => any
+        (message: any, options: any, theme: any) => FrameNode | null | undefined
     >();
     /**
      * Extension-supplied composer autocomplete providers (the web analogue of
@@ -975,7 +978,7 @@ export function createPiWebHost({
          * `FooterData` each time the footer is rebuilt.
          * @param {(data:any)=>any} [factory]
          */
-        setFooter(factory?: (data: any) => any) {
+        setFooter(factory?: (data: any) => FrameNode | null | undefined) {
             footerFactory = typeof factory === "function" ? factory : undefined;
             requestFooter?.();
         },
@@ -995,7 +998,9 @@ export function createPiWebHost({
          * pi-tui `ui.setHeader`). Pass undefined to restore the default.
          * @param {(data:any,theme:any)=>any} [factory]
          */
-        setHeader(factory?: (data: any, theme: any) => any) {
+        setHeader(
+            factory?: (data: any, theme: any) => FrameNode | null | undefined,
+        ) {
             headerFactory = typeof factory === "function" ? factory : undefined;
             requestHeader?.();
         },

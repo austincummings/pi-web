@@ -10,6 +10,9 @@
  * Layer 2 of the design: a serializable superset of pi's ExtensionUIContext.
  */
 
+import type { FrameNode, OverlayOptions } from "../shared/frames.ts";
+export type { FrameNode, RenderNode } from "../shared/frames.ts";
+
 type NotifyLevel = "info" | "warning" | "error";
 type DialogOptions = { signal?: AbortSignal; timeout?: number };
 /** Working-indicator configuration (mirrors pi-tui `WorkingIndicatorOptions`). */
@@ -79,13 +82,19 @@ export type ThemeVars = Record<string, string>;
  * bar, or a falsy value to fall back to the default footer. Mirrors pi-tui
  * `ctx.ui.setFooter(factory)`.
  */
-export type FooterFactory = (data: FooterData, theme: ThemeVars) => any;
+export type FooterFactory = (
+    data: FooterData,
+    theme: ThemeVars,
+) => FrameNode | null | undefined;
 /**
  * A header factory (mirrors pi-tui `ctx.ui.setHeader`): return a serializable
  * node tree to render as a custom header above the transcript, or a falsy value
  * to restore the built-in header. Receives the same live data + theme vars.
  */
-export type HeaderFactory = (data: FooterData, theme: ThemeVars) => any;
+export type HeaderFactory = (
+    data: FooterData,
+    theme: ThemeVars,
+) => FrameNode | null | undefined;
 
 /** The composer snapshot passed to an autocomplete provider. */
 export interface AutocompleteContext {
@@ -138,6 +147,17 @@ export type AutocompleteProviderFactory = (
     current: AutocompleteProvider,
 ) => AutocompleteProvider;
 
+export interface SurfaceDefinition {
+    title?: string;
+    placement?: "aboveEditor" | "belowEditor";
+    order?: number;
+    options?: OverlayOptions;
+    initialState?: unknown;
+    render?: (state: unknown) => FrameNode;
+    actions?: Record<string, (ctx: unknown) => unknown>;
+    [key: string]: unknown;
+}
+
 /**
  * The pi-web UI-bridge surface available to extensions. A serializable superset
  * of pi's `ExtensionUIContext`; the dialog methods mirror pi-tui's `ctx.ui.*`.
@@ -156,8 +176,12 @@ export interface PiWebSurface {
     /** Mount/replace a widget; pass `undefined` content to remove it. */
     setWidget(
         key: string,
-        content: string[] | Record<string, any> | undefined,
-        options?: Record<string, any>,
+        content: string[] | SurfaceDefinition | undefined,
+        options?: {
+            placement?: "aboveEditor" | "belowEditor";
+            title?: string;
+            order?: number;
+        },
     ): void;
     /**
      * Show a custom component and resolve when it calls `done(result)`. Mirrors
@@ -168,10 +192,13 @@ export interface PiWebSurface {
      * onHandle? }`); `onHandle` receives a handle with `{ close, requestRender }`.
      */
     custom<T = any>(
-        factory: (theme: any, done: (result?: T) => void) => any,
+        factory: (
+            theme: any,
+            done: (result?: T) => void,
+        ) => SurfaceDefinition | null | undefined,
         options?: {
             overlay?: boolean;
-            overlayOptions?: Record<string, any> | (() => Record<string, any>);
+            overlayOptions?: OverlayOptions | (() => OverlayOptions);
             onHandle?: (handle: {
                 close: (result?: T) => void;
                 requestRender: () => void;
@@ -264,10 +291,10 @@ export interface PiWebSurface {
     registerMessageRenderer(
         customType: string,
         renderer: (
-            message: any,
+            message: unknown,
             options: { expanded: boolean },
             theme?: any,
-        ) => any,
+        ) => FrameNode | null | undefined,
     ): void;
     // --- composer autocomplete ---
     /**

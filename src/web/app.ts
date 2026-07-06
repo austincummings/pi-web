@@ -22,6 +22,7 @@ import type {
     OverlayOptions,
     ImageRef,
     ToolMsg,
+    FrameNode,
 } from "../shared/frames.ts";
 // NOTE: these modules are imported only for their side effect —
 // registering the <pi-frame> / <pi-tool> / <pi-thinking> custom elements via
@@ -719,7 +720,10 @@ function gotoThread(id: string) {
 // element (./pi-frame.ts), which owns its iframe lifecycle and emits bubbling
 // `piframe-action` / `piframe-notify` events. Those are routed to the host once,
 // below (see the document-level listeners near `toast`).
-function renderNode(node: any, surfaceId: string | null) {
+function renderNode(
+    node: FrameNode | null | undefined,
+    surfaceId: string | null,
+) {
     if (!node || typeof node !== "object")
         return document.createTextNode(String(node ?? ""));
     switch (node.type) {

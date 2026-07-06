@@ -13,6 +13,7 @@
 // setExpanded() (session-wide alt+o) or toggleExpanded() (per-card click);
 // scrolling stays with the host (it owns the transcript).
 
+import type { FrameNode } from "../shared/frames.ts";
 import {
     toolTitle,
     truncateResult,
@@ -38,7 +39,7 @@ export interface ToolFrame {
      * (render-model parity P1). Currently an `AnsiBlock` node; painted in place
      * of the default body when no registered client renderer applies.
      */
-    tree?: unknown;
+    tree?: FrameNode;
 }
 
 export class PiTool extends HTMLElement {
@@ -59,7 +60,7 @@ export class PiTool extends HTMLElement {
 
     private built = false;
     /** Host-adapted renderResult tree (Parity P1); see ToolFrame.tree. */
-    private tree: any = null;
+    private tree: FrameNode | null = null;
 
     connectedCallback(): void {
         if (!this.built) {
@@ -146,7 +147,7 @@ export class PiTool extends HTMLElement {
         // Spacer tree — P2). Paint it via the shared static-node renderer
         // (unless a registered renderer above already handled the body). Falls
         // through if absent/unknown.
-        if (this.tree && typeof this.tree === "object") {
+        if (this.tree) {
             const el = renderStaticNode(this.tree);
             if (el) {
                 this.appendChild(el);

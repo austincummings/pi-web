@@ -9,11 +9,11 @@
  * module stays dependency-light (ansi + markdown only) and free of app.ts, which
  * keeps pi-tool.ts out of an import cycle.
  */
+import type { FrameNode } from "../shared/frames.ts";
 import { ansiToHtml } from "./ansi.ts";
 import { renderMarkdown } from "./markdown.ts";
 
-type Node = any;
-type RenderChild = (node: Node) => ChildNode;
+type RenderChild = (node: FrameNode) => ChildNode;
 
 /**
  * Render a static node to a DOM node. Returns null for node types this renderer
@@ -23,7 +23,7 @@ type RenderChild = (node: Node) => ChildNode;
  * @param renderChild recursion hook for container children (defaults to static)
  */
 export function renderStaticNode(
-    node: Node,
+    node: FrameNode | null | undefined,
     renderChild?: RenderChild,
 ): ChildNode | null {
     if (!node || typeof node !== "object") {
@@ -54,7 +54,7 @@ export function renderStaticNode(
             } else {
                 d.style.gap = "8px";
             }
-            (node.children || []).forEach((c: Node) => d.appendChild(recur(c)));
+            (node.children || []).forEach((c) => d.appendChild(recur(c)));
             return d;
         }
         case "Row": {
@@ -75,7 +75,7 @@ export function renderStaticNode(
             if (node.align) d.style.alignItems = String(node.align);
             if (typeof node.gap === "number") d.style.gap = `${node.gap}px`;
             if (node.wrap === false) d.style.flexWrap = "nowrap";
-            (node.children || []).forEach((c: Node) => d.appendChild(recur(c)));
+            (node.children || []).forEach((c) => d.appendChild(recur(c)));
             return d;
         }
         case "Text": {
@@ -133,7 +133,7 @@ export function renderStaticNode(
     }
 }
 
-function unknown(node: Node): ChildNode {
+function unknown(node: FrameNode): ChildNode {
     const d = document.createElement("div");
     d.textContent = `[unknown node: ${node?.type}]`;
     return d;

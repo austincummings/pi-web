@@ -33,15 +33,102 @@ export type { BashFrame, ThinkingFrame, ToolFrame, WelcomeSection };
 
 export type NotifyLevel = "info" | "success" | "warn" | "error";
 
-/**
- * A serializable render-model node (Box/Text/Image/Frame/…). Modeled loosely
- * here — the full discriminated node union is a separate hardening step; this
- * keeps the property access the frame consumers need (`.type`, `.html`, …)
- * working without falling back to `any`.
- */
-export interface FrameNode {
-    type?: string;
-    [key: string]: unknown;
+/** Serializable render-model nodes (Box/Text/Image/Frame/…). */
+export type FrameNode = StaticFrameNode | InteractiveFrameNode;
+export type RenderNode = FrameNode;
+
+export type StaticFrameNode =
+    | BoxFrameNode
+    | ContainerFrameNode
+    | RowFrameNode
+    | TextFrameNode
+    | DividerFrameNode
+    | MarkdownFrameNode
+    | AnsiBlockFrameNode
+    | SpacerFrameNode
+    | ImageFrameNode;
+
+export type InteractiveFrameNode =
+    ButtonFrameNode | InputFrameNode | FrameFrameNode;
+
+export interface BoxFrameNode {
+    type: "Box";
+    paddingX?: number;
+    paddingY?: number;
+    children?: FrameNode[];
+}
+
+export interface ContainerFrameNode {
+    type: "Container";
+    paddingX?: number;
+    paddingY?: number;
+    children?: FrameNode[];
+}
+
+export interface RowFrameNode {
+    type: "Row";
+    children?: FrameNode[];
+    justify?: "start" | "between" | "end" | "center";
+    align?: string;
+    gap?: number;
+    wrap?: boolean;
+}
+
+export interface TextFrameNode {
+    type: "Text";
+    text?: string;
+    tone?: string;
+    dim?: boolean;
+    color?: string;
+    bold?: boolean;
+}
+
+export interface DividerFrameNode {
+    type: "Divider";
+}
+
+export interface MarkdownFrameNode {
+    type: "Markdown";
+    text?: string;
+}
+
+export interface AnsiBlockFrameNode {
+    type: "AnsiBlock";
+    cols?: number;
+    lines?: string[];
+    focusable?: boolean;
+}
+
+export interface SpacerFrameNode {
+    type: "Spacer";
+    lines?: number;
+}
+
+export interface ImageFrameNode {
+    type: "Image";
+    src?: string;
+    alt?: string;
+}
+
+export interface ButtonFrameNode {
+    type: "Button";
+    label?: string;
+    variant?: "primary" | string;
+    action?: string;
+}
+
+export interface InputFrameNode {
+    type: "Input";
+    placeholder?: string;
+    value?: string;
+    action?: string;
+}
+
+export interface FrameFrameNode {
+    type: "Frame";
+    html?: string;
+    height?: number | null;
+    data?: unknown;
 }
 
 /** An attached image block: either a data payload or a URL. */
