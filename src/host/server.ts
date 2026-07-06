@@ -90,6 +90,7 @@ import {
     type PiWebRegistry,
     type ThreadRuntime,
 } from "./threads.ts";
+import { createThreadRouter } from "./thread-router.ts";
 import { createRequire } from "node:module";
 
 // pi version, for the startup banner (mirrors the TUI's `pi v<version>` logo).
@@ -303,13 +304,12 @@ const theme = createThemeManager(bus.broadcast);
 const threadRuntimes = new Map<string, ThreadRuntime>();
 /** Fallback thread for clients that connect without a `?thread`. */
 let defaultThread: ThreadRuntime | null = null;
-/** Thread whose extensions are registering panels *right now* (during boot/reload). */
-let bindingThread: ThreadRuntime | null = null;
-/** Thread currently handling a panel action dispatch. */
-let dispatchingThread: ThreadRuntime | null = null;
-/** Thread whose extension code is executing now (event handlers route surface
- * updates here). */
-let currentThread: ThreadRuntime | null = null;
+// Which thread's surface registry piweb.* calls route to right now. Async-scoped
+// (see ./thread-router.ts) so concurrent operations that span awaits — extension
+// reload, /command handlers, panel dispatch, a prompt turn — can't clobber each
+// other's routing the way the former mutable globals (bindingThread /
+// dispatchingThread / currentThread) could.
+const router = createThreadRouter();
 
 const sessionFor = (id: string | undefined | null) =>
     id ? (threadRuntimes.get(id)?.session ?? null) : null;
@@ -418,9 +418,7 @@ const nullRegistry = {
     },
     async dispatch() {},
 };
-const activeRegistry = (): any =>
-    (bindingThread ?? dispatchingThread ?? currentThread)?.piweb ??
-    nullRegistry;
+const activeRegistry = (): any => router.active()?.piweb ?? nullRegistry;
 const piweb = {
     present: true,
     // medium marker (pi-tui `ctx.mode` analog): portable extensions branch on
@@ -489,12 +487,12 @@ const piweb = {
     /**
      * Resolve a thread's concrete surface registry by its session id (== thread
      * id). Lets event-driven extensions write to *their own*
-     * thread's surface without relying on the global `currentThread` pointer —
-     * which is set by the server listener that runs *after* extension handlers,
-     * so it is stale/cross-thread when an extension's `pi.on(...)` fires.
-     * Returns null when the thread isn't registered yet (e.g. during
+     * thread's surface without relying on the ambient routing scope — which is
+     * only active during the server listener that runs *after* extension
+     * handlers, so it is absent/cross-thread when an extension's `pi.on(...)`
+     * fires. Returns null when the thread isn't registered yet (e.g. during
      * session_start, before threadRuntimes is populated) so callers fall back to
-     * the global router (which routes via bindingThread at that moment).
+     * the router's active scope at that moment.
      * @param {string|undefined|null} id
      */
     forSession(id: string | undefined | null) {
@@ -515,12 +513,9 @@ const piweb = {
     ) {
         const t = threadId ? threadRuntimes.get(threadId) : null;
         if (!t?.piweb) return;
-        dispatchingThread = t;
-        try {
-            await t.piweb.dispatch(surfaceId, action, payload);
-        } finally {
-            dispatchingThread = null;
-        }
+        await router.run(t, () =>
+            t.piweb!.dispatch(surfaceId, action, payload),
+        );
     },
 };
 globalThis.__PIWEB__ = piweb;
@@ -947,173 +942,180 @@ function subscribe(thread: ThreadRuntime) {
     const toolArgs = new Map();
     /** @param {ServerMessage} msg */
     const emit = (msg: ServerMessage) => bus.broadcastToThread(thread.id, msg);
-    return thread.session!.subscribe((ev) => {
-        // route surface updates from this thread's extension event handlers
-        // (setStatus, dock, notify, …) to its own registry
-        currentThread = thread;
-        switch (ev.type) {
-            case "message_start":
-                if (ev.message?.role === "user") {
-                    const frame: ServerMessage = {
-                        kind: "user",
-                        text: textOf(ev.message.content),
-                    };
-                    const imgs = imagesOf(ev.message.content);
-                    if (imgs.length) frame.images = imgs;
-                    emit(frame);
-                    // A brand-new thread is hidden from the list until it has a
-                    // message; now that one exists, surface it immediately
-                    // instead of waiting for the turn to finish (agent_end).
-                    broadcastThreads();
-                } else if (ev.message?.role === "assistant") {
-                    streamed = false;
-                    streamedThinking = false;
-                    if (!thread.busy) {
-                        thread.busy = true;
-                        // drive the web UI "Working" spinner (pi-tui style)
-                        emit({ kind: "working", busy: true });
+    return thread.session!.subscribe((ev) =>
+        // route surface updates from this thread's extension event handlers to
+        // its own registry, async-scoped so interleaved threads can't clobber
+        // each other's routing.
+        router.run(thread, () => {
+            switch (ev.type) {
+                case "message_start":
+                    if (ev.message?.role === "user") {
+                        const frame: ServerMessage = {
+                            kind: "user",
+                            text: textOf(ev.message.content),
+                        };
+                        const imgs = imagesOf(ev.message.content);
+                        if (imgs.length) frame.images = imgs;
+                        emit(frame);
+                        // A brand-new thread is hidden from the list until it has a
+                        // message; now that one exists, surface it immediately
+                        // instead of waiting for the turn to finish (agent_end).
+                        broadcastThreads();
+                    } else if (ev.message?.role === "assistant") {
+                        streamed = false;
+                        streamedThinking = false;
+                        if (!thread.busy) {
+                            thread.busy = true;
+                            // drive the web UI "Working" spinner (pi-tui style)
+                            emit({ kind: "working", busy: true });
+                        }
                     }
-                }
-                break;
-            case "message_update": {
-                const e = ev.assistantMessageEvent;
-                if (e?.type === "text_delta") {
-                    streamed = true;
-                    emit({ kind: "delta", text: e.delta });
-                } else if (e?.type === "thinking_start") {
-                    emit({ kind: "thinking", status: "start" });
-                } else if (e?.type === "thinking_delta") {
-                    streamedThinking = true;
-                    emit({ kind: "thinking", status: "delta", text: e.delta });
-                } else if (e?.type === "thinking_end") {
-                    emit({ kind: "thinking", status: "end" });
-                }
-                break;
-            }
-            case "message_end": {
-                const m = ev.message;
-                // extension-injected custom messages (pi.sendMessage) render via
-                // a registered message renderer, or fall back to their text
-                if (m?.role === "custom") {
-                    if (m.display !== false) emit(customFrame(thread.piweb, m));
+                    break;
+                case "message_update": {
+                    const e = ev.assistantMessageEvent;
+                    if (e?.type === "text_delta") {
+                        streamed = true;
+                        emit({ kind: "delta", text: e.delta });
+                    } else if (e?.type === "thinking_start") {
+                        emit({ kind: "thinking", status: "start" });
+                    } else if (e?.type === "thinking_delta") {
+                        streamedThinking = true;
+                        emit({
+                            kind: "thinking",
+                            status: "delta",
+                            text: e.delta,
+                        });
+                    } else if (e?.type === "thinking_end") {
+                        emit({ kind: "thinking", status: "end" });
+                    }
                     break;
                 }
-                if (m?.role !== "assistant") break;
-                if (m.stopReason === "error" || m.errorMessage)
-                    emit({
-                        kind: "error",
-                        text: describeError(m.errorMessage),
-                    });
-                else {
-                    // emit thinking before text (mirrors how it streams)
-                    if (!streamedThinking) {
-                        const think = thinkingOf(m.content);
-                        if (think)
-                            emit({
-                                kind: "thinking",
-                                status: "full",
-                                text: think,
-                            });
+                case "message_end": {
+                    const m = ev.message;
+                    // extension-injected custom messages (pi.sendMessage) render via
+                    // a registered message renderer, or fall back to their text
+                    if (m?.role === "custom") {
+                        if (m.display !== false)
+                            emit(customFrame(thread.piweb, m));
+                        break;
                     }
-                    if (!streamed) {
-                        const text = textOf(m.content);
-                        if (text) emit({ kind: "assistant_full", text });
-                    }
-                }
-                emit({ kind: "assistant_end" });
-                break;
-            }
-            case "tool_execution_start":
-                toolStart.set(ev.toolCallId, Date.now());
-                // Keep args around for the end event, which omits them; the
-                // tool's renderResult context wants them (Parity P1).
-                toolArgs.set(ev.toolCallId, ev.args);
-                emit({
-                    kind: "tool",
-                    id: ev.toolCallId,
-                    name: ev.toolName,
-                    status: "start",
-                    args: ev.args,
-                });
-                break;
-            case "tool_execution_end": {
-                const t0 = toolStart.get(ev.toolCallId);
-                if (t0 != null) toolStart.delete(ev.toolCallId);
-                const args = toolArgs.get(ev.toolCallId);
-                toolArgs.delete(ev.toolCallId);
-                const frame: ServerMessage = {
-                    kind: "tool",
-                    id: ev.toolCallId,
-                    name: ev.toolName,
-                    status: "end",
-                    isError: ev.isError,
-                    result: textOf(ev.result?.content),
-                    // structured tool details for rich rendering (e.g. edit's
-                    // `diff` string) — the web counterpart to pi-tui renderResult
-                    details: ev.result?.details,
-                    // how long the tool ran (live turns only; see toolStart)
-                    durationMs: t0 != null ? Date.now() - t0 : undefined,
-                };
-                // Parity P1: extension tools with a custom renderResult render
-                // their pi TUI Component as an AnsiBlock `tree`. Built-ins keep
-                // pi-web's native rendering; the client prefers its own
-                // registered renderer over the tree when present.
-                if (!WEB_BUILTIN_TOOLS.has(ev.toolName)) {
-                    try {
-                        const def = thread.session?.getToolDefinition?.(
-                            ev.toolName,
-                        );
-                        if (def?.renderResult) {
-                            const node = renderToolResultToNode(
-                                def,
-                                {
-                                    toolName: ev.toolName,
-                                    toolCallId: ev.toolCallId,
-                                    args: args ?? {},
-                                    cwd: thread.cwd,
-                                    content: ev.result?.content,
-                                    details: ev.result?.details,
-                                    isError: ev.isError,
-                                    expanded: false,
-                                },
-                                webPaletteTheme,
-                                100,
-                            );
-                            if (node) frame.tree = node;
+                    if (m?.role !== "assistant") break;
+                    if (m.stopReason === "error" || m.errorMessage)
+                        emit({
+                            kind: "error",
+                            text: describeError(m.errorMessage),
+                        });
+                    else {
+                        // emit thinking before text (mirrors how it streams)
+                        if (!streamedThinking) {
+                            const think = thinkingOf(m.content);
+                            if (think)
+                                emit({
+                                    kind: "thinking",
+                                    status: "full",
+                                    text: think,
+                                });
                         }
-                    } catch {
-                        /* fall back to default rendering */
+                        if (!streamed) {
+                            const text = textOf(m.content);
+                            if (text) emit({ kind: "assistant_full", text });
+                        }
                     }
+                    emit({ kind: "assistant_end" });
+                    break;
                 }
-                emit(frame);
-                break;
+                case "tool_execution_start":
+                    toolStart.set(ev.toolCallId, Date.now());
+                    // Keep args around for the end event, which omits them; the
+                    // tool's renderResult context wants them (Parity P1).
+                    toolArgs.set(ev.toolCallId, ev.args);
+                    emit({
+                        kind: "tool",
+                        id: ev.toolCallId,
+                        name: ev.toolName,
+                        status: "start",
+                        args: ev.args,
+                    });
+                    break;
+                case "tool_execution_end": {
+                    const t0 = toolStart.get(ev.toolCallId);
+                    if (t0 != null) toolStart.delete(ev.toolCallId);
+                    const args = toolArgs.get(ev.toolCallId);
+                    toolArgs.delete(ev.toolCallId);
+                    const frame: ServerMessage = {
+                        kind: "tool",
+                        id: ev.toolCallId,
+                        name: ev.toolName,
+                        status: "end",
+                        isError: ev.isError,
+                        result: textOf(ev.result?.content),
+                        // structured tool details for rich rendering (e.g. edit's
+                        // `diff` string) — the web counterpart to pi-tui renderResult
+                        details: ev.result?.details,
+                        // how long the tool ran (live turns only; see toolStart)
+                        durationMs: t0 != null ? Date.now() - t0 : undefined,
+                    };
+                    // Parity P1: extension tools with a custom renderResult render
+                    // their pi TUI Component as an AnsiBlock `tree`. Built-ins keep
+                    // pi-web's native rendering; the client prefers its own
+                    // registered renderer over the tree when present.
+                    if (!WEB_BUILTIN_TOOLS.has(ev.toolName)) {
+                        try {
+                            const def = thread.session?.getToolDefinition?.(
+                                ev.toolName,
+                            );
+                            if (def?.renderResult) {
+                                const node = renderToolResultToNode(
+                                    def,
+                                    {
+                                        toolName: ev.toolName,
+                                        toolCallId: ev.toolCallId,
+                                        args: args ?? {},
+                                        cwd: thread.cwd,
+                                        content: ev.result?.content,
+                                        details: ev.result?.details,
+                                        isError: ev.isError,
+                                        expanded: false,
+                                    },
+                                    webPaletteTheme,
+                                    100,
+                                );
+                                if (node) frame.tree = node;
+                            }
+                        } catch {
+                            /* fall back to default rendering */
+                        }
+                    }
+                    emit(frame);
+                    break;
+                }
+                case "queue_update":
+                    // steering / follow-up messages waiting to be delivered while a
+                    // turn is in flight; mirror the pi TUI's pending-messages display
+                    emit({
+                        kind: "queue",
+                        items: [...(ev.steering ?? []), ...(ev.followUp ?? [])],
+                    });
+                    break;
+                case "agent_end":
+                    thread.busy = false;
+                    emit({ kind: "assistant_end" });
+                    emit({ kind: "working", busy: false });
+                    // refresh the context bar with the turn's updated token usage
+                    emit(footerFrame(thread.session, thread.cwd));
+                    // names/recency/running may have changed — refresh the list
+                    broadcastThreads();
+                    break;
             }
-            case "queue_update":
-                // steering / follow-up messages waiting to be delivered while a
-                // turn is in flight; mirror the pi TUI's pending-messages display
-                emit({
-                    kind: "queue",
-                    items: [...(ev.steering ?? []), ...(ev.followUp ?? [])],
-                });
-                break;
-            case "agent_end":
-                thread.busy = false;
-                emit({ kind: "assistant_end" });
-                emit({ kind: "working", busy: false });
-                // refresh the context bar with the turn's updated token usage
-                emit(footerFrame(thread.session, thread.cwd));
-                // names/recency/running may have changed — refresh the list
-                broadcastThreads();
-                break;
-        }
-    });
+        }),
+    );
 }
 
 // ---- thread creation ------------------------------------------------------
 // Booting a thread instantiates its own extensions (capturing this thread's pi
 // + routing panel registration into this thread's registry) and AgentSession.
-// Creation is serialized so the transient `bindingThread` pointer can't be
-// clobbered by a concurrent boot.
+// Creation is serialized via createChain so first-load registration order is
+// deterministic; routing itself is async-scoped (router.run), not a global.
 let createChain = Promise.resolve();
 
 /**
@@ -1219,14 +1221,12 @@ function createThread(sm: SessionManager) {
         thread.resourceLoader = resourceLoader;
         // Route extension registration (setWidget/setStatus/registerMessage-
         // Renderer/…) to this thread. Extensions register during
-        // `resourceLoader.reload()` — NOT during createAgentSession — so
-        // bindingThread must be set *before* reload(), matching the /reload
-        // path (onReload). Setting it only around createAgentSession dropped
-        // every first-load registration onto the null registry until an
-        // explicit /reload (the real cause of TODO #11). createThread is
-        // serialized via createChain, so this transient pointer is safe.
-        bindingThread = thread;
-        try {
+        // `resourceLoader.reload()` — NOT during createAgentSession — so the
+        // routing scope must wrap reload(), matching the /reload path
+        // (onReload). Scoping only createAgentSession dropped every first-load
+        // registration onto the null registry until an explicit /reload (the
+        // real cause of TODO #11).
+        const session = await router.run(thread, async () => {
             await resourceLoader.reload();
             const created = await createAgentSession({
                 cwd: threadCwd,
@@ -1237,11 +1237,10 @@ function createThread(sm: SessionManager) {
                 modelRegistry,
             });
             thread.session = created.session;
-        } finally {
-            bindingThread = null;
-        }
+            return created.session;
+        });
 
-        await pinModel(thread.session);
+        await pinModel(session);
         thread.unsubscribe = subscribe(thread);
         threadRuntimes.set(thread.id, thread);
         if (thread.session) sessionIndex.set(thread.session, thread);
@@ -2132,25 +2131,24 @@ const commandsApi = {
     },
     // Execute a registered slash command by name for a thread. Resolves the
     // command off the session's extension runner and invokes its handler with a
-    // freshly built ExtensionCommandContext. `bindingThread` is set so any
-    // piweb surface mutations / sendMessage the handler makes route to *this*
-    // thread (mirrors the reload path).
+    // freshly built ExtensionCommandContext. The handler runs inside
+    // router.run(rt) so any piweb surface mutations / sendMessage it makes route
+    // to *this* thread (mirrors the reload path).
     async run(name: string, args: string, threadId?: string) {
         const rt = threadId ? threadRuntimes.get(threadId) : undefined;
         const runner = (rt?.session as any)?.extensionRunner;
         const cmd = runner?.getCommand?.(name);
         if (!rt || !cmd)
             return { ok: false, error: `unknown command: /${name}` };
-        bindingThread = rt;
-        try {
-            const ctx = runner.createCommandContext();
-            await cmd.handler(args ?? "", ctx);
-            return { ok: true };
-        } catch (err: any) {
-            return { ok: false, error: String(err?.message ?? err) };
-        } finally {
-            bindingThread = null;
-        }
+        return router.run(rt, async () => {
+            try {
+                const ctx = runner.createCommandContext();
+                await cmd.handler(args ?? "", ctx);
+                return { ok: true };
+            } catch (err: any) {
+                return { ok: false, error: String(err?.message ?? err) };
+            }
+        });
     },
 };
 
@@ -2322,12 +2320,7 @@ const trustApi = {
             // onReload path: clear surfaces, reload, re-broadcast).
             t.session.settingsManager?.setProjectTrusted?.(opt.trusted);
             t.piweb.clear();
-            bindingThread = t;
-            try {
-                await t.session.reload();
-            } finally {
-                bindingThread = null;
-            }
+            await router.run(t, () => t.session!.reload());
             bus.broadcastToThread(t.id, {
                 kind: "surfaces",
                 surfaces: t.piweb.snapshot(),
@@ -2810,10 +2803,9 @@ const server = createApp({
         const s = t?.session ?? sessionFor(threadId);
         if (!s) return;
         // Route this thread's registry for any extension command dispatched by
-        // s.prompt (e.g. a `/command` handler that calls piweb.select/notify).
-        // The prompt runs the handler before any event sets currentThread, so a
-        // fresh thread would otherwise fall back to the no-op registry.
-        if (t) currentThread = t;
+        // s.prompt (e.g. a `/command` handler that calls piweb.select/notify):
+        // the s.prompt call below is scoped in router.run(t) so it stays correct
+        // across the turn's awaits instead of falling back to the no-op registry.
         // While a turn is in flight, pi keeps letting you type: each message is
         // appended to the thread's steering queue instead of starting a second
         // concurrent turn. Steering messages are injected at the next message
@@ -2833,11 +2825,13 @@ const server = createApp({
         const promptOpts = imageBlocks
             ? { ...opts, images: imageBlocks }
             : opts;
-        s.prompt(text, promptOpts as any).catch((err: any) =>
-            bus.broadcastToThread(threadId, {
-                kind: "error",
-                text: String((err as any)?.message ?? err),
-            }),
+        router.run(t, () =>
+            s.prompt(text, promptOpts as any).catch((err: any) =>
+                bus.broadcastToThread(threadId, {
+                    kind: "error",
+                    text: String((err as any)?.message ?? err),
+                }),
+            ),
         );
     },
     /**
@@ -2989,48 +2983,47 @@ const server = createApp({
         const t = threadId ? threadRuntimes.get(threadId) : null;
         if (!t?.resourceLoader || !t.piweb || !t.session) return;
         t.piweb.clear();
-        bindingThread = t;
         try {
-            // Mirror the pi TUI's /reload: call session.reload(), NOT just
-            // resourceLoader.reload(). session.reload() re-evaluates extension
-            // modules from disk AND rebuilds the live session's runtime in
-            // place (tool registry, message renderers, providers, flags,
-            // shortcuts) via _buildRuntime(), so tool/renderer edits take
-            // effect without recreating the session or restarting pi-web.
-            // resourceLoader.reload() alone re-reads the module but leaves the
-            // running session bound to the stale runtime.
-            await t.session.reload();
-            bus.broadcastToThread(threadId, {
-                kind: "surfaces",
-                surfaces: t.piweb.snapshot(),
-            });
-            // refresh the intro view with the newly loaded resources (#5).
-            // `reload` tells the client to also echo the intro inline at the
-            // bottom of the transcript, not just refresh the pinned banner.
-            bus.broadcastToThread(threadId, {
-                kind: "welcome",
-                reload: true,
-                ...buildWelcome(t.resourceLoader),
-            });
-            // Surface any extension that FAILED to load as an inline error so a
-            // broken/new extension doesn't silently vanish — the reload
-            // otherwise looks clean and the missing `/command` is a mystery.
-            for (const e of extensionErrors(t.resourceLoader)) {
+            await router.run(t, async () => {
+                // Mirror the pi TUI's /reload: call session.reload(), NOT just
+                // resourceLoader.reload(). session.reload() re-evaluates extension
+                // modules from disk AND rebuilds the live session's runtime in
+                // place (tool registry, message renderers, providers, flags,
+                // shortcuts) via _buildRuntime(), so tool/renderer edits take
+                // effect without recreating the session or restarting pi-web.
+                // resourceLoader.reload() alone re-reads the module but leaves the
+                // running session bound to the stale runtime.
+                await t.session!.reload();
                 bus.broadcastToThread(threadId, {
-                    kind: "error",
-                    text: `extension ${e.label} failed to load: ${e.message}`,
+                    kind: "surfaces",
+                    surfaces: t.piweb!.snapshot(),
                 });
-            }
-            // re-assert the composer's thinking-level border after reload
-            // (mirrors the pi TUI re-running updateEditorBorderColor)
-            bus.broadcastToThread(threadId, thinkingLevelFrame(t.session));
+                // refresh the intro view with the newly loaded resources (#5).
+                // `reload` tells the client to also echo the intro inline at the
+                // bottom of the transcript, not just refresh the pinned banner.
+                bus.broadcastToThread(threadId, {
+                    kind: "welcome",
+                    reload: true,
+                    ...buildWelcome(t.resourceLoader),
+                });
+                // Surface any extension that FAILED to load as an inline error so a
+                // broken/new extension doesn't silently vanish — the reload
+                // otherwise looks clean and the missing `/command` is a mystery.
+                for (const e of extensionErrors(t.resourceLoader)) {
+                    bus.broadcastToThread(threadId, {
+                        kind: "error",
+                        text: `extension ${e.label} failed to load: ${e.message}`,
+                    });
+                }
+                // re-assert the composer's thinking-level border after reload
+                // (mirrors the pi TUI re-running updateEditorBorderColor)
+                bus.broadcastToThread(threadId, thinkingLevelFrame(t.session!));
+            });
         } catch (err) {
             bus.broadcastToThread(threadId, {
                 kind: "error",
                 text: "reload failed: " + String((err as any)?.message ?? err),
             });
-        } finally {
-            bindingThread = null;
         }
     },
 });
