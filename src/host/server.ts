@@ -26,8 +26,7 @@
  * thread id it targets.
  */
 import { readFile, readdir, unlink } from "node:fs/promises";
-import { statSync, existsSync, watch } from "node:fs";
-import type { FSWatcher } from "node:fs";
+import { statSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
     basename,
@@ -85,6 +84,12 @@ import { makeWebBundler } from "./build-web.ts";
 import { createBus, createApp } from "./app.ts";
 import { openApp, probeRunningInstance, browserHost } from "./open-app.ts";
 import { createThemeManager } from "./theme.ts";
+import {
+    createGitBranchWatcher,
+    type GitBranchWatcher,
+    type PiWebRegistry,
+    type ThreadRuntime,
+} from "./threads.ts";
 import { createRequire } from "node:module";
 
 // pi version, for the startup banner (mirrors the TUI's `pi v<version>` logo).
@@ -98,48 +103,8 @@ const PI_VERSION = (() => {
     }
 })();
 
-type PiWebRegistry = ReturnType<typeof createPiWebHost>;
-
 /** A serializable server->client message frame. */
 type ServerMessage = { kind: string; [k: string]: any };
-
-/** A live, independently-running conversation thread. */
-interface ThreadRuntime {
-    id: string;
-    cwd: string;
-    sm: SessionManager;
-    session: AgentSession | null;
-    pi: ExtensionAPI | null;
-    piweb: PiWebRegistry | null;
-    resourceLoader: DefaultResourceLoader | null;
-    unsubscribe: (() => void) | null;
-    busy: boolean;
-    /** Live git-branch watcher (drives `FooterData.gitBranch` reactively). */
-    gitWatcher: GitBranchWatcher | null;
-}
-
-/** Cached git branch + a filesystem watcher that refreshes it on checkout. */
-interface GitBranchWatcher {
-    getBranch(): string | null;
-    dispose(): void;
-}
-
-/**
- * A live, independently-running conversation thread.
- *
- * @typedef {object} ThreadRuntime
- * @property {string} id                       session id (stable registry key)
- * @property {string} cwd                      this thread's working directory
- * @property {SessionManager} sm               this thread's session manager
- * @property {AgentSession|null} session       the in-process agent session
- * @property {ExtensionAPI|null} pi            this thread's live ExtensionAPI
- * @property {PiWebRegistry|null} piweb        this thread's panel registry
- * @property {DefaultResourceLoader|null} resourceLoader  extension loader
- * @property {(() => void)|null} unsubscribe   detaches the event listener
- * @property {boolean} busy                    a turn is currently in flight
- */
-
-/** A serializable server->client message frame. @typedef {{kind:string,[k:string]:any}} ServerMessage */
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WEB = join(__dirname, "..", "web");
@@ -710,81 +675,6 @@ function evictThread(id: string) {
         if (t.session) sessionIndex.delete(t.session);
     }
     threadRuntimes.delete(id);
-}
-
-/**
- * Watch a repo's `.git` for HEAD/ref changes and keep the current branch name
- * cached, calling `onChange` when it flips (checkout / detach) — the host side
- * of `FooterData.gitBranch` (pi-tui `footerData.getGitBranch` + `onBranchChange`
- * parity). Best-effort: outside a repo it simply reports `null`.
- */
-function createGitBranchWatcher(
-    dir: string,
-    onChange: () => void,
-): GitBranchWatcher {
-    let branch: string | null = null;
-    let disposed = false;
-    let watcher: FSWatcher | null = null;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    const set = (val: string | null) => {
-        if (disposed || val === branch) return;
-        branch = val;
-        onChange();
-    };
-    const refresh = () => {
-        execFile(
-            "git",
-            ["rev-parse", "--abbrev-ref", "HEAD"],
-            { cwd: dir, timeout: 5000 },
-            (err, out) => {
-                if (disposed) return;
-                if (err) return set(null);
-                const b = String(out).trim();
-                if (b !== "HEAD") return set(b);
-                // Detached HEAD -> short SHA.
-                execFile(
-                    "git",
-                    ["rev-parse", "--short", "HEAD"],
-                    { cwd: dir, timeout: 5000 },
-                    (e2, o2) =>
-                        disposed || set(e2 ? null : `@${String(o2).trim()}`),
-                );
-            },
-        );
-    };
-    const schedule = () => {
-        if (timer) clearTimeout(timer);
-        timer = setTimeout(refresh, 150); // debounce rapid .git churn
-    };
-    try {
-        watcher = watch(join(dir, ".git"), { persistent: false }, (_e, f) => {
-            const name = f ? String(f) : "";
-            // HEAD flips on checkout; refs/packed-refs on branch create/delete.
-            if (
-                !name ||
-                name === "HEAD" ||
-                name === "packed-refs" ||
-                name.startsWith("refs")
-            )
-                schedule();
-        });
-    } catch {
-        /* not a git repo (or .git missing) — branch stays null */
-    }
-    refresh();
-    return {
-        getBranch: () => branch,
-        dispose: () => {
-            disposed = true;
-            try {
-                watcher?.close();
-            } catch {
-                /* ignore */
-            }
-            if (timer) clearTimeout(timer);
-        },
-    };
 }
 
 /**
