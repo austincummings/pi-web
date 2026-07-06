@@ -1095,3 +1095,130 @@ test("clone/fork/import errors return 400 with the message", async () => {
         server.close();
     }
 });
+
+test("login routes: providers, start streams a login frame + returns loginId, respond/cancel/logout forward", async () => {
+    const calls = [];
+    const bus = createBus();
+    const piweb = createPiWebHost({
+        broadcast: () => {},
+        getPi: () => ({}),
+    });
+    const server = createApp({
+        web: "src/web",
+        bus,
+        piweb,
+        loginApi: {
+            providers: (mode, threadId) => {
+                calls.push(`providers:${mode}:${threadId}`);
+                return {
+                    items: [
+                        {
+                            id: "anthropic",
+                            name: "Anthropic",
+                            authType: "oauth",
+                            configured: false,
+                        },
+                        {
+                            id: "openai",
+                            name: "OpenAI",
+                            authType: "api_key",
+                            configured: false,
+                        },
+                    ],
+                };
+            },
+            start: (provider, threadId, authType) => {
+                calls.push(`start:${provider}:${threadId}:${authType}`);
+                // mirror the host: stream a `login` frame to the acting thread
+                bus.broadcastToThread(threadId, {
+                    kind: "login",
+                    loginId: "login_test",
+                    event: "auth_url",
+                    url: "https://example.com/oauth",
+                });
+                return {
+                    ok: true,
+                    loginId: "login_test",
+                    provider: { id: provider, name: "Anthropic" },
+                };
+            },
+            respond: (loginId, value) => {
+                calls.push(`respond:${loginId}:${value}`);
+                return { ok: true };
+            },
+            cancel: (loginId) => {
+                calls.push(`cancel:${loginId}`);
+                return { ok: true };
+            },
+            logout: (provider, threadId) => {
+                calls.push(`logout:${provider}:${threadId}`);
+                return { ok: true };
+            },
+        },
+    });
+    const base = await new Promise((r) =>
+        server.listen(0, "127.0.0.1", () =>
+            r(`http://127.0.0.1:${server.address().port}`),
+        ),
+    );
+    try {
+        const listed = await (
+            await fetch(`${base}/login/providers?mode=login&thread=t1`)
+        ).json();
+        expect(listed.items[0].id).toBe("anthropic");
+        expect(listed.items[1].authType).toBe("api_key");
+        expect(calls).toContain("providers:login:t1");
+
+        // Watch this thread's SSE so we see the streamed login frame.
+        const events = frameReader(await fetch(`${base}/events?thread=t1`));
+
+        const start = await (
+            await fetch(`${base}/login/start`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    provider: "anthropic",
+                    threadId: "t1",
+                    authType: "oauth",
+                }),
+            })
+        ).json();
+        expect(start.loginId).toBe("login_test");
+        expect(calls).toContain("start:anthropic:t1:oauth");
+
+        let frame;
+        for (let i = 0; i < 6; i++) {
+            frame = await events.next();
+            if (frame.kind === "login") break;
+        }
+        expect(frame.kind).toBe("login");
+        expect(frame.event).toBe("auth_url");
+        expect(frame.url).toContain("oauth");
+
+        await fetch(`${base}/login/respond`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ loginId: "login_test", value: "code123" }),
+        });
+        await fetch(`${base}/login/cancel`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ loginId: "login_test" }),
+        });
+        const out = await (
+            await fetch(`${base}/login/logout`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ provider: "anthropic", threadId: "t1" }),
+            })
+        ).json();
+        expect(out.ok).toBe(true);
+        expect(calls).toContain("respond:login_test:code123");
+        expect(calls).toContain("cancel:login_test");
+        expect(calls).toContain("logout:anthropic:t1");
+
+        events.close();
+    } finally {
+        server.close();
+    }
+});

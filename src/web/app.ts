@@ -11,6 +11,18 @@ import {
     hasResources,
     type WelcomeInfo,
 } from "./welcome.ts";
+import type {
+    ServerFrame,
+    FooterFrame,
+    HeaderFrame,
+    CustomFrame,
+    SurfacesPayload,
+    SurfaceCard,
+    StatusSegment,
+    OverlayOptions,
+    ImageRef,
+    ToolMsg,
+} from "../shared/frames.ts";
 // NOTE: these modules are imported only for their side effect —
 // registering the <pi-frame> / <pi-tool> / <pi-thinking> custom elements via
 // customElements.define(). We reference their classes solely in type
@@ -33,6 +45,8 @@ import "./pi-picker.ts";
 import type { PiPicker } from "./pi-picker.ts";
 import "./pi-model-picker.ts";
 import type { PiModelPicker } from "./pi-model-picker.ts";
+import "./pi-login.ts";
+import type { PiLogin } from "./pi-login.ts";
 import type {
     PiFrame,
     PiFrameActionDetail,
@@ -278,6 +292,16 @@ const COMMANDS = [
         description: "Switch the active model",
     },
     {
+        value: "/login",
+        label: "/login",
+        description: "Sign in to a model provider (OAuth)",
+    },
+    {
+        value: "/logout",
+        label: "/logout",
+        description: "Remove stored credentials for a provider",
+    },
+    {
         value: "/session",
         label: "/session",
         description: "Show session info and stats",
@@ -329,7 +353,7 @@ const COMMANDS = [
     },
 ];
 
-function bubble(role: string, text = "", images: any[] = []) {
+function bubble(role: string, text = "", images: ImageRef[] = []) {
     clearEmpty();
     const el = document.createElement("div");
     el.className = `msg ${role}`;
@@ -373,7 +397,7 @@ function renderAssistant(el: HTMLElement, text: string) {
 // serialized component `tree` (from a registered message renderer), render it
 // via renderNode; otherwise render the message's text as markdown. The
 // customType is shown as the role label (mirrors the TUI's customMessageLabel).
-function renderCustomMessage(m: any) {
+function renderCustomMessage(m: CustomFrame) {
     clearEmpty();
     const el = document.createElement("div");
     el.className = "msg custom";
@@ -401,15 +425,12 @@ function renderCustomMessage(m: any) {
 // One <pi-tool> card per tool call (keyed by the `call-id` attribute). The
 // element owns its own state, expand/collapse, and rendering (see ./pi-tool.ts);
 // here we just create/look up the card and feed it SSE frames. The global alt+o
-// toggle targets the last <pi-tool> in the transcript.
+// toggle flips every <pi-tool> in the transcript at once (see
+// setAllToolsExpanded), mirroring the TUI's session-wide app.tools.expand.
 function toolCard(id: string): PiTool | null {
     return $transcript.querySelector(
         `pi-tool[call-id="${CSS.escape(id)}"]`,
     ) as PiTool | null;
-}
-function lastToolCard(): PiTool | null {
-    const all = $transcript.querySelectorAll("pi-tool");
-    return (all[all.length - 1] as PiTool) ?? null;
 }
 // The agent's working directory (from the `config` frame); used to show
 // cwd-relative tool paths like the TUI.
@@ -474,6 +495,20 @@ function fillWelcome(el: HTMLElement, expanded: boolean, onToggle: () => void) {
             secs.appendChild(sec);
         }
         el.appendChild(secs);
+    }
+
+    // Extensions that failed to load: always shown (never hidden behind the
+    // collapse toggle) so a broken/new extension is impossible to miss.
+    if (info.errors && info.errors.length) {
+        const errs = document.createElement("div");
+        errs.className = "welcome-errors";
+        for (const e of info.errors) {
+            const row = document.createElement("div");
+            row.className = "welcome-error";
+            row.textContent = `⚠ ${e.label} failed to load: ${e.message}`;
+            errs.appendChild(row);
+        }
+        el.appendChild(errs);
     }
 
     const toggle = document.createElement("div");
@@ -560,7 +595,7 @@ function followBottom() {
 // Apply a `tool` SSE frame: create or look up the <pi-tool> card for this call
 // id, feed it the frame, and auto-follow only if we were near the bottom (so we
 // don't yank the view while the user reads back).
-function applyToolFrame(m: any) {
+function applyToolFrame(m: ToolMsg) {
     let el = toolCard(m.id);
     if (!el) {
         clearEmpty();
@@ -744,7 +779,7 @@ function renderNode(node: any, surfaceId: string | null) {
 // ---- surfaces: docks (aboveEditor/belowEditor), overlays, status, toasts ----
 let openOverlays: string[] = []; // ids of currently-open extension overlays
 
-function surfaceCard(card: any) {
+function surfaceCard(card: SurfaceCard) {
     const el = document.createElement("div");
     el.className = "surface";
     if (card.title) {
@@ -760,7 +795,7 @@ function surfaceCard(card: any) {
     return el;
 }
 
-function renderDock(el: HTMLElement | null, cards: any[]) {
+function renderDock(el: HTMLElement | null, cards?: SurfaceCard[]) {
     if (!el) return;
     el.innerHTML = "";
     const has = cards && cards.length;
@@ -769,9 +804,9 @@ function renderDock(el: HTMLElement | null, cards: any[]) {
 }
 
 // Apply a few overlay option hints (anchor/size) to the modal card.
-function applyOverlayOptions(card: HTMLElement, options: any) {
+function applyOverlayOptions(card: HTMLElement, options?: OverlayOptions) {
     if (!options) return;
-    const sz = (v: any) => (typeof v === "number" ? `${v}px` : v);
+    const sz = (v: number | string) => (typeof v === "number" ? `${v}px` : v);
     if (options.width != null) card.style.width = sz(options.width);
     if (options.maxHeight != null) card.style.maxHeight = sz(options.maxHeight);
     const a = options.anchor;
@@ -794,7 +829,7 @@ function applyOverlayOptions(card: HTMLElement, options: any) {
     }
 }
 
-function renderOverlays(overlays: any[]) {
+function renderOverlays(overlays?: SurfaceCard[]) {
     if (!$overlayLayer) return;
     $overlayLayer.innerHTML = "";
     $overlayLayer.style.alignItems = "center";
@@ -833,7 +868,7 @@ function fmtTokens(n: number) {
  * FooterComponent: a pwd/session line and a token-stats / `<model> • thinking
  * <level>` line. @param {any} f
  */
-function renderFooter(f: any) {
+function renderFooter(f: FooterFrame | null) {
     if (!$contextbar) return;
     if (!f) {
         $contextbar.classList.remove("show");
@@ -926,7 +961,7 @@ function renderFooter(f: any) {
  * frame (pi-tui `ctx.ui.setHeader` parity). `custom === null` restores the
  * built-in header (nothing shown here). @param {any} f
  */
-function renderHeader(f: any) {
+function renderHeader(f: HeaderFrame) {
     if (!$customheader) return;
     $customheader.innerHTML = "";
     const tree = f?.custom;
@@ -938,10 +973,10 @@ function renderHeader(f: any) {
     $customheader.classList.add("show");
 }
 
-function renderStatus(segments: any[]) {
+function renderStatus(segments?: StatusSegment[]) {
     if (!$statusbar) return;
     $statusbar.innerHTML = "";
-    const segs: any[] = segments || [];
+    const segs: StatusSegment[] = segments || [];
     $statusbar.classList.toggle("show", segs.length > 0);
     // pi-tui setStatus segments are plain keyed text, rendered in key order.
     for (const s of segs) {
@@ -952,7 +987,7 @@ function renderStatus(segments: any[]) {
     }
 }
 
-function renderSurfaces(s: any) {
+function renderSurfaces(s: SurfacesPayload) {
     // <pi-frame> elements are re-created on every surface render; each owns its
     // own message listener (added/removed via connected/disconnectedCallback),
     // so there's no central registry to reset here.
@@ -961,7 +996,7 @@ function renderSurfaces(s: any) {
     renderDock($dockBelowEditor, docks.belowEditor);
     renderOverlays(s?.overlays);
     renderStatus(s?.status);
-    dialog.render(s?.dialogs);
+    dialog.render(s?.dialogs ?? []);
 }
 
 // Close the top extension overlay (Esc / backdrop). Server-driven: it toggles
@@ -1782,6 +1817,12 @@ function runCommand(cmd: string, arg: string) {
         case "/model":
             openModelPicker(arg);
             return true;
+        case "/login":
+            openLogin("login");
+            return true;
+        case "/logout":
+            openLogin("logout");
+            return true;
         case "/session":
             showSessionInfo();
             return true;
@@ -2083,6 +2124,59 @@ async function openModelPicker(query = "") {
     modelPicker.open(data?.items || [], query);
 }
 
+// ---- /login + /logout ----------------------------------------------------
+// The OAuth login flow lives in <pi-login>; app.ts fetches the provider list,
+// starts the flow, and relays the element's prompt answers / cancellation to
+// the host. Streaming `login` frames are applied to the element in
+// onSseMessage (they carry the loginId that keys respond/cancel).
+const loginEl = document.getElementById("login") as PiLogin;
+
+// `/login` (mode "login") / `/logout` (mode "logout") — open the provider list.
+async function openLogin(mode: "login" | "logout" = "login") {
+    const q = new URLSearchParams({ mode });
+    if (activeThreadId) q.set("thread", activeThreadId);
+    const data = await getJson("/login/providers?" + q.toString());
+    loginEl.openProviders(data?.items || [], mode);
+}
+
+// Provider chosen: start login (switching the element to its flow view) or, in
+// logout mode, drop the stored credentials.
+loginEl.addEventListener("pi-login-pick", async (e) => {
+    const { providerId, mode, authType } = (e as CustomEvent).detail;
+    if (mode === "logout") {
+        loginEl.close();
+        $prompt?.focus();
+        const r = await (
+            await postThread("/login/logout", { provider: providerId })
+        ).json();
+        if (r?.ok) notice(`Logged out of ${providerId}`);
+        else notice("logout failed: " + (r?.error || "unknown error"));
+        return;
+    }
+    const r = await (
+        await postThread("/login/start", { provider: providerId, authType })
+    ).json();
+    if (r?.error) {
+        loginEl.close();
+        notice("login failed: " + r.error);
+        return;
+    }
+    loginEl.beginFlow(r.loginId, r.provider);
+});
+
+// Answer an interactive prompt (paste-code / secret / select) → host.
+loginEl.addEventListener("pi-login-respond", (e) => {
+    const { loginId, value } = (e as CustomEvent).detail;
+    postThread("/login/respond", { loginId, value });
+});
+
+// Dismissed (Escape / backdrop / dialog close) → abort the flow host-side.
+loginEl.addEventListener("pi-login-cancel", (e) => {
+    const { loginId } = (e as CustomEvent).detail;
+    if (loginId) postThread("/login/cancel", { loginId });
+    $prompt?.focus();
+});
+
 function showHotkeys() {
     const wrap = document.createElement("div");
     const keys = [
@@ -2256,16 +2350,19 @@ document.addEventListener("keydown", (e) => {
     }
 });
 
-// Alt+O expands/collapses the most recent tool result (the web analogue of
-// pi-tui's "ctrl+o more"; Ctrl+O is reserved by the browser for "open file",
-// so Alt+O is used, mirroring the Alt+T thinking toggle).
+// Alt+O expands/collapses tool output (the web analogue of pi-tui's "ctrl+o"
+// app.tools.expand; Ctrl+O is reserved by the browser for "open file", so Alt+O
+// is used, mirroring the Alt+T thinking toggle). Like the TUI's
+// toggleToolOutputExpansion, this is a single session-wide flag applied to
+// EVERY tool card (and inherited by future ones), not a per-card toggle — see
+// setAllToolsExpanded. Per-card clicks on the "more" affordance still work for
+// one-off tweaks.
 document.addEventListener("keydown", (e) => {
     // e.code so Option/Alt remaps (macOS Alt+O -> "ø") don't break the match.
     if (e.code === "KeyO" && e.altKey && !e.ctrlKey && !e.metaKey) {
-        const el = lastToolCard();
-        if (!el) return;
+        if (!$transcript.querySelector("pi-tool")) return;
         e.preventDefault();
-        el.toggleExpanded();
+        setAllToolsExpanded(!toolsExpandedDefault);
     }
 });
 
@@ -2331,7 +2428,7 @@ function reopenStream() {
 }
 
 function onSseMessage(e: MessageEvent) {
-    const m = JSON.parse(e.data);
+    const m = JSON.parse(e.data) as ServerFrame;
     switch (m.kind) {
         case "config":
             // working directory, so tool cards can show cwd-relative paths
@@ -2345,6 +2442,7 @@ function onSseMessage(e: MessageEvent) {
             welcomeInfo = {
                 version: m.version || "",
                 sections: m.sections || [],
+                errors: m.errors || [],
             };
             renderWelcome();
             // After a /reload, also show the intro inline at the bottom so the
@@ -2366,6 +2464,11 @@ function onSseMessage(e: MessageEvent) {
             break;
         case "notify":
             toast(m.message, m.level);
+            break;
+        case "login":
+            // A step in the OAuth /login flow: auth URL / device code / prompt /
+            // progress / done. <pi-login> owns rendering + the response POSTs.
+            loginEl.applyEvent(m);
             break;
         case "footer":
             // default below-composer context bar (pwd/session + tokens + model)
@@ -2504,7 +2607,7 @@ function onSseMessage(e: MessageEvent) {
             break;
         case "bash":
             if (m.status === "start") {
-                bashEl = bashBubble(m.command, m.excludeFromContext);
+                bashEl = bashBubble(m.command ?? "", !!m.excludeFromContext);
                 // Seed the Up/Down input history with the full `!`/`!!` text
                 // (mirrors the pi TUI, which stores run bash commands too).
                 if (m.command)

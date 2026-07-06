@@ -10,10 +10,17 @@ export interface WelcomeSection {
     items: string[];
 }
 
+/** An extension that failed to load, with a short label + the error message. */
+export interface WelcomeError {
+    label: string;
+    message: string;
+}
+
 /** The full intro payload the host sends on connect. */
 export interface WelcomeInfo {
     version: string;
     sections: WelcomeSection[];
+    errors?: WelcomeError[];
 }
 
 /**

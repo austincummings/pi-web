@@ -62,7 +62,9 @@ export class PiDialog extends HTMLElement {
         this.#active = { id: d.id, dialog: d.dialog, rows: [] };
         this.#build(d);
         this.classList.add("show");
-        this.dispatchEvent(new CustomEvent("pi-dialog-open", { bubbles: true }));
+        this.dispatchEvent(
+            new CustomEvent("pi-dialog-open", { bubbles: true }),
+        );
     }
 
     // Send the user's answer back to the awaiting extension. `value` is the
@@ -83,7 +85,9 @@ export class PiDialog extends HTMLElement {
     #setSel(i: number, rows: HTMLElement[]) {
         if (!rows.length) return;
         this.#sel = (i + rows.length) % rows.length;
-        rows.forEach((el, idx) => el.classList.toggle("sel", idx === this.#sel));
+        rows.forEach((el, idx) =>
+            el.classList.toggle("sel", idx === this.#sel),
+        );
         rows[this.#sel].scrollIntoView({ block: "nearest" });
     }
 
@@ -156,7 +160,10 @@ export class PiDialog extends HTMLElement {
             // Enter submits a single-line input; the editor keeps Enter for
             // newlines (submit via the button or Ctrl/Cmd+Enter).
             (field as HTMLElement).addEventListener("keydown", (e: any) => {
-                if (e.key === "Enter" && (!multiline || e.ctrlKey || e.metaKey)) {
+                if (
+                    e.key === "Enter" &&
+                    (!multiline || e.ctrlKey || e.metaKey)
+                ) {
                     e.preventDefault();
                     this.#answer(field.value);
                 }

@@ -19,11 +19,16 @@ async function events(page: import("@playwright/test").Page) {
 }
 
 /** Open a nav picker with the given row labels. */
-async function openList(page: import("@playwright/test").Page, labels: string[]) {
+async function openList(
+    page: import("@playwright/test").Page,
+    labels: string[],
+) {
     await page.evaluate((l) => (window as any).openList(l), labels);
 }
 
-test("open shows the overlay and preselects the first row", async ({ page }) => {
+test("open shows the overlay and preselects the first row", async ({
+    page,
+}) => {
     await openList(page, ["alpha", "beta", "gamma"]);
     const ov = page.locator("#overlay");
     await expect(ov).toHaveClass(/show/);

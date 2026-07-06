@@ -117,6 +117,22 @@ export interface AppOptions {
             threadId?: string,
         ) => Promise<{ ok: boolean; error?: string }>;
     };
+    /**
+     * OAuth `/login` flow (pi-tui parity). `start` kicks off the flow (streaming
+     * `login` frames over SSE) and returns a `loginId`; `respond`/`cancel` route
+     * the browser's answer to the awaiting interactive prompt keyed by that id.
+     */
+    loginApi?: {
+        providers: (mode?: string, threadId?: string) => any | Promise<any>;
+        start: (
+            providerId: string,
+            threadId?: string,
+            authType?: string,
+        ) => any | Promise<any>;
+        respond: (loginId: string, value: string) => any;
+        cancel: (loginId: string) => any;
+        logout: (providerId: string, threadId?: string) => any;
+    };
     trustApi?: {
         get: (threadId?: string) =>
             | {
@@ -235,6 +251,7 @@ export function createApp({
     sessionApi,
     modelApi,
     commandsApi,
+    loginApi,
     trustApi,
     autocomplete,
     onBash,
@@ -366,6 +383,17 @@ export function createApp({
         );
     });
 
+    // OAuth providers available for the `/login` picker (read-only).
+    router.get("/login/providers", async ({ res, url }) => {
+        const threadId = url.searchParams.get("thread") || undefined;
+        const mode = url.searchParams.get("mode") || undefined;
+        sendJson(
+            res,
+            200,
+            (await loginApi?.providers?.(mode, threadId)) ?? { items: [] },
+        );
+    });
+
     // extension/prompt/skill slash commands for the `/` typeahead (read-only)
     router.get("/commands", async ({ res, url }) => {
         const threadId = url.searchParams.get("thread") || undefined;
@@ -478,6 +506,38 @@ export function createApp({
                 body.threadId || undefined,
             )) ?? {};
         sendJson(res, 200, result);
+    });
+
+    // ---- OAuth /login flow --------------------------------------------------
+    // Begin login (streams `login` frames over SSE; returns a loginId).
+    router.post("/login/start", async ({ res, body }) => {
+        const result = (await loginApi?.start?.(
+            String(body.provider || ""),
+            body.threadId || undefined,
+            body.authType || undefined,
+        )) ?? { error: "login unsupported" };
+        sendJson(res, result.error ? 400 : 200, result);
+    });
+    // Answer the outstanding interactive prompt (onPrompt/manual-code/select).
+    router.post("/login/respond", ({ res, body }) => {
+        loginApi?.respond?.(
+            String(body.loginId || ""),
+            String(body.value ?? ""),
+        );
+        res.writeHead(202).end();
+    });
+    // Cancel the whole flow (Esc / backdrop / dialog close).
+    router.post("/login/cancel", ({ res, body }) => {
+        loginApi?.cancel?.(String(body.loginId || ""));
+        res.writeHead(202).end();
+    });
+    // Remove stored credentials for a provider (`/logout`).
+    router.post("/login/logout", async ({ res, body }) => {
+        const result = (await loginApi?.logout?.(
+            String(body.provider || ""),
+            body.threadId || undefined,
+        )) ?? { ok: false };
+        sendJson(res, result.ok ? 200 : 400, result);
     });
 
     // Apply a project-trust decision, then reload resources under it.

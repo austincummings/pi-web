@@ -2,14 +2,16 @@
 //
 // Mirrors pi-tui's default tool-result view: a header (pending marker + bold
 // name + accented primary arg + muted context) and a result body collapsed to
-// MAX_TOOL_LINES until expanded (click the "more" affordance, or alt+o on the
-// last card). The TUI conveys status by tinting the whole block rather than a
-// glyph, so the element carries the `.tool` / `.tool.pending` / `.tool.error`
+// MAX_TOOL_LINES until expanded (click the "more" affordance for this one card,
+// or alt+o to toggle every card at once). The TUI conveys status by tinting the
+// whole block rather than a glyph, so the element carries the `.tool` /
+// `.tool.pending` / `.tool.error`
 // classes and the shared stylesheet does the rest (light DOM, no Shadow DOM).
 //
 // The element owns its own `info` state, expand/collapse, and rendering. The
-// host feeds it SSE `tool` frames via apply() and toggles the last card via
-// toggleExpanded(); scrolling stays with the host (it owns the transcript).
+// host feeds it SSE `tool` frames via apply() and drives expansion via
+// setExpanded() (session-wide alt+o) or toggleExpanded() (per-card click);
+// scrolling stays with the host (it owns the transcript).
 
 import {
     toolTitle,

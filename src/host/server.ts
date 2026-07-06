@@ -1503,6 +1503,26 @@ function resourceLabel(p: string) {
     return rel;
 }
 
+// Extensions that FAILED to load (bad import, runtime throw in the factory,
+// jiti/parse error, …). The core resource loader swallows these into
+// `getExtensions().errors` instead of throwing, so without surfacing them a
+// newly added / broken extension silently vanishes: `/reload` looks successful,
+// the welcome banner just omits it, and its `/command` never appears. We lift
+// them into the welcome payload + an inline error on reload so the user learns
+// *why* it didn't load. Inline factories (`<inline:…>`) are skipped.
+function extensionErrors(rl: any): { label: string; message: string }[] {
+    try {
+        return (rl?.getExtensions().errors ?? [])
+            .filter((e: any) => e && !String(e.path).startsWith("<"))
+            .map((e: any) => ({
+                label: resourceLabel(String(e.path)),
+                message: String(e.error?.message ?? e.error ?? "load failed"),
+            }));
+    } catch {
+        return [];
+    }
+}
+
 // Gather the loaded resources for the startup/reload intro view, mirroring the
 // TUI's `showLoadedResources` sections (Context, Skills, Prompts, Extensions,
 // Themes). Each accessor is guarded so one broken loader can't sink the banner.
@@ -1551,7 +1571,7 @@ function buildWelcome(rl: any) {
                 .map((t: any) => t.name || resourceLabel(t.sourcePath)),
         );
     }
-    return { version: PI_VERSION, sections };
+    return { version: PI_VERSION, sections, errors: extensionErrors(rl) };
 }
 
 async function handleConnect(
@@ -2452,8 +2472,7 @@ let lastThemeKeys: string[] | undefined;
 // absent now is sent as "" so the client removes the custom property and falls
 // back to its :root default (full reset on theme-disable).
 function broadcastTheme(vars: Record<string, string>) {
-    if (lastThemeKeys === undefined)
-        lastThemeKeys = Object.keys(piThemeVars());
+    if (lastThemeKeys === undefined) lastThemeKeys = Object.keys(piThemeVars());
     const frame: Record<string, string> = { ...vars };
     for (const k of lastThemeKeys) if (!(k in frame)) frame[k] = "";
     lastThemeKeys = Object.keys(vars);
@@ -2675,6 +2694,370 @@ const trustApi = {
     },
 };
 
+// ---- login (/login) ------------------------------------------------------
+// Mirror the pi TUI's OAuth /login flow. The TUI drives `authStorage.login()`
+// with a set of callbacks that push UI (auth URL / device code / prompts) and
+// await user input; we reproduce that over the web bus. Each callback becomes a
+// `login` frame broadcast to the acting thread, and the interactive callbacks
+// (`onPrompt`/`onManualCodeInput`/`onSelect`) register a single-slot pending
+// promise that POST `/login/respond` resolves. This is host plumbing (it owns
+// `authStorage`/`modelRegistry`), so it lives here alongside `modelApi` rather
+// than in an extension.
+type PendingLogin = {
+    threadId?: string;
+    abort: AbortController;
+    // the one outstanding interactive prompt, if any
+    resolve?: (value: string) => void;
+    reject?: (err: Error) => void;
+};
+const loginSessions = new Map<string, PendingLogin>();
+
+// Re-broadcast the footer (its `<model>`/subscription segment reflects auth) so
+// login/logout immediately updates the context bar, mirroring `modelApi.set`.
+function refreshAuthFooter(threadId?: string) {
+    const s = sessionFor(threadId);
+    if (!s) return;
+    const cwdOf = (threadId ? threadRuntimes.get(threadId) : undefined)?.cwd;
+    bus.broadcastToThread(threadId, footerFrame(s, cwdOf));
+}
+
+// Friendly provider name (falls back to the id when unknown). Mirrors the
+// TUI's modelRegistry.getProviderDisplayName resolution.
+function providerDisplayName(id: string): string {
+    try {
+        return modelRegistry.getProviderDisplayName(id) || id;
+    } catch {
+        return id;
+    }
+}
+// Whether a provider offers an API-key login (mirrors the TUI's
+// isApiKeyLoginProvider): true when it has a known display name, otherwise true
+// for custom providers unless they're OAuth-only. We use the display-name
+// heuristic (name !== id) rather than importing the SDK's internal built-in
+// tables, so it also covers extension-registered providers.
+function isApiKeyLoginProvider(id: string, oauthIds: Set<string>): boolean {
+    if (providerDisplayName(id) !== id) return true;
+    if (oauthIds.has(id)) return false;
+    return true;
+}
+
+const loginApi = {
+    /**
+     * Providers for the `/login` (and `/logout`) picker. For `login` this is the
+     * OAuth/subscription providers *plus* every API-key-capable model provider
+     * (the same union the pi TUI shows), each tagged with `authType`. For
+     * `logout` it's whatever currently has a stored credential.
+     * @param {string} [mode] "login" | "logout"
+     * @param {string} [threadId]
+     */
+    providers(mode?: string, _threadId?: string) {
+        const statusOf = (id: string) => {
+            try {
+                return authStorage.getAuthStatus(id);
+            } catch {
+                return {} as any;
+            }
+        };
+
+        if (mode === "logout") {
+            // Everything with a stored credential (api_key or oauth), like the
+            // TUI's getLogoutProviderOptions.
+            let stored: string[] = [];
+            try {
+                stored = authStorage.list();
+            } catch {
+                /* best-effort */
+            }
+            const items = stored
+                .map((id) => {
+                    let cred: any;
+                    try {
+                        cred = authStorage.get(id);
+                    } catch {
+                        /* skip unreadable */
+                    }
+                    if (!cred) return null;
+                    return {
+                        id,
+                        name: providerDisplayName(id),
+                        authType: cred.type ?? "api_key",
+                        configured: true,
+                    };
+                })
+                .filter(Boolean)
+                .sort((a: any, b: any) => a.name.localeCompare(b.name));
+            return { items };
+        }
+
+        let oauth: any[] = [];
+        try {
+            oauth = authStorage.getOAuthProviders();
+        } catch {
+            /* best-effort */
+        }
+        const oauthIds = new Set<string>(oauth.map((p: any) => p.id));
+
+        // Subscription (OAuth) providers first.
+        const items: any[] = oauth.map((p: any) => ({
+            id: p.id,
+            name: p.name ?? p.id,
+            authType: "oauth",
+            usesCallbackServer: !!p.usesCallbackServer,
+            configured: !!statusOf(p.id)?.configured,
+        }));
+
+        // API-key providers: the distinct providers across the model catalog
+        // (same source as the TUI's getLoginProviderOptions).
+        const seen = new Set<string>();
+        let models: any[] = [];
+        try {
+            models = modelRegistry.getAll();
+        } catch {
+            /* best-effort */
+        }
+        for (const m of models) {
+            const pid = m?.provider;
+            if (!pid || seen.has(pid)) continue;
+            seen.add(pid);
+            if (!isApiKeyLoginProvider(pid, oauthIds)) continue;
+            items.push({
+                id: pid,
+                name: providerDisplayName(pid),
+                authType: "api_key",
+                configured: !!statusOf(pid)?.configured,
+            });
+        }
+
+        // Sort by name; within a name, subscription (OAuth) before API key.
+        items.sort(
+            (a: any, b: any) =>
+                a.name.localeCompare(b.name) ||
+                (a.authType === b.authType
+                    ? 0
+                    : a.authType === "oauth"
+                      ? -1
+                      : 1),
+        );
+        return { items };
+    },
+
+    /**
+     * Begin an OAuth login. Returns a `loginId` the client uses to route its
+     * prompt responses; the flow itself streams `login` frames over SSE. The
+     * `authStorage.login()` promise runs detached so the POST returns promptly.
+     * @param {string} providerId
+     * @param {string} [threadId]
+     */
+    async start(providerId: string, threadId?: string, authType?: string) {
+        let oauthProvider: any;
+        try {
+            oauthProvider = authStorage
+                .getOAuthProviders()
+                .find((p: any) => p.id === providerId);
+        } catch {
+            /* fall through */
+        }
+        // Explicit authType wins (a provider like Anthropic offers both an OAuth
+        // subscription *and* an API key); otherwise infer from whether the
+        // provider registers an OAuth flow.
+        const isOAuth = authType ? authType === "oauth" : !!oauthProvider;
+        if (isOAuth && !oauthProvider)
+            return { error: `unknown OAuth provider: ${providerId}` };
+
+        const loginId = "login_" + Math.random().toString(36).slice(2, 10);
+        const abort = new AbortController();
+        const pending: PendingLogin = { threadId, abort };
+        loginSessions.set(loginId, pending);
+
+        const emit = (event: Record<string, unknown>) =>
+            bus.broadcastToThread(threadId, {
+                kind: "login",
+                loginId,
+                ...event,
+            });
+        // Register the single outstanding interactive prompt and await its
+        // answer (delivered by respond()) or rejection (by cancel()).
+        const awaitInput = () =>
+            new Promise<string>((resolve, reject) => {
+                pending.resolve = resolve;
+                pending.reject = reject;
+            });
+
+        const name = isOAuth
+            ? (oauthProvider.name ?? providerId)
+            : providerDisplayName(providerId);
+        const prov = { id: providerId, name };
+        emit({ event: "start", provider: prov });
+
+        if (!isOAuth) {
+            // API-key providers aren't driven by authStorage.login(): prompt for
+            // the key, store it, and refresh models — mirroring the TUI's
+            // showApiKeyLoginDialog. (Amazon Bedrock really wants AWS creds / a
+            // bearer token; we still store whatever value is entered.)
+            void (async () => {
+                try {
+                    emit({
+                        event: "prompt",
+                        promptKind: "secret",
+                        message: `Enter API key for ${name}:`,
+                    });
+                    const key = (await awaitInput()).trim();
+                    if (!key) throw new Error("API key cannot be empty.");
+                    authStorage.set(providerId, { type: "api_key", key });
+                    try {
+                        modelRegistry.refresh();
+                    } catch {
+                        /* refresh is best-effort */
+                    }
+                    emit({ event: "done", ok: true, provider: prov });
+                    bus.broadcastToThread(threadId, {
+                        kind: "notify",
+                        level: "success",
+                        message: `Saved API key for ${name}`,
+                    });
+                    refreshAuthFooter(threadId);
+                } catch (err: any) {
+                    const msg = String(err?.message ?? err);
+                    if (msg === "Login cancelled") emit({ event: "cancelled" });
+                    else emit({ event: "done", ok: false, error: msg });
+                } finally {
+                    loginSessions.delete(loginId);
+                }
+            })();
+            return { ok: true, loginId, provider: prov, authType: "api_key" };
+        }
+
+        void (async () => {
+            try {
+                await authStorage.login(providerId, {
+                    onAuth: (info: any) =>
+                        emit({
+                            event: "auth_url",
+                            url: info.url,
+                            instructions: info.instructions,
+                        }),
+                    onDeviceCode: (info: any) =>
+                        emit({ event: "device_code", ...info }),
+                    onPrompt: async (prompt: any) => {
+                        emit({
+                            event: "prompt",
+                            promptKind: "text",
+                            message: prompt.message,
+                            placeholder: prompt.placeholder,
+                            allowEmpty: !!prompt.allowEmpty,
+                        });
+                        return awaitInput();
+                    },
+                    // Callback-server providers race a browser redirect against a
+                    // manually pasted redirect URL; we offer the paste box.
+                    onManualCodeInput: async () => {
+                        emit({
+                            event: "prompt",
+                            promptKind: "manual_code",
+                            message:
+                                "Paste the redirect URL here, or finish signing in via the browser:",
+                        });
+                        return awaitInput();
+                    },
+                    onSelect: async (prompt: any) => {
+                        emit({
+                            event: "prompt",
+                            promptKind: "select",
+                            message: prompt.message,
+                            options: prompt.options,
+                        });
+                        return awaitInput();
+                    },
+                    onProgress: (message: string) =>
+                        emit({ event: "progress", message }),
+                    signal: abort.signal,
+                });
+                // Success: reload models so newly authed ones become selectable.
+                try {
+                    modelRegistry.refresh();
+                } catch {
+                    /* refresh is best-effort */
+                }
+                emit({ event: "done", ok: true, provider: prov });
+                bus.broadcastToThread(threadId, {
+                    kind: "notify",
+                    level: "success",
+                    message: `Logged in to ${prov.name}`,
+                });
+                refreshAuthFooter(threadId);
+            } catch (err: any) {
+                const msg = String(err?.message ?? err);
+                if (msg === "Login cancelled") emit({ event: "cancelled" });
+                else emit({ event: "done", ok: false, error: msg });
+            } finally {
+                loginSessions.delete(loginId);
+            }
+        })();
+
+        return {
+            ok: true,
+            loginId,
+            provider: prov,
+            authType: "oauth",
+            usesCallbackServer: !!oauthProvider.usesCallbackServer,
+        };
+    },
+
+    /**
+     * Deliver the browser's answer to the outstanding interactive prompt.
+     * @param {string} loginId
+     * @param {string} value
+     */
+    respond(loginId: string, value: string) {
+        const p = loginSessions.get(loginId);
+        if (!p?.resolve) return { ok: false };
+        const resolve = p.resolve;
+        p.resolve = undefined;
+        p.reject = undefined;
+        resolve(String(value ?? ""));
+        return { ok: true };
+    },
+
+    /**
+     * Cancel the whole flow (Esc / backdrop / dialog close): reject any pending
+     * prompt and abort the login so `authStorage.login()` unwinds.
+     * @param {string} loginId
+     */
+    cancel(loginId: string) {
+        const p = loginSessions.get(loginId);
+        if (!p) return { ok: false };
+        p.reject?.(new Error("Login cancelled"));
+        p.resolve = undefined;
+        p.reject = undefined;
+        try {
+            p.abort.abort();
+        } catch {
+            /* already settled */
+        }
+        return { ok: true };
+    },
+
+    /**
+     * Remove stored credentials for a provider (`/logout` parity).
+     * @param {string} providerId
+     * @param {string} [threadId]
+     */
+    logout(providerId: string, threadId?: string) {
+        try {
+            authStorage.logout(providerId);
+            try {
+                modelRegistry.refresh();
+            } catch {
+                /* refresh is best-effort */
+            }
+            refreshAuthFooter(threadId);
+            return { ok: true };
+        } catch (err: any) {
+            return { ok: false, error: String(err?.message ?? err) };
+        }
+    },
+};
+
 const server = createApp({
     web: WEB,
     indexHtmlPath,
@@ -2687,6 +3070,7 @@ const server = createApp({
     sessionApi,
     modelApi,
     commandsApi,
+    loginApi,
     trustApi,
     // Project file list for the browser's `@` mention typeahead, scoped to the
     // viewing thread's working directory.
@@ -2969,6 +3353,15 @@ const server = createApp({
                 reload: true,
                 ...buildWelcome(t.resourceLoader),
             });
+            // Surface any extension that FAILED to load as an inline error so a
+            // broken/new extension doesn't silently vanish — the reload
+            // otherwise looks clean and the missing `/command` is a mystery.
+            for (const e of extensionErrors(t.resourceLoader)) {
+                bus.broadcastToThread(threadId, {
+                    kind: "error",
+                    text: `extension ${e.label} failed to load: ${e.message}`,
+                });
+            }
             // re-assert the composer's thinking-level border after reload
             // (mirrors the pi TUI re-running updateEditorBorderColor)
             bus.broadcastToThread(threadId, thinkingLevelFrame(t.session));

@@ -1134,6 +1134,19 @@
                 display: block;
                 margin-left: 1em;
             }
+            .welcome .welcome-errors {
+                margin-top: 8px;
+                display: flex;
+                flex-direction: column;
+                gap: 3px;
+            }
+            .welcome .welcome-error {
+                color: var(--err, #e5484d);
+                border-left: 2px solid var(--err, #e5484d);
+                padding-left: 8px;
+                white-space: pre-wrap;
+                word-break: break-word;
+            }
             .welcome .toggle {
                 color: var(--dim);
                 margin-top: 6px;
@@ -1180,7 +1193,8 @@
             }
             /* /resume thread picker overlay */
             #overlay,
-            pi-model-picker {
+            pi-model-picker,
+            pi-login {
                 position: fixed;
                 inset: 0;
                 background: rgba(0, 0, 0, 0.5);
@@ -1189,8 +1203,80 @@
                 justify-content: center;
             }
             #overlay.show,
-            pi-model-picker.show {
+            pi-model-picker.show,
+            pi-login.show {
                 display: flex;
+            }
+            /* /login overlay: provider picker + OAuth flow (shares .picker) */
+            .login-card {
+                padding: 16px;
+            }
+            .login-flow {
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+            }
+            .login-info {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                max-height: 40vh;
+                overflow: auto;
+            }
+            .login-line {
+                color: var(--txt);
+                white-space: pre-wrap;
+                word-break: break-word;
+            }
+            .login-line.ok {
+                color: var(--acc);
+            }
+            .login-line.err {
+                color: var(--err);
+            }
+            .login-url {
+                color: var(--acc);
+                word-break: break-all;
+            }
+            .login-code {
+                font-family: ui-monospace, monospace;
+                font-size: 26px;
+                letter-spacing: 3px;
+                color: var(--acc);
+                padding: 6px 0;
+            }
+            .login-prompt {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+            .login-input-row {
+                display: flex;
+                gap: 8px;
+            }
+            .login-field {
+                flex: 1;
+            }
+            .login-btn {
+                align-self: flex-start;
+                background: var(--panel);
+                color: var(--txt);
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                padding: 6px 12px;
+                cursor: pointer;
+            }
+            .login-btn:hover {
+                border-color: var(--acc);
+                color: var(--acc);
+            }
+            .login-option {
+                align-self: stretch;
+                text-align: left;
+            }
+            .login-copy {
+                padding: 3px 10px;
+                font-size: 13px;
             }
             .picker {
                 margin-top: 12vh;
@@ -1404,6 +1490,7 @@
         <div id="toast-layer"></div>
         <pi-picker id="overlay"></pi-picker>
         <pi-model-picker id="model-picker"></pi-model-picker>
+        <pi-login id="login"></pi-login>
         <pi-dialog id="dialog"></pi-dialog>
         <script type="module" src="/app.js"></script>
     </body>

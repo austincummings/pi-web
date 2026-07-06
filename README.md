@@ -27,13 +27,13 @@ browser web UI  ──SSE/POST──►  host (Bun)
 
 ## Files
 
-| Path                     | Role                                                                |
-| ------------------------ | ------------------------------------------------------------------- |
-| `src/host/server.ts`     | HTTP host: in-process agent + SSE/POST bus                          |
-| `src/host/piweb-host.ts` | `piweb` registry: docks/overlays, state, action dispatch            |
-| `src/host/build-web.ts`  | bundles the TS front-end (`src/web/*.ts`) via Bun → `/app.js`       |
-| `src/sdk/piweb.ts`       | `@pi-web/sdk` shim extensions import (resolves to host or no-op)    |
-| `src/web/`               | Browser web UI: transcript + component-tree renderer                |
+| Path                     | Role                                                             |
+| ------------------------ | ---------------------------------------------------------------- |
+| `src/host/server.ts`     | HTTP host: in-process agent + SSE/POST bus                       |
+| `src/host/piweb-host.ts` | `piweb` registry: docks/overlays, state, action dispatch         |
+| `src/host/build-web.ts`  | bundles the TS front-end (`src/web/*.ts`) via Bun → `/app.js`    |
+| `src/sdk/piweb.ts`       | `@pi-web/sdk` shim extensions import (resolves to host or no-op) |
+| `src/web/`               | Browser web UI: transcript + component-tree renderer             |
 
 > **Extensions** live in `~/.dotfiles/config/pi/.pi/agent/extensions/` (vendored
 > from this repo, stowed into `~/.pi/agent/extensions/`), so pi/pi-web auto-load

@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>src/web/app.ts — Flow Walkthrough</title>
+        <style>
+            :root {
+                --bg: #14161b;
+                --panel: #14161b;
+                --txt: #d6dae2;
+                --muted: #9aa4b2;
+                --acc: #7aa2f7;
+                --acc2: #9ec1ff;
+                --line: #2a2f3a;
+                --code-bg: #0d0f14;
+            }
+            * {
+                box-sizing: border-box;
+            }
+            body {
+                margin: 0;
+                padding: 2rem 1.25rem 4rem;
+                font:
+                    15px/1.65 -apple-system,
+                    BlinkMacSystemFont,
+                    "Segoe UI",
+                    Roboto,
+                    sans-serif;
+                color: var(--txt);
+                background: var(--bg);
+                max-width: 900px;
+                margin-inline: auto;
+            }
+            h1 {
+                font-size: 1.9rem;
+                margin: 0 0 0.35rem;
+                color: var(--acc);
+                letter-spacing: -0.02em;
+            }
+            h1 code {
+                font-size: 1.5rem;
+            }
+            .lede {
+                color: var(--muted);
+                margin: 0 0 2rem;
+                font-size: 1.02rem;
+            }
+            h2 {
+                font-size: 1.18rem;
+                margin: 2.2rem 0 0.6rem;
+                padding-bottom: 0.35rem;
+                border-bottom: 1px solid var(--line);
+                color: var(--txt);
+            }
+            h2 .num {
+                display: inline-block;
+                min-width: 1.7rem;
+                color: var(--acc);
+                font-weight: 700;
+            }
+            code {
+                font-family:
+                    "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+                font-size: 0.86em;
+                background: color-mix(in srgb, var(--acc) 14%, transparent);
+                color: var(--acc2);
+                padding: 0.1em 0.38em;
+                border-radius: 4px;
+            }
+            pre {
+                background: var(--code-bg);
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                padding: 1rem 1.1rem;
+                overflow-x: auto;
+                font-family:
+                    "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+                font-size: 0.82rem;
+                line-height: 1.5;
+                color: #b8c0cc;
+            }
+            pre code {
+                background: none;
+                color: inherit;
+                padding: 0;
+            }
+            ul {
+                padding-left: 1.25rem;
+            }
+            li {
+                margin: 0.3rem 0;
+            }
+            .cols {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 1rem;
+            }
+            @media (max-width: 640px) {
+                .cols {
+                    grid-template-columns: 1fr;
+                }
+            }
+            .card {
+                background: color-mix(in srgb, var(--acc) 6%, transparent);
+                border: 1px solid var(--line);
+                border-left: 3px solid var(--acc);
+                border-radius: 8px;
+                padding: 0.85rem 1rem;
+            }
+            .card h3 {
+                margin: 0 0 0.4rem;
+                font-size: 0.95rem;
+                color: var(--acc2);
+            }
+            .card p {
+                margin: 0;
+                font-size: 0.88rem;
+                color: var(--muted);
+            }
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 0.5rem 0;
+                font-size: 0.9rem;
+            }
+            th,
+            td {
+                text-align: left;
+                padding: 0.5rem 0.7rem;
+                border-bottom: 1px solid var(--line);
+            }
+            th {
+                color: var(--acc2);
+                font-weight: 600;
+            }
+            td:first-child {
+                white-space: nowrap;
+            }
+            .flow {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                flex-wrap: wrap;
+                margin: 1rem 0;
+                font-size: 0.85rem;
+            }
+            .flow .box {
+                border: 1px solid var(--line);
+                border-radius: 8px;
+                padding: 0.6rem 0.9rem;
+                background: var(--code-bg);
+            }
+            .flow .arrow {
+                color: var(--acc);
+                font-weight: 700;
+            }
+            .tag {
+                display: inline-block;
+                font-size: 0.72rem;
+                font-weight: 600;
+                padding: 0.1em 0.5em;
+                border-radius: 20px;
+                margin-right: 0.3rem;
+                background: color-mix(in srgb, var(--acc) 18%, transparent);
+                color: var(--acc2);
+            }
+            .foot {
+                margin-top: 3rem;
+                padding-top: 1rem;
+                border-top: 1px solid var(--line);
+                color: var(--muted);
+                font-size: 0.85rem;
+            }
+            strong {
+                color: var(--txt);
+            }
+        </style>
+    </head>
+    <body>
+        <h1><code>src/web/app.ts</code> — Flow Walkthrough</h1>
+        <p class="lede">
+            The pi-web browser client: a single-page app that mirrors the pi TUI
+            over HTTP + SSE.
+        </p>
+
+        <h2>Big picture</h2>
+        <div class="flow">
+            <div class="box">
+                <strong>browser</strong><br />app.ts + custom elements
+            </div>
+            <span class="arrow">— POST /prompt,/bash,/action →</span>
+            <div class="box">
+                <strong>host</strong><br />AgentSession (per thread)
+            </div>
+        </div>
+        <div class="flow">
+            <div class="box"><strong>host</strong></div>
+            <span class="arrow">— SSE /events?thread=&lt;id&gt; →</span>
+            <div class="box">
+                <strong>browser</strong><br />onSseMessage → DOM
+            </div>
+        </div>
+        <ul>
+            <li>
+                <span class="tag">client → host</span> <code>post()</code> /
+                <code>postThread()</code> fire <code>fetch</code> POSTs
+                (<code>/prompt</code>, <code>/bash</code>, <code>/action</code>,
+                <code>/model</code>, session ops…).
+            </li>
+            <li>
+                <span class="tag">host → client</span> a single
+                <code>EventSource</code> streams JSON frames that
+                <code>onSseMessage</code> fans out into DOM updates.
+            </li>
+        </ul>
+
+        <h2><span class="num">1</span> Setup &amp; wiring</h2>
+        <ul>
+            <li>
+                <strong>Custom-element imports</strong> (<code
+                    >import "./pi-tool.ts"</code
+                >) are bare side-effect imports on purpose —
+                <code>import type</code> would get tree-shaken and silently
+                break <code>customElements.define()</code>.
+            </li>
+            <li>
+                Grabs DOM handles (<code>$transcript</code>,
+                <code>composer</code>, <code>picker</code>,
+                <code>dialog</code>…).
+            </li>
+            <li>
+                Exposes <code>window.piweb.registerToolRenderer</code> for
+                extensions; registers the built-in <code>edit</code> →
+                colored-diff renderer.
+            </li>
+        </ul>
+
+        <h2><span class="num">2</span> Composer input flow</h2>
+        <p>
+            The <code>&lt;pi-composer&gt;</code> element owns the textarea,
+            submit, history, images, and working spinner. app.ts reacts to its
+            events:
+        </p>
+        <ul>
+            <li>
+                <code>pi-input</code> → <code>updateAc()</code> +
+                <code>applyThinkingBorder()</code> +
+                <code>pushEditorText()</code>
+            </li>
+            <li>
+                <code>pi-submit</code> → <code>runInput(text, images)</code>
+            </li>
+            <li><code>pi-dequeue</code> → <code>restoreQueue()</code></li>
+        </ul>
+        <p><code>runInput()</code> is the central dispatcher:</p>
+        <pre><code>!  / !!   → POST /bash   (shell; !! excludes from context)
+/         → runCommand()  else POST /command
+otherwise → POST /prompt</code></pre>
+
+        <h2>
+            <span class="num">3</span> Autocomplete <code>updateAc</code> /
+            <code>acceptAc</code>
+        </h2>
+        <p>One typeahead popup with several modes:</p>
+        <div class="cols">
+            <div class="card">
+                <h3>command</h3>
+                <p>
+                    <code>/</code> slash palette (built-in + extension
+                    commands), fuzzy-filtered.
+                </p>
+            </div>
+            <div class="card">
+                <h3>dir</h3>
+                <p><code>/new &lt;dir&gt;</code> directory completion.</p>
+            </div>
+            <div class="card">
+                <h3>file</h3>
+                <p><code>@file</code> mentions spliced mid-line.</p>
+            </div>
+            <div class="card">
+                <h3>bash</h3>
+                <p>
+                    <code>!</code>-command file completion, force-opened by
+                    <strong>Tab</strong>.
+                </p>
+            </div>
+            <div class="card">
+                <h3>ext</h3>
+                <p>Extension providers via <code>/autocomplete</code>.</p>
+            </div>
+        </div>
+        <p style="margin-top: 0.8rem">
+            Async sources use an <code>acReq</code> sequence guard so a slow
+            fetch can't clobber newer keystrokes.
+        </p>
+
+        <h2>
+            <span class="num">4</span> Slash commands <code>runCommand</code>
+        </h2>
+        <p>
+            Client-handled commands map to pickers/overlays:
+            <code>/resume</code>, <code>/new</code>, <code>/model</code>,
+            <code>/tree</code>, <code>/fork</code>, <code>/clone</code>,
+            <code>/session</code>, <code>/trust</code>, <code>/export</code>,
+            <code>/share</code>… Most fetch data then open a picker (<code
+                >openListPicker</code
+            >
+            / <code>openPicker</code> / <code>modelPicker</code>).
+        </p>
+
+        <h2><span class="num">5</span> Thread model</h2>
+        <ul>
+            <li>
+                Active thread lives in the
+                <strong>URL</strong> (<code>?thread=&lt;id&gt;</code>) —
+                survives refresh, shareable. <code>activeThreadId</code> mirrors
+                it.
+            </li>
+            <li>
+                <code>gotoThread()</code> pushes URL +
+                <code>reopenStream()</code>. <code>popstate</code> handles
+                back/forward.
+            </li>
+            <li>
+                First load: open the URL's thread, or
+                <code>POST /threads</code> to create a fresh one.
+            </li>
+        </ul>
+
+        <h2>
+            <span class="num">6</span> SSE render loop
+            <code>onSseMessage</code> — the heart
+        </h2>
+        <table>
+            <tr>
+                <th>Frame</th>
+                <th>Effect</th>
+            </tr>
+            <tr>
+                <td><code>config</code> / <code>theme</code></td>
+                <td>cwd; CSS palette vars</td>
+            </tr>
+            <tr>
+                <td><code>welcome</code></td>
+                <td>version banner + loaded resources</td>
+            </tr>
+            <tr>
+                <td><code>surfaces</code></td>
+                <td>docks / overlays / status / dialogs</td>
+            </tr>
+            <tr>
+                <td><code>footer</code> / <code>header</code></td>
+                <td>context bar; custom header</td>
+            </tr>
+            <tr>
+                <td><code>user</code></td>
+                <td>user bubble + history</td>
+            </tr>
+            <tr>
+                <td>
+                    <code>delta</code> / <code>assistant_full</code> /
+                    <code>assistant_end</code>
+                </td>
+                <td>streaming assistant markdown (throttled)</td>
+            </tr>
+            <tr>
+                <td><code>thinking</code></td>
+                <td><code>&lt;pi-thinking&gt;</code> reasoning trace</td>
+            </tr>
+            <tr>
+                <td><code>bash</code></td>
+                <td><code>&lt;pi-bash&gt;</code> streaming shell output</td>
+            </tr>
+            <tr>
+                <td><code>tool</code></td>
+                <td>
+                    <code>&lt;pi-tool&gt;</code> card
+                    (<code>applyToolFrame</code>)
+                </td>
+            </tr>
+            <tr>
+                <td><code>custom</code></td>
+                <td>extension message via registered renderer</td>
+            </tr>
+            <tr>
+                <td><code>working</code> / <code>queue</code></td>
+                <td>spinner; steering queue</td>
+            </tr>
+            <tr>
+                <td>
+                    <code>transcript_reset</code> / <code>thread_switched</code>
+                </td>
+                <td>thread lifecycle</td>
+            </tr>
+        </table>
+
+        <h2>
+            <span class="num">7</span> Rendering extension UI
+            <code>renderNode</code>
+        </h2>
+        <p>
+            A serializable component-tree renderer:
+            <code>Button</code>/<code>Input</code>/<code>Frame</code> are
+            interactive (post <code>/action</code>); everything else
+            (<code>Box</code>/<code>Text</code>/<code>Markdown</code>/<code>Image</code>…)
+            goes to the shared <code>renderStaticNode</code>.
+            <code>Frame</code> nodes become sandboxed
+            <code>&lt;pi-frame&gt;</code> iframes whose actions/notifies bubble
+            up to document listeners → host or toasts.
+        </p>
+
+        <h2><span class="num">8</span> Global keyboard</h2>
+        <ul>
+            <li>
+                <strong>Esc precedence:</strong> AC → picker → overlay →
+                interrupt working agent → cancel bash → restore queue.
+            </li>
+            <li>
+                <strong>Alt+T</strong> toggle thinking ·
+                <strong>Alt+O</strong> expand all tools ·
+                <strong>Shift+Tab</strong> cycle reasoning level ·
+                <strong>Alt+↑</strong> restore queue.
+            </li>
+        </ul>
+
+        <p class="foot">
+            The recurring pattern:
+            <strong
+                >custom elements own their local state/DOM; app.ts is the
+                router</strong
+            >
+            between their events, HTTP POSTs, and the SSE frame stream.
+        </p>
+    </body>
+</html>

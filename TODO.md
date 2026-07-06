@@ -52,19 +52,19 @@ Simple, line-based backlog. Check items off as they land.
       `MarkdownTheme.highlightCode`).
 
       <sub>Original spec (kept for reference):</sub> override how a message / code block renders in the transcript
-                                                          (closely related to #10; the forcing function is a tree-sitter highlighter).
-                                                          Shape: `piweb.registerMessageRenderer(customType, (message, opts) => Node)`
-                                                          where the renderer returns a **serializable component tree** (the same
-                                                          `Stack/Row/Text/Button/Frame` node model as docks/overlays), not a TUI
-                                                          `Component`. The host keeps a `customType -> renderer` map; when a transcript
-                                                          entry carries a matching `customType` (or, for code blocks, a synthetic
-                                                          `"code"` type with `{ lang, text }`), it renders the returned tree via the
-                                                          existing `renderNode` path instead of the default markdown/`<pre>` output.
-                                                          Needs three small pieces: (a) the registry + `render` SSE frame carrying
-                                                          `{ customType, tree }`, (b) a new `Code` node type so a highlighter can emit
-                                                          spans without a `Frame`, (c) capturing the fenced-code language in
-                                                          `markdown.ts` so code blocks can be routed to a registered renderer.
-                                                          Stays portable: with no host present the call no-ops like the rest of `piweb`.
+                                                                  (closely related to #10; the forcing function is a tree-sitter highlighter).
+                                                                  Shape: `piweb.registerMessageRenderer(customType, (message, opts) => Node)`
+                                                                  where the renderer returns a **serializable component tree** (the same
+                                                                  `Stack/Row/Text/Button/Frame` node model as docks/overlays), not a TUI
+                                                                  `Component`. The host keeps a `customType -> renderer` map; when a transcript
+                                                                  entry carries a matching `customType` (or, for code blocks, a synthetic
+                                                                  `"code"` type with `{ lang, text }`), it renders the returned tree via the
+                                                                  existing `renderNode` path instead of the default markdown/`<pre>` output.
+                                                                  Needs three small pieces: (a) the registry + `render` SSE frame carrying
+                                                                  `{ customType, tree }`, (b) a new `Code` node type so a highlighter can emit
+                                                                  spans without a `Frame`, (c) capturing the fenced-code language in
+                                                                  `markdown.ts` so code blocks can be routed to a registered renderer.
+                                                                  Stays portable: with no host present the call no-ops like the rest of `piweb`.
 
 - [x] 20. Rename the `dock`/`overlay` surface API toward pi parity: `dock` -> `setWidget`
       with a widened `placement` (`aboveEditor`/`belowEditor` aliases for today's

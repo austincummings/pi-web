@@ -57,7 +57,9 @@ test("render(select) shows the card, options, and highlights the first", () => {
     const el = mount();
     const opens: number[] = [];
     el.addEventListener("pi-dialog-open", () => opens.push(1));
-    el.render([{ id: "d1", dialog: "select", title: "Pick", options: ["a", "b", "c"] }]);
+    el.render([
+        { id: "d1", dialog: "select", title: "Pick", options: ["a", "b", "c"] },
+    ]);
     expect(el.classList.contains("show")).toBe(true);
     expect(opens.length).toBe(1);
     const rows = el.querySelectorAll(".item");
@@ -92,7 +94,9 @@ test("select: clicking a row answers with that option", () => {
 test("confirm: OK answers true, and Escape answers false", () => {
     const el = mount();
     const answers = onAnswer(el);
-    el.render([{ id: "c1", dialog: "confirm", title: "Sure?", message: "Really?" }]);
+    el.render([
+        { id: "c1", dialog: "confirm", title: "Sure?", message: "Really?" },
+    ]);
     expect(el.querySelector(".dialog-msg")!.textContent).toBe("Really?");
     (el.querySelector("button.primary") as HTMLButtonElement).click();
     expect(answers).toEqual([{ requestId: "c1", value: true }]);
@@ -110,7 +114,11 @@ test("input: Enter submits the field value", () => {
     expect(field.tagName).toBe("INPUT");
     field.value = "hi";
     field.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+        new KeyboardEvent("keydown", {
+            key: "Enter",
+            bubbles: true,
+            cancelable: true,
+        }),
     );
     expect(answers).toEqual([{ requestId: "i1", value: "hi" }]);
 });
@@ -124,7 +132,11 @@ test("editor: multiline textarea, Enter is a newline, Ctrl+Enter saves", () => {
     expect(field.value).toBe("abc");
     // plain Enter does NOT submit an editor
     field.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+        new KeyboardEvent("keydown", {
+            key: "Enter",
+            bubbles: true,
+            cancelable: true,
+        }),
     );
     expect(answers.length).toBe(0);
     field.dispatchEvent(

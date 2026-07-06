@@ -124,7 +124,8 @@ export class PiModelPicker extends HTMLElement {
         if (!ranked.length) {
             const empty = document.createElement("div");
             empty.className = "item";
-            empty.innerHTML = '<span class="name hint">no matching models</span>';
+            empty.innerHTML =
+                '<span class="name hint">no matching models</span>';
             this.#list.appendChild(empty);
             return;
         }
