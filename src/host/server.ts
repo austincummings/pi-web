@@ -25,18 +25,10 @@
  * request (`/prompt`, `/bash`, `/action`, `/session/*`, `/reload`) carries the
  * thread id it targets.
  */
-import { readFile, readdir, unlink } from "node:fs/promises";
-import { statSync, existsSync } from "node:fs";
+import { readFile, unlink } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import {
-    basename,
-    dirname,
-    isAbsolute,
-    join,
-    relative,
-    resolve,
-    sep,
-} from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { execFile, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
@@ -58,6 +50,10 @@ import {
     type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import { renderToolResultToNode } from "./component-adapter.ts";
+import { textOf, imagesOf, thinkingOf, describeError } from "./content.ts";
+import { formatCwdForFooter } from "./cwd-display.ts";
+import { createProjectFileHelpers } from "./project-files.ts";
+import { resourceLabel } from "./resource-label.ts";
 import { webPaletteTheme } from "./tui-theme.ts";
 
 // Built-in tools pi-web renders natively (client renderers / default body). We
@@ -149,147 +145,6 @@ const trustPrompted = new Set<string>();
 /** @type {Set<string>} */
 const knownCwds = new Set([cwd]);
 
-/**
- * Resolve a user-supplied directory for a new thread. Relative paths resolve
- * against the root cwd, `~` expands to $HOME, and the target must be an existing
- * directory — otherwise we throw so the client can surface a clear error rather
- * than booting a session in a bogus place.
- * @param {string} [dir]
- * @returns {string}
- */
-function resolveThreadCwd(dir?: string) {
-    const raw = (dir ?? "").trim();
-    if (!raw) return cwd;
-    const expanded = raw.startsWith("~")
-        ? join(process.env.HOME ?? "", raw.slice(1))
-        : raw;
-    const abs = resolve(cwd, expanded);
-    let st;
-    try {
-        st = statSync(abs);
-    } catch {
-        throw new Error(`no such directory: ${abs}`);
-    }
-    if (!st.isDirectory()) throw new Error(`not a directory: ${abs}`);
-    return abs;
-}
-
-// ---- project file list (for the `@` mention typeahead) --------------------
-// Prefer `git ls-files` (fast, respects .gitignore); fall back to a bounded
-// filesystem walk for non-git working dirs. Results are cached briefly so a
-// burst of keystrokes doesn't re-shell on every request, while newly created
-// files still surface within a few seconds.
-const FILE_CACHE_TTL_MS = 4000;
-const FILE_LIST_CAP = 10000;
-const WALK_SKIP = new Set([
-    ".git",
-    "node_modules",
-    ".cache",
-    "dist",
-    "build",
-    "coverage",
-    ".next",
-]);
-/** Per-directory file-list cache (the `@` typeahead is scoped to a thread's cwd). @type {Map<string, { at: number, items: string[] }>} */
-const fileCacheByDir = new Map();
-
-async function walkFiles(dir: string, base: string, out: string[]) {
-    if (out.length >= FILE_LIST_CAP) return;
-    let entries;
-    try {
-        entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-        return;
-    }
-    for (const ent of entries) {
-        if (out.length >= FILE_LIST_CAP) return;
-        if (WALK_SKIP.has(ent.name)) continue;
-        // Skip hidden directories (.git-like noise / huge caches); keep hidden
-        // files (e.g. .gitignore, .editorconfig) which are legit @-mentionable
-        // project files, matching the `git ls-files` fast path above.
-        if (ent.isDirectory() && ent.name.startsWith(".")) continue;
-        const abs = join(dir, ent.name);
-        if (ent.isDirectory()) {
-            await walkFiles(abs, base, out);
-        } else if (ent.isFile()) {
-            out.push(relative(base, abs).split(sep).join("/"));
-        }
-    }
-}
-
-/**
- * List project files for the `@` mention typeahead, scoped to a thread's cwd.
- * @param {string} [dir]
- */
-async function listProjectFiles(dir?: string) {
-    const base = dir || cwd;
-    const cached = fileCacheByDir.get(base);
-    if (cached && Date.now() - cached.at < FILE_CACHE_TTL_MS) {
-        return cached.items;
-    }
-    let items: string[];
-    try {
-        const { stdout } = await execFileP(
-            "git",
-            ["ls-files", "--cached", "--others", "--exclude-standard"],
-            { cwd: base, maxBuffer: 64 * 1024 * 1024 },
-        );
-        items = stdout.split("\n").filter(Boolean).slice(0, FILE_LIST_CAP);
-    } catch {
-        items = [];
-        await walkFiles(base, base, items);
-    }
-    fileCacheByDir.set(base, { at: Date.now(), items });
-    return items;
-}
-
-/**
- * Directory suggestions for the `/new <dir>` typeahead. Resolves the partial
- * `q` against the viewing thread's cwd (or the root), expands `~`, and lists
- * matching subdirectories as absolute paths the client can splice in and drill.
- * @param {string} q
- * @param {string} [threadId]
- */
-async function listProjectDirs(q: string, threadId?: string) {
-    const baseCwd =
-        (threadId ? threadRuntimes.get(threadId) : undefined)?.cwd || cwd;
-    const raw = (q ?? "").trim();
-    const expand = (p: string) =>
-        p.startsWith("~") ? join(process.env.HOME ?? "", p.slice(1)) : p;
-    let listDir;
-    let prefix;
-    if (!raw) {
-        listDir = baseCwd;
-        prefix = "";
-    } else {
-        const abs = resolve(baseCwd, expand(raw));
-        if (raw.endsWith("/")) {
-            listDir = abs;
-            prefix = "";
-        } else {
-            listDir = dirname(abs);
-            prefix = basename(abs).toLowerCase();
-        }
-    }
-    let ents;
-    try {
-        ents = await readdir(listDir, { withFileTypes: true });
-    } catch {
-        return [];
-    }
-    const items: { value: string; label: string; description: string }[] = [];
-    for (const e of ents) {
-        if (!e.isDirectory()) continue;
-        // hide dotdirs unless the user is explicitly typing one
-        if (e.name.startsWith(".") && !prefix.startsWith(".")) continue;
-        if (prefix && !e.name.toLowerCase().startsWith(prefix)) continue;
-        const abs = join(listDir, e.name);
-        items.push({ value: abs, label: e.name, description: abs });
-    }
-    items.sort((a, b) => a.label.localeCompare(b.label));
-    return items.slice(0, 50);
-}
-
 // ---- browser bus (SSE) ----------------------------------------------------
 const bus = createBus();
 const broadcast = bus.broadcast;
@@ -313,6 +168,14 @@ const router = createThreadRouter();
 
 const sessionFor = (id: string | undefined | null) =>
     id ? (threadRuntimes.get(id)?.session ?? null) : null;
+
+// Project file/dir helpers for `@` mention and `/new <dir>` typeahead.
+const { resolveThreadCwd, listProjectFiles, listProjectDirs } =
+    createProjectFileHelpers({
+        cwd,
+        getThreadCwd: (threadId) =>
+            threadId ? threadRuntimes.get(threadId)?.cwd : undefined,
+    });
 
 // ---- piweb router (injected into extensions) ------------------------------
 // Each thread has its own panel registry; the global __PIWEB__ that extensions
@@ -535,46 +398,6 @@ const FALLBACK_MODEL_ID = "claude-opus-4-8";
 const authStorage = AuthStorage.create();
 const modelRegistry = ModelRegistry.create(authStorage);
 
-// ---- text helpers ---------------------------------------------------------
-/**
- * Pull plain text out of a message's content (string | block[]).
- * @param {unknown} content
- * @returns {string}
- */
-function textOf(content: unknown): string {
-    if (typeof content === "string") return content;
-    if (!Array.isArray(content)) return "";
-    return content
-        .filter((b) => b?.type === "text")
-        .map((b) => b.text)
-        .join("");
-}
-/**
- * Pull image blocks out of a message's content (block[] only). Images live as
- * `{ type:"image", data:base64, mimeType }` content blocks; returns the
- * `{ data, mimeType }` records the web client renders as inline thumbnails.
- * @param {unknown} content
- * @returns {{data:string; mimeType:string}[]}
- */
-function imagesOf(content: unknown): { data: string; mimeType: string }[] {
-    if (!Array.isArray(content)) return [];
-    return content
-        .filter((b) => b?.type === "image" && b.data)
-        .map((b) => ({ data: b.data, mimeType: b.mimeType }));
-}
-/**
- * Pull thinking/reasoning text out of a message's content (block[] only).
- * Thinking lives as `{ type:"thinking", thinking, redacted? }` content blocks.
- * @param {unknown} content
- * @returns {string}
- */
-function thinkingOf(content: unknown): string {
-    if (!Array.isArray(content)) return "";
-    return content
-        .filter((b) => b?.type === "thinking" && !b.redacted)
-        .map((b) => b.thinking ?? "")
-        .join("");
-}
 /**
  * Current persisted "hide thinking blocks" pi setting for a session.
  * @param {AgentSession|null|undefined} s
@@ -611,23 +434,6 @@ function thinkingLevelFrame(s: AgentSession | null | undefined) {
         available,
         supported: available.length > 1,
     };
-}
-
-/**
- * Collapse an absolute cwd to `~`-relative form for display, mirroring the pi
- * TUI footer's `formatCwdForFooter`.
- * @param {string} dir
- * @param {string} home
- * @returns {string}
- */
-function formatCwdForFooter(dir: string, home: string) {
-    if (!home) return dir;
-    const rel = relative(resolve(home), resolve(dir));
-    const inside =
-        rel === "" ||
-        (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
-    if (!inside) return dir;
-    return rel === "" ? "~" : `~${sep}${rel}`;
 }
 
 /**
@@ -830,19 +636,6 @@ function queueFrame(s: AgentSession | null | undefined) {
         /* best-effort: empty queue */
     }
     return { kind: "queue", items };
-}
-
-/**
- * @param {unknown} raw
- * @returns {string}
- */
-function describeError(raw: unknown): string {
-    if (!raw) return "model returned an error";
-    try {
-        return JSON.parse(String(raw))?.error?.message ?? String(raw);
-    } catch {
-        return String(raw);
-    }
 }
 
 /**
@@ -1384,19 +1177,6 @@ function replayTranscript(s: AgentSession, send: (msg: ServerMessage) => void) {
  * @param {string|undefined} threadId
  * @returns {Promise<string|undefined>}
  */
-// A short, human label for a resource path. Extensions usually live in
-// `.../<name>/index.ts`, so prefer the containing folder name; otherwise the
-// basename. Plain files are shown cwd-relative.
-function resourceLabel(p: string) {
-    const rel = p.startsWith(cwd + "/") ? p.slice(cwd.length + 1) : p;
-    const parts = rel.split("/");
-    const base = parts[parts.length - 1] || rel;
-    if (/^index\.[mc]?[jt]sx?$/.test(base) && parts.length >= 2) {
-        return parts[parts.length - 2];
-    }
-    return rel;
-}
-
 // Extensions that FAILED to load (bad import, runtime throw in the factory,
 // jiti/parse error, …). The core resource loader swallows these into
 // `getExtensions().errors` instead of throwing, so without surfacing them a
@@ -1409,7 +1189,7 @@ function extensionErrors(rl: any): { label: string; message: string }[] {
         return (rl?.getExtensions().errors ?? [])
             .filter((e: any) => e && !String(e.path).startsWith("<"))
             .map((e: any) => ({
-                label: resourceLabel(String(e.path)),
+                label: resourceLabel(String(e.path), cwd),
                 message: String(e.error?.message ?? e.error ?? "load failed"),
             }));
     } catch {
@@ -1437,7 +1217,7 @@ function buildWelcome(rl: any) {
         add(
             "Context",
             safe(() => rl.getAgentsFiles().agentsFiles, []).map((f: any) =>
-                resourceLabel(f.path),
+                resourceLabel(f.path, cwd),
             ),
         );
         add(
@@ -1456,13 +1236,13 @@ function buildWelcome(rl: any) {
                 // Skip synthetic/inline extensions (e.g. "<inline:1>"), like the
                 // factory pi-web injects to capture each thread's ExtensionAPI.
                 .filter((e: any) => !e.path.startsWith("<"))
-                .map((e: any) => resourceLabel(e.path)),
+                .map((e: any) => resourceLabel(e.path, cwd)),
         );
         add(
             "Themes",
             safe(() => rl.getThemes().themes, [])
                 .filter((t: any) => t.sourcePath)
-                .map((t: any) => t.name || resourceLabel(t.sourcePath)),
+                .map((t: any) => t.name || resourceLabel(t.sourcePath, cwd)),
         );
     }
     return { version: PI_VERSION, sections, errors: extensionErrors(rl) };
