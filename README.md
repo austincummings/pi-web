@@ -44,9 +44,16 @@ browser web UI  ──SSE/POST──►  host (Bun)
 
 ```bash
 bun install
-bun start            # → http://localhost:4321
+bun start            # → http://127.0.0.1:4321
 # or: bun dev        # watch mode (restarts on file changes)
 ```
+
+> **Binding.** The host binds `127.0.0.1` (loopback) by default: it drives the
+> agent — running shell commands and reading the filesystem — over
+> unauthenticated routes, so it is **not** exposed to your network implicitly.
+> To share it on the LAN, opt in explicitly with `HOST=0.0.0.0 bun start`
+> (there is no auth; only do this on a trusted network). `PORT` overrides the
+> port.
 
 Open the web UI:
 

@@ -109,7 +109,11 @@ type ServerMessage = { kind: string; [k: string]: any };
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WEB = join(__dirname, "..", "web");
 const PORT = Number(process.env.PORT ?? 4321);
-const HOST = process.env.HOST ?? "0.0.0.0";
+// Bind loopback by default: the agent runs shell commands and reads the
+// filesystem over unauthenticated routes, so it must not be exposed to the LAN
+// implicitly. Set HOST=0.0.0.0 (or a specific interface) to opt into network
+// exposure deliberately.
+const HOST = process.env.HOST ?? "127.0.0.1";
 // The process working directory: the default/root for new threads and the
 // fallback for sessions whose stored cwd is unknown. Per-thread cwd lives on
 // each ThreadRuntime (sourced from its SessionManager header); pi binds cwd at
@@ -198,10 +202,11 @@ async function walkFiles(dir: string, base: string, out: string[]) {
     }
     for (const ent of entries) {
         if (out.length >= FILE_LIST_CAP) return;
-        if (ent.name.startsWith(".") && ent.name !== ".") {
-            if (WALK_SKIP.has(ent.name)) continue;
-        }
         if (WALK_SKIP.has(ent.name)) continue;
+        // Skip hidden directories (.git-like noise / huge caches); keep hidden
+        // files (e.g. .gitignore, .editorconfig) which are legit @-mentionable
+        // project files, matching the `git ls-files` fast path above.
+        if (ent.isDirectory() && ent.name.startsWith(".")) continue;
         const abs = join(dir, ent.name);
         if (ent.isDirectory()) {
             await walkFiles(abs, base, out);
@@ -3031,8 +3036,9 @@ const server = createApp({
 });
 
 server.listen(PORT, HOST, () => {
+    const scope = HOST === "0.0.0.0" ? "  (all interfaces)" : "";
     console.log(
-        `\n  pi-web  →  http://${HOST}:${PORT}  (bound on all interfaces)\n  cwd: ${cwd}\n`,
+        `\n  pi-web  →  http://${HOST}:${PORT}${scope}\n  cwd: ${cwd}\n`,
     );
 });
 
