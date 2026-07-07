@@ -89,6 +89,10 @@ const THEME_VARS = [
     "--bash-mode",
 ];
 
+// Auto-height frames stop growing at this cap; taller content scrolls inside
+// the frame rather than being clipped.
+const MAX_AUTO_HEIGHT = 4000;
+
 function frameThemeVars(): string {
     const cs = getComputedStyle(document.documentElement);
     return THEME_VARS.map((n) => `${n}:${cs.getPropertyValue(n).trim()}`).join(
@@ -148,6 +152,15 @@ export class PiFrame extends HTMLElement {
         return this.frameHeight == null;
     }
 
+    /**
+     * Toggle the iframe's own scrollbar. Auto-height frames grow to fit and
+     * never need it; fixed-height frames (and auto frames that hit
+     * MAX_AUTO_HEIGHT) enable it so overflowing content stays reachable.
+     */
+    private setScrolling(enabled: boolean): void {
+        this.iframe?.setAttribute("scrolling", enabled ? "auto" : "no");
+    }
+
     connectedCallback(): void {
         if (!this.iframe) this.build();
         // Sandboxed frames have a null origin, so we can't filter by origin;
@@ -163,7 +176,9 @@ export class PiFrame extends HTMLElement {
         const iframe = document.createElement("iframe");
         iframe.className = "frame";
         iframe.setAttribute("sandbox", "allow-scripts");
-        iframe.setAttribute("scrolling", "no");
+        // Fixed-height frames scroll their overflow; auto-height frames grow to
+        // fit (the height message handler flips this on if they hit the cap).
+        iframe.setAttribute("scrolling", this.autoHeight ? "no" : "auto");
         iframe.style.width = "100%";
         iframe.style.border = "0";
         iframe.style.display = "block";
@@ -195,7 +210,11 @@ export class PiFrame extends HTMLElement {
         this.frameData = data;
         if (height != null && height !== this.frameHeight) {
             this.frameHeight = height;
-            if (this.iframe) this.iframe.style.height = `${height}px`;
+            if (this.iframe) {
+                this.iframe.style.height = `${height}px`;
+                // now fixed-height: let overflowing content scroll
+                this.setScrolling(true);
+            }
         }
         if (html !== this.frameHtml) {
             this.frameHtml = html;
@@ -223,8 +242,11 @@ export class PiFrame extends HTMLElement {
                 level: msg.level,
             });
         } else if (msg.type === "height" && this.autoHeight) {
-            const next =
-                Math.max(24, Math.min(Number(msg.height) || 0, 4000)) + "px";
+            const raw = Number(msg.height) || 0;
+            // Content taller than the auto-size cap scrolls internally instead
+            // of being clipped (the iframe stops growing at MAX_AUTO_HEIGHT).
+            this.setScrolling(raw > MAX_AUTO_HEIGHT);
+            const next = Math.max(24, Math.min(raw, MAX_AUTO_HEIGHT)) + "px";
             if (next !== this.iframe.style.height) {
                 this.iframe.style.height = next;
                 // The iframe auto-sizes asynchronously (it boots at an 80px
