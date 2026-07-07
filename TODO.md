@@ -4,6 +4,92 @@ Simple, line-based backlog. Check items off as they land.
 
 ## Planned
 
+- [ ] 30. **TOP PRIORITY: reach built-in tool-call renderer parity with the pi TUI.**
+      pi-web currently excludes built-in tools from host-side pi-tui `renderCall` /
+      `renderResult` adaptation (`WEB_BUILTIN_TOOLS`), so parity depends on our
+      native DOM renderers matching pi's per-tool renderers exactly. Track every
+      observed discrepancy here and check them off tool-by-tool:
+    - [ ] Shared renderer behavior:
+        - [ ] Decide whether built-ins should use host-adapted pi-tui render trees
+              instead of native DOM renderers, or keep native renderers and port every
+              built-in detail manually.
+        - [ ] Match TUI path display (`shortenPath`, especially `$HOME` -> `~`) or
+              explicitly document any deliberate cwd-relative web divergence.
+        - [ ] Match TUI empty/invalid arg display (`...`, `[invalid arg]`) instead of
+              blank strings / compact JSON fallbacks where pi has tool-specific output.
+        - [ ] Match TUI expansion affordance text and placement; browser key remains
+              `alt+o` where TUI says Ctrl+O, but wording should otherwise match.
+        - [ ] Remove or justify web-only expanded `collapse (alt+o)` lines; pi-tui
+              renderers generally do not append a visible collapse affordance.
+        - [ ] Match per-tool preview counts and whether collapsed previews show the
+              first lines (`read` errors / `write` / `ls` / `grep` / `find`) or the
+              tail / visual lines (`bash`).
+        - [ ] Render tool truncation/full-output warnings from `details` exactly like
+              TUI (`[Truncated: ...]`, `[Full output: ...]`, etc.).
+        - [ ] Preserve/render image content blocks and TUI image fallbacks for tool
+              results instead of reducing built-in results to `textOf(...)` only.
+        - [ ] Match tab/CR normalization (`replaceTabs`, `normalizeDisplayText`) in
+              tool output/previews.
+    - [ ] `bash` / `shell`:
+        - [ ] Header: TUI renders bold `$ <command>` as one title string; web splits
+              `$` and command into separate title/args colors.
+        - [ ] Show timeout suffix: `(timeout Ns)`.
+        - [ ] Empty/invalid command: show `...` / `[invalid arg]` like TUI.
+        - [ ] Collapse by terminal visual lines, not raw newline count.
+        - [ ] Show duration as a result line (`Elapsed ...` / `Took ...`) rather than
+              only in the header, or deliberately document the divergence.
+        - [ ] Render truncation/full-output warnings from bash `details`.
+    - [ ] `read`:
+        - [x] Successful collapsed reads show header only.
+        - [x] Expanded reads show from the top; collapsed read errors show first 10
+              lines with a TUI-style `... (N more lines, alt+o to expand)` hint.
+        - [ ] Compact collapsed headers for `SKILL.md`, pi docs, `AGENTS.md`, and
+              `CLAUDE.md` (`[skill]`, `read docs`, `read resource`, expand hint).
+        - [ ] Match TUI path formatting and warning-colored `:offset-end` range.
+        - [ ] Syntax-highlight expanded read output by file language.
+        - [ ] Render read truncation warnings (`First line exceeds`, line/byte limits).
+        - [ ] Render/read image content blocks and image fallbacks.
+    - [ ] `write`:
+        - [ ] Render write content preview in the call block, not as generic result
+              text after completion.
+        - [ ] Successful write result should be empty/suppressed; only errors render
+              result text.
+        - [ ] Collapsed write preview shows first 10 lines, expanded shows all.
+        - [ ] More-lines hint includes remaining and total lines:
+              `... (N more lines, TOTAL total, alt+o to expand)`.
+        - [ ] Syntax-highlight content preview by file language.
+        - [ ] Show invalid content arg as `[invalid content arg - expected string]`.
+        - [ ] Match path formatting and tab/CR normalization.
+    - [ ] `edit`:
+        - [ ] Implement/live-port TUI's call-time preview diff/error while args stream.
+        - [ ] Match `renderShell: "self"` behavior/background/framing or document the
+              DOM-shell divergence.
+        - [ ] Match TUI error suppression rules when preview error equals result error.
+        - [ ] Audit diff spacing/indent against `Text(output, 1, 0)` rendering.
+        - [ ] Match path formatting.
+    - [ ] `ls`:
+        - [ ] No-path header shows `ls .`.
+        - [ ] Header shows `(limit N)` when provided.
+        - [ ] Collapsed preview shows first 20 lines, not last 8.
+        - [ ] More-lines hint says `N more lines` below the preview.
+        - [ ] Render entry-limit / truncation warnings.
+    - [ ] `grep`:
+        - [ ] Collapsed preview shows first 15 lines, not last 8.
+        - [ ] More-lines hint says `N more lines` below the preview.
+        - [ ] Match path formatting and invalid-arg output.
+        - [ ] Render match-limit, byte-limit, and `some lines truncated` warnings.
+    - [ ] `find`:
+        - [ ] Header limit formatting matches TUI: `(limit N)`.
+        - [ ] Collapsed preview shows first 20 lines, not last 8.
+        - [ ] More-lines hint says `N more lines` below the preview.
+        - [ ] Match path formatting and invalid-arg output.
+        - [ ] Render result-limit / truncation warnings.
+    - [ ] Unknown/custom fallback:
+        - [ ] Match TUI fallback structure: bold tool name, pretty JSON args, full text
+              output, and image fallback/image rendering where applicable.
+        - [ ] Confirm extension tools with custom `renderResult` still prefer their
+              adapted render tree or registered client renderer correctly.
+
 - [x] 1. Use TypeScript across the board; minimal build system for the front-end web code. (Bun.build bundler in `src/host/build-web.ts`; `tsconfig.json` + `typecheck`/`build` scripts; web modules are now `.ts`.)
 - [x] 2. Investigate a basic/standard request router instead of the bespoke one. (Evaluated Bun.serve / Hono / in-house; chose a dependency-free `method+exact-path` router in `src/host/router.ts` since all routes are flat. Replaced the 199-line if-chain.)
 - [x] 3. Style the composer scrollbar; make all scrollbars match the transcript view styling. (Promoted the transcript's `::-webkit-scrollbar` + Firefox `scrollbar-*` treatment to a global `*` rule in index.html.)
