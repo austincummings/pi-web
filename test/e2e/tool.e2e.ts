@@ -60,3 +60,38 @@ test("host-adapted write trees render preview and suppress generic success text"
     );
     await expect(tool).not.toContainText("Successfully wrote");
 });
+
+test("host-adapted ls result tree renders first 20 lines and suppresses generic body", async ({
+    page,
+}) => {
+    await page.evaluate(() => {
+        const lines = Array.from({ length: 22 }, (_, i) => `entry-${i + 1}`);
+        (window as any).applyTool({
+            id: "tc-ls",
+            name: "ls",
+            status: "start",
+            args: { path: "." },
+        });
+        (window as any).applyTool({
+            id: "tc-ls",
+            name: "ls",
+            status: "end",
+            result: lines.join("\n"),
+            resultTreeExpanded: {
+                type: "AnsiBlock",
+                lines: ["", ...lines],
+            },
+        });
+    });
+
+    const tool = page.locator("pi-tool");
+    await expect(tool.locator(".tool-name")).toHaveText("ls");
+    await expect(tool.locator(".tool-args")).toHaveText(".");
+    await expect(tool.locator(".tool-body")).toHaveCount(0);
+    await expect(tool.locator(".ansi")).toContainText("entry-1");
+    await expect(tool.locator(".ansi")).toContainText("entry-20");
+    await expect(tool.locator(".ansi")).not.toContainText("entry-21");
+    await expect(tool.locator(".ansi")).toContainText(
+        "... (2 more lines, alt+o to expand)",
+    );
+});

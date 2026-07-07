@@ -37,6 +37,10 @@ const execFileP = promisify(execFile);
 
 import {
     createAgentSession,
+    createEditToolDefinition,
+    createFindToolDefinition,
+    createGrepToolDefinition,
+    createLsToolDefinition,
     createWriteToolDefinition,
     DefaultResourceLoader,
     SessionManager,
@@ -91,13 +95,28 @@ const WEB_BUILTIN_TOOLS = new Set([
     "task",
 ]);
 
-function writeRenderDefinition(thread: ThreadRuntime) {
-    const sessionDef = thread.session?.getToolDefinition?.("write");
+const ADAPTED_BUILTIN_TOOLS = new Set(["edit", "find", "grep", "ls", "write"]);
+
+function builtinRenderDefinition(thread: ThreadRuntime, toolName: string) {
+    const sessionDef = thread.session?.getToolDefinition?.(toolName);
     if (sessionDef?.renderCall || sessionDef?.renderResult) return sessionDef;
-    return createWriteToolDefinition(thread.cwd);
+    switch (toolName) {
+        case "edit":
+            return createEditToolDefinition(thread.cwd);
+        case "find":
+            return createFindToolDefinition(thread.cwd);
+        case "grep":
+            return createGrepToolDefinition(thread.cwd);
+        case "ls":
+            return createLsToolDefinition(thread.cwd);
+        case "write":
+            return createWriteToolDefinition(thread.cwd);
+        default:
+            return null;
+    }
 }
 
-function attachWriteCallTrees(
+function attachBuiltinCallTrees(
     frame: ServerMessage,
     thread: ThreadRuntime | null | undefined,
     toolName: string,
@@ -105,9 +124,9 @@ function attachWriteCallTrees(
     args: any,
     isPartial: boolean,
 ): void {
-    if (toolName !== "write" || !thread) return;
+    if (!thread || toolName !== "write") return;
     try {
-        const def = writeRenderDefinition(thread);
+        const def = builtinRenderDefinition(thread, toolName);
         const base = {
             toolName,
             toolCallId,
@@ -132,7 +151,7 @@ function attachWriteCallTrees(
     }
 }
 
-function attachWriteResultTrees(
+function attachBuiltinResultTrees(
     frame: ServerMessage,
     thread: ThreadRuntime | null | undefined,
     toolName: string,
@@ -142,9 +161,9 @@ function attachWriteResultTrees(
     details: any,
     isError: boolean,
 ): void {
-    if (toolName !== "write" || !thread) return;
+    if (!thread || !ADAPTED_BUILTIN_TOOLS.has(toolName)) return;
     try {
-        const def = writeRenderDefinition(thread);
+        const def = builtinRenderDefinition(thread, toolName);
         const base = {
             toolName,
             toolCallId,
@@ -707,7 +726,7 @@ function subscribe(thread: ThreadRuntime) {
                         status: "start",
                         args: ev.args,
                     };
-                    attachWriteCallTrees(
+                    attachBuiltinCallTrees(
                         frame,
                         thread,
                         ev.toolName,
@@ -736,7 +755,7 @@ function subscribe(thread: ThreadRuntime) {
                         // how long the tool ran (live turns only; see toolStart)
                         durationMs: t0 != null ? Date.now() - t0 : undefined,
                     };
-                    attachWriteResultTrees(
+                    attachBuiltinResultTrees(
                         frame,
                         thread,
                         ev.toolName,
@@ -1027,7 +1046,7 @@ function replayTranscript(s: AgentSession, send: (msg: ServerMessage) => void) {
                                 status: "start",
                                 args: b.arguments,
                             };
-                            attachWriteCallTrees(
+                            attachBuiltinCallTrees(
                                 frame,
                                 replayThread,
                                 b.name,
@@ -1051,7 +1070,7 @@ function replayTranscript(s: AgentSession, send: (msg: ServerMessage) => void) {
                     result: textOf(m.content),
                     details: m.details,
                 };
-                attachWriteResultTrees(
+                attachBuiltinResultTrees(
                     frame,
                     replayThread,
                     m.toolName,

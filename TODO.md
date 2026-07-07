@@ -10,9 +10,10 @@ Simple, line-based backlog. Check items off as they land.
       native DOM renderers matching pi's per-tool renderers exactly. Track every
       observed discrepancy here and check them off tool-by-tool:
     - [ ] Shared renderer behavior:
-        - [ ] Decide whether built-ins should use host-adapted pi-tui render trees
+        - [x] Decide whether built-ins should use host-adapted pi-tui render trees
               instead of native DOM renderers, or keep native renderers and port every
-              built-in detail manually.
+              built-in detail manually. (Hybrid: pi-web keeps the shell/header;
+              host-adapted pi-tui trees render built-in inner content where practical.)
         - [ ] Match TUI path display (`shortenPath`, especially `$HOME` -> `~`) or
               explicitly document any deliberate cwd-relative web divergence.
         - [ ] Match TUI empty/invalid arg display (`...`, `[invalid arg]`) instead of
@@ -71,18 +72,18 @@ Simple, line-based backlog. Check items off as they land.
     - [ ] `ls`:
         - [ ] No-path header shows `ls .`.
         - [ ] Header shows `(limit N)` when provided.
-        - [ ] Collapsed preview shows first 20 lines, not last 8.
-        - [ ] More-lines hint says `N more lines` below the preview.
+        - [x] Collapsed preview shows first 20 lines, not last 8.
+        - [x] More-lines hint says `N more lines` below the preview.
         - [ ] Render entry-limit / truncation warnings.
     - [ ] `grep`:
-        - [ ] Collapsed preview shows first 15 lines, not last 8.
-        - [ ] More-lines hint says `N more lines` below the preview.
+        - [x] Collapsed preview shows first 15 lines, not last 8.
+        - [x] More-lines hint says `N more lines` below the preview.
         - [ ] Match path formatting and invalid-arg output.
         - [ ] Render match-limit, byte-limit, and `some lines truncated` warnings.
     - [ ] `find`:
         - [ ] Header limit formatting matches TUI: `(limit N)`.
-        - [ ] Collapsed preview shows first 20 lines, not last 8.
-        - [ ] More-lines hint says `N more lines` below the preview.
+        - [x] Collapsed preview shows first 20 lines, not last 8.
+        - [x] More-lines hint says `N more lines` below the preview.
         - [ ] Match path formatting and invalid-arg output.
         - [ ] Render result-limit / truncation warnings.
     - [ ] Unknown/custom fallback:

@@ -216,6 +216,117 @@ test("write derives collapsed preview from expanded tree when TUI collapsed rend
     el.remove();
 });
 
+test("host-adapted ls result trees derive TUI-style collapsed preview", () => {
+    const el = mount();
+    const lines = Array.from({ length: 22 }, (_, i) => `entry-${i + 1}`);
+    el.apply(
+        {
+            id: "t1",
+            name: "ls",
+            args: { path: "." },
+            status: "start",
+        },
+        "/repo",
+    );
+    el.apply(
+        {
+            id: "t1",
+            name: "ls",
+            status: "end",
+            result: lines.join("\n"),
+            resultTreeExpanded: {
+                type: "AnsiBlock",
+                lines: ["", ...lines],
+            },
+        },
+        "/repo",
+    );
+
+    const text = el.querySelector(".ansi")!.textContent!;
+    expect(el.querySelector(".tool-name")?.textContent).toBe("ls");
+    expect(text).toContain("entry-1");
+    expect(text).toContain("entry-20");
+    expect(text).not.toContain("entry-21");
+    expect(text).toContain("... (2 more lines, alt+o to expand)");
+    expect(el.querySelector(".tool-body")).toBeNull();
+
+    el.setExpanded(true);
+    expect(el.querySelector(".ansi")!.textContent!).toContain("entry-22");
+
+    el.remove();
+});
+
+test("host-adapted grep and find result trees use their TUI preview lengths", () => {
+    for (const [name, max] of [
+        ["grep", 15],
+        ["find", 20],
+    ] as const) {
+        const el = mount();
+        const lines = Array.from(
+            { length: max + 2 },
+            (_, i) => `${name}-${i + 1}`,
+        );
+        el.apply(
+            {
+                id: `t-${name}`,
+                name,
+                args: { pattern: "x", path: "." },
+                status: "start",
+            },
+            "/repo",
+        );
+        el.apply(
+            {
+                id: `t-${name}`,
+                name,
+                status: "end",
+                result: lines.join("\n"),
+                resultTreeExpanded: {
+                    type: "AnsiBlock",
+                    lines: ["", ...lines],
+                },
+            },
+            "/repo",
+        );
+
+        const text = el.querySelector(".ansi")!.textContent!;
+        expect(text).toContain(`${name}-${max}`);
+        expect(text).not.toContain(`${name}-${max + 1}`);
+        expect(text).toContain("... (2 more lines, alt+o to expand)");
+        el.remove();
+    }
+});
+
+test("host-adapted edit result trees suppress generic success text", () => {
+    const el = mount();
+    el.apply(
+        {
+            id: "t1",
+            name: "edit",
+            args: { path: "out.txt" },
+            status: "start",
+        },
+        "/repo",
+    );
+    el.apply(
+        {
+            id: "t1",
+            name: "edit",
+            status: "end",
+            result: "Successfully replaced 1 block(s) in out.txt.",
+            resultTree: { type: "AnsiBlock", lines: ["", "diff body"] },
+        },
+        "/repo",
+    );
+
+    expect(el.querySelector(".tool-name")?.textContent).toBe("edit");
+    expect(el.querySelector(".ansi")?.textContent).toContain("diff body");
+    expect(el.textContent).not.toContain("Successfully replaced");
+    expect(el.querySelector(".tool-body")).toBeNull();
+
+    el.remove();
+});
+
 test("host-adapted write trees suppress generic success result text", () => {
     const el = mount();
     el.apply(

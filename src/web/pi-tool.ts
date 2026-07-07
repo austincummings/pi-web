@@ -25,17 +25,27 @@ import { renderStaticNode } from "./nodes.ts";
 import { readMoreLabel, readResultParts } from "./read-tool.ts";
 
 const WRITE_PREVIEW_LINES = 10;
+const RESULT_PREVIEW_LINES: Record<string, number> = {
+    grep: 15,
+    find: 20,
+    ls: 20,
+};
 const SGR_RE = /\x1b\[[0-9;]*m/g;
 
 function isBlankAnsiLine(line: string): boolean {
     return line.replace(SGR_RE, "").trim() === "";
 }
 
-function stripWriteHeader(node: FrameNode): FrameNode | null {
+function stripLeadingBlankLines(node: FrameNode): FrameNode | null {
     if (node.type !== "AnsiBlock" || !Array.isArray(node.lines)) return node;
-    const lines = node.lines.slice(1);
+    const lines = [...node.lines];
     while (lines.length && isBlankAnsiLine(lines[0])) lines.shift();
     return lines.length ? { ...node, lines } : null;
+}
+
+function stripWriteHeader(node: FrameNode): FrameNode | null {
+    if (node.type !== "AnsiBlock" || !Array.isArray(node.lines)) return node;
+    return stripLeadingBlankLines({ ...node, lines: node.lines.slice(1) });
 }
 
 function writeCollapsedPreviewFromExpanded(node: FrameNode): FrameNode | null {
@@ -49,6 +59,26 @@ function writeCollapsedPreviewFromExpanded(node: FrameNode): FrameNode | null {
         lines: [
             ...body.lines.slice(0, WRITE_PREVIEW_LINES),
             `... (${remaining} more lines, ${total} total, alt+o to expand)`,
+        ],
+    };
+}
+
+function collapsedResultFromExpanded(
+    toolName: string,
+    node: FrameNode,
+): FrameNode | null {
+    const max = RESULT_PREVIEW_LINES[toolName];
+    if (!max) return stripLeadingBlankLines(node);
+    const body = stripLeadingBlankLines(node);
+    if (body?.type !== "AnsiBlock" || !Array.isArray(body.lines)) return body;
+    const total = body.lines.length;
+    if (total <= max) return body;
+    const remaining = total - max;
+    return {
+        ...body,
+        lines: [
+            ...body.lines.slice(0, max),
+            `... (${remaining} more lines, alt+o to expand)`,
         ],
     };
 }
@@ -177,28 +207,52 @@ export class PiTool extends HTMLElement {
             this.appendChild(head);
         };
 
-        if (this.callTree || this.callTreeExpanded) {
-            // The TUI write call tree includes its own `write <path>` header.
-            // Keep pi-web's native themed header and render only the TUI preview
-            // body below it so the card top tracks the active web theme.
-            if (info.name === "write") appendHeader();
+        if (
+            this.callTree ||
+            this.callTreeExpanded ||
+            this.resultTree ||
+            this.resultTreeExpanded
+        ) {
+            // Adapted TUI trees own the inner content, while pi-web keeps the
+            // themed card shell/header. `write` call trees include their own
+            // header, so strip it before rendering the preview body.
+            appendHeader();
             const callTree =
                 info.expanded && this.callTreeExpanded
                     ? this.callTreeExpanded
-                    : (this.callTree ?? this.callTreeExpanded!);
-            const call = renderStaticNode(
-                info.name === "write"
-                    ? !info.expanded && !this.callTree
-                        ? writeCollapsedPreviewFromExpanded(callTree)
-                        : stripWriteHeader(callTree)
-                    : callTree,
-            );
-            if (call) this.appendChild(call);
+                    : this.callTree;
+            if (callTree) {
+                const call = renderStaticNode(
+                    info.name === "write"
+                        ? stripWriteHeader(callTree)
+                        : stripLeadingBlankLines(callTree),
+                );
+                if (call) this.appendChild(call);
+            } else if (
+                info.name === "write" &&
+                !info.expanded &&
+                this.callTreeExpanded
+            ) {
+                const call = renderStaticNode(
+                    writeCollapsedPreviewFromExpanded(this.callTreeExpanded),
+                );
+                if (call) this.appendChild(call);
+            }
             const resultTree =
                 info.expanded && this.resultTreeExpanded
                     ? this.resultTreeExpanded
                     : this.resultTree;
-            const result = resultTree ? renderStaticNode(resultTree) : null;
+            const resultFallback =
+                !info.expanded && !this.resultTree && this.resultTreeExpanded
+                    ? collapsedResultFromExpanded(
+                          info.name,
+                          this.resultTreeExpanded,
+                      )
+                    : null;
+            const result = renderStaticNode(
+                resultFallback ??
+                    (resultTree ? stripLeadingBlankLines(resultTree) : null),
+            );
             if (result) this.appendChild(result);
             return;
         }
