@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+# Bun target for the Windows binary. Override to build for a different arch,
+# e.g. TARGET=bun-windows-x64-baseline for older CPUs without AVX2.
+TARGET="${TARGET:-bun-windows-x64}"
+OUTFILE="${OUTFILE:-dist/pi-web.exe}"
+
+echo "→ Building web assets..."
+bun run build
+
+echo "→ Cross-compiling Windows binary ($TARGET)..."
+bun build --compile --target="$TARGET" src/host/server.ts --outfile "$OUTFILE"
+
+echo "→ Built $OUTFILE"

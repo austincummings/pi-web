@@ -9,6 +9,7 @@
         "dev": "PI_WEB_DEV=1 bun --watch src/host/server.ts",
         "build": "bun build src/web/app.ts --target=browser --outdir dist --minify",
         "build:binary": "bun run build && bun build --compile src/host/server.ts --outfile dist/pi-web",
+        "build:windows": "./script/build-windows",
         "typecheck": "tsc --noEmit",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
