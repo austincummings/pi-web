@@ -24,6 +24,35 @@ import {
 import { renderStaticNode } from "./nodes.ts";
 import { readMoreLabel, readResultParts } from "./read-tool.ts";
 
+const WRITE_PREVIEW_LINES = 10;
+const SGR_RE = /\x1b\[[0-9;]*m/g;
+
+function isBlankAnsiLine(line: string): boolean {
+    return line.replace(SGR_RE, "").trim() === "";
+}
+
+function stripWriteHeader(node: FrameNode): FrameNode | null {
+    if (node.type !== "AnsiBlock" || !Array.isArray(node.lines)) return node;
+    const lines = node.lines.slice(1);
+    while (lines.length && isBlankAnsiLine(lines[0])) lines.shift();
+    return lines.length ? { ...node, lines } : null;
+}
+
+function writeCollapsedPreviewFromExpanded(node: FrameNode): FrameNode | null {
+    const body = stripWriteHeader(node);
+    if (body?.type !== "AnsiBlock" || !Array.isArray(body.lines)) return body;
+    const total = body.lines.length;
+    if (total <= WRITE_PREVIEW_LINES) return body;
+    const remaining = total - WRITE_PREVIEW_LINES;
+    return {
+        ...body,
+        lines: [
+            ...body.lines.slice(0, WRITE_PREVIEW_LINES),
+            `... (${remaining} more lines, ${total} total, alt+o to expand)`,
+        ],
+    };
+}
+
 // The shape of an SSE `tool` frame (start = name+args; end = result+isError).
 export interface ToolFrame {
     id: string;
@@ -35,6 +64,12 @@ export interface ToolFrame {
     details?: unknown;
     /** How long the tool ran, in ms (host-stamped; live turns only). */
     durationMs?: number;
+    /** Host-adapted pi-tui renderCall trees (collapsed / expanded). */
+    callTree?: FrameNode;
+    callTreeExpanded?: FrameNode;
+    /** Host-adapted pi-tui renderResult trees (collapsed / expanded). */
+    resultTree?: FrameNode;
+    resultTreeExpanded?: FrameNode;
     /**
      * A host-adapted serializable node tree for a tool's custom renderResult
      * (render-model parity P1). Currently an `AnsiBlock` node; painted in place
@@ -62,6 +97,11 @@ export class PiTool extends HTMLElement {
     private built = false;
     /** Host-adapted renderResult tree (Parity P1); see ToolFrame.tree. */
     private tree: FrameNode | null = null;
+    /** Host-adapted pi-tui renderCall/renderResult trees for built-in spikes. */
+    private callTree: FrameNode | null = null;
+    private callTreeExpanded: FrameNode | null = null;
+    private resultTree: FrameNode | null = null;
+    private resultTreeExpanded: FrameNode | null = null;
 
     connectedCallback(): void {
         if (!this.built) {
@@ -77,6 +117,9 @@ export class PiTool extends HTMLElement {
         if (m.status === "start") {
             this.info.args = m.args;
             this.info.pending = true;
+            if (m.callTree != null) this.callTree = m.callTree;
+            if (m.callTreeExpanded != null)
+                this.callTreeExpanded = m.callTreeExpanded;
         } else {
             this.info.pending = false;
             this.info.isError = !!m.isError;
@@ -84,6 +127,9 @@ export class PiTool extends HTMLElement {
             if (m.details != null) this.info.details = m.details;
             if (m.durationMs != null) this.info.durationMs = m.durationMs;
             if (m.tree != null) this.tree = m.tree;
+            if (m.resultTree != null) this.resultTree = m.resultTree;
+            if (m.resultTreeExpanded != null)
+                this.resultTreeExpanded = m.resultTreeExpanded;
         }
         this.render();
     }
@@ -112,22 +158,52 @@ export class PiTool extends HTMLElement {
             (info.pending ? " pending" : "");
         this.innerHTML = "";
 
-        const head = document.createElement("div");
-        head.className = "tool-head";
-        head.innerHTML =
-            '<span class="tool-name"></span> ' +
-            '<span class="tool-args"></span><span class="tool-dim"></span>';
-        const title = toolTitle(info.name, info.args, this.cwd);
-        (head.querySelector(".tool-name") as HTMLElement).textContent =
-            title.name;
-        (head.querySelector(".tool-args") as HTMLElement).textContent =
-            title.args;
-        // Append how long the tool took to the muted context (host-stamped;
-        // absent on replay, so it simply doesn't show there).
-        const dur = info.pending ? "" : formatDuration(info.durationMs);
-        (head.querySelector(".tool-dim") as HTMLElement).textContent =
-            title.dim + (dur ? ` · ${dur}` : "");
-        this.appendChild(head);
+        const appendHeader = () => {
+            const head = document.createElement("div");
+            head.className = "tool-head";
+            head.innerHTML =
+                '<span class="tool-name"></span> ' +
+                '<span class="tool-args"></span><span class="tool-dim"></span>';
+            const title = toolTitle(info.name, info.args, this.cwd);
+            (head.querySelector(".tool-name") as HTMLElement).textContent =
+                title.name;
+            (head.querySelector(".tool-args") as HTMLElement).textContent =
+                title.args;
+            // Append how long the tool took to the muted context (host-stamped;
+            // absent on replay, so it simply doesn't show there).
+            const dur = info.pending ? "" : formatDuration(info.durationMs);
+            (head.querySelector(".tool-dim") as HTMLElement).textContent =
+                title.dim + (dur ? ` · ${dur}` : "");
+            this.appendChild(head);
+        };
+
+        if (this.callTree || this.callTreeExpanded) {
+            // The TUI write call tree includes its own `write <path>` header.
+            // Keep pi-web's native themed header and render only the TUI preview
+            // body below it so the card top tracks the active web theme.
+            if (info.name === "write") appendHeader();
+            const callTree =
+                info.expanded && this.callTreeExpanded
+                    ? this.callTreeExpanded
+                    : (this.callTree ?? this.callTreeExpanded!);
+            const call = renderStaticNode(
+                info.name === "write"
+                    ? !info.expanded && !this.callTree
+                        ? writeCollapsedPreviewFromExpanded(callTree)
+                        : stripWriteHeader(callTree)
+                    : callTree,
+            );
+            if (call) this.appendChild(call);
+            const resultTree =
+                info.expanded && this.resultTreeExpanded
+                    ? this.resultTreeExpanded
+                    : this.resultTree;
+            const result = resultTree ? renderStaticNode(resultTree) : null;
+            if (result) this.appendChild(result);
+            return;
+        }
+
+        appendHeader();
 
         // Extension override: a registered renderer may replace the body.
         const custom = getToolRenderer(info.name);

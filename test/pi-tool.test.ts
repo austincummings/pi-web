@@ -154,6 +154,134 @@ test("collapsed read errors show the first 10 lines with a TUI-style hint", () =
     el.remove();
 });
 
+test("host-adapted write call trees keep native header and render preview", () => {
+    const el = mount();
+    el.apply(
+        {
+            id: "t1",
+            name: "write",
+            args: { path: "out.txt" },
+            status: "start",
+            callTree: { type: "AnsiBlock", lines: ["write out.txt", "line 0"] },
+            callTreeExpanded: {
+                type: "AnsiBlock",
+                lines: ["write out.txt", "line 0", "line 1"],
+            },
+        },
+        "/repo",
+    );
+
+    expect(el.classList.contains("tool")).toBe(true);
+    expect(el.classList.contains("pending")).toBe(true);
+    expect(el.querySelector(".tool-name")?.textContent).toBe("write");
+    expect(el.querySelector(".tool-args")?.textContent).toBe("out.txt");
+    expect(el.querySelector(".ansi")?.textContent).not.toContain(
+        "write out.txt",
+    );
+    expect(el.querySelector(".ansi")?.textContent).toContain("line 0");
+    expect(el.querySelector(".ansi")?.textContent).not.toContain("line 1");
+
+    el.setExpanded(true);
+    expect(el.querySelector(".ansi")?.textContent).toContain("line 1");
+
+    el.remove();
+});
+
+test("write derives collapsed preview from expanded tree when TUI collapsed render is unavailable", () => {
+    const el = mount();
+    const lines = Array.from({ length: 12 }, (_, i) => `line ${i + 1}`);
+    el.apply(
+        {
+            id: "t1",
+            name: "write",
+            args: { path: "out.txt" },
+            status: "start",
+            callTreeExpanded: {
+                type: "AnsiBlock",
+                lines: ["write out.txt", "", ...lines],
+            },
+        },
+        "/repo",
+    );
+
+    const text = el.querySelector(".ansi")!.textContent!;
+    expect(text).toContain("line 1");
+    expect(text).toContain("line 10");
+    expect(text).not.toContain("line 11");
+    expect(text).toContain("... (2 more lines, 12 total, alt+o to expand)");
+
+    el.setExpanded(true);
+    expect(el.querySelector(".ansi")!.textContent!).toContain("line 12");
+
+    el.remove();
+});
+
+test("host-adapted write trees suppress generic success result text", () => {
+    const el = mount();
+    el.apply(
+        {
+            id: "t1",
+            name: "write",
+            status: "start",
+            callTree: {
+                type: "AnsiBlock",
+                lines: ["write out.txt", "preview"],
+            },
+        },
+        "/repo",
+    );
+    el.apply(
+        {
+            id: "t1",
+            name: "write",
+            status: "end",
+            result: "Successfully wrote 7 bytes to out.txt",
+            resultTree: { type: "Container", children: [] },
+        },
+        "/repo",
+    );
+
+    expect(el.classList.contains("pending")).toBe(false);
+    expect(el.querySelector(".tool-body")).toBeNull();
+    expect(el.textContent).toContain("preview");
+    expect(el.textContent).not.toContain("Successfully wrote");
+
+    el.remove();
+});
+
+test("host-adapted write result trees render errors after the call tree", () => {
+    const el = mount();
+    el.apply(
+        {
+            id: "t1",
+            name: "write",
+            status: "start",
+            callTree: {
+                type: "AnsiBlock",
+                lines: ["write out.txt", "preview"],
+            },
+        },
+        "/repo",
+    );
+    el.apply(
+        {
+            id: "t1",
+            name: "write",
+            status: "end",
+            result: "boom",
+            isError: true,
+            resultTree: { type: "AnsiBlock", lines: ["", "boom"] },
+        },
+        "/repo",
+    );
+
+    expect(el.classList.contains("error")).toBe(true);
+    expect(el.textContent).toContain("preview");
+    expect(el.textContent).toContain("boom");
+
+    el.remove();
+});
+
 test("setExpanded drives state idempotently (pi ui.setToolsExpanded fan-out)", () => {
     const el = mount();
     const long = Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n");

@@ -10,6 +10,7 @@ import {
     renderToolCallToNode,
     renderToolResultToNode,
 } from "../src/host/component-adapter.ts";
+import { createWriteToolDefinition } from "@earendil-works/pi-coding-agent";
 
 test("adapts a component to an AnsiBlock at the given width", () => {
     const comp = { render: (w) => ["line1", "cols=" + w] };
@@ -101,6 +102,28 @@ test("renderToolCallToNode invokes renderCall with args/theme/ctx", () => {
         theme,
     );
     expect(node.lines).toEqual(["$ ls (tc2)"]);
+});
+
+test("pi write renderCall adapts the TUI content preview", () => {
+    const def = createWriteToolDefinition("/repo");
+    const node = renderToolCallToNode(
+        def,
+        {
+            toolName: "write",
+            toolCallId: "tc-write",
+            args: { path: "out.txt", content: "a\nb\nc" },
+            cwd: "/repo",
+            expanded: false,
+            isPartial: true,
+        },
+        theme,
+        80,
+    );
+
+    expect(node?.type).toBe("AnsiBlock");
+    expect(node.lines.join("\n")).toContain("write out.txt");
+    expect(node.lines.join("\n")).toContain("a");
+    expect(node.lines.join("\n")).toContain("b");
 });
 
 test("returns null when the hook is absent", () => {

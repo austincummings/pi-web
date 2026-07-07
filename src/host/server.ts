@@ -37,6 +37,7 @@ const execFileP = promisify(execFile);
 
 import {
     createAgentSession,
+    createWriteToolDefinition,
     DefaultResourceLoader,
     SessionManager,
     getAgentDir,
@@ -49,12 +50,27 @@ import {
     type AgentSession,
     type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
-import { renderToolResultToNode } from "./component-adapter.ts";
+import {
+    renderToolCallToNode,
+    renderToolResultToNode,
+} from "./component-adapter.ts";
 import { textOf, imagesOf, thinkingOf, describeError } from "./content.ts";
 import { createFrameBuilders, type ServerMessage } from "./frames.ts";
 import { createProjectFileHelpers } from "./project-files.ts";
 import { resourceLabel } from "./resource-label.ts";
 import { webPaletteTheme } from "./tui-theme.ts";
+import { createPiWebHost } from "./piweb-host.ts";
+import { makeWebBundler } from "./build-web.ts";
+import { createBus, createApp } from "./app.ts";
+import { openApp, probeRunningInstance, browserHost } from "./open-app.ts";
+import { createThemeManager } from "./theme.ts";
+import {
+    createGitBranchWatcher,
+    type GitBranchWatcher,
+    type ThreadRuntime,
+} from "./threads.ts";
+import { createThreadRouter } from "./thread-router.ts";
+import { createRequire } from "node:module";
 
 // Built-in tools pi-web renders natively (client renderers / default body). We
 // only attach a component-adapter `tree` (render-model parity P1) for
@@ -75,18 +91,86 @@ const WEB_BUILTIN_TOOLS = new Set([
     "task",
 ]);
 
-import { createPiWebHost } from "./piweb-host.ts";
-import { makeWebBundler } from "./build-web.ts";
-import { createBus, createApp } from "./app.ts";
-import { openApp, probeRunningInstance, browserHost } from "./open-app.ts";
-import { createThemeManager } from "./theme.ts";
-import {
-    createGitBranchWatcher,
-    type GitBranchWatcher,
-    type ThreadRuntime,
-} from "./threads.ts";
-import { createThreadRouter } from "./thread-router.ts";
-import { createRequire } from "node:module";
+function writeRenderDefinition(thread: ThreadRuntime) {
+    const sessionDef = thread.session?.getToolDefinition?.("write");
+    if (sessionDef?.renderCall || sessionDef?.renderResult) return sessionDef;
+    return createWriteToolDefinition(thread.cwd);
+}
+
+function attachWriteCallTrees(
+    frame: ServerMessage,
+    thread: ThreadRuntime | null | undefined,
+    toolName: string,
+    toolCallId: string,
+    args: any,
+    isPartial: boolean,
+): void {
+    if (toolName !== "write" || !thread) return;
+    try {
+        const def = writeRenderDefinition(thread);
+        const base = {
+            toolName,
+            toolCallId,
+            args: args ?? {},
+            cwd: thread.cwd,
+            isPartial,
+        };
+        frame.callTree = renderToolCallToNode(
+            def,
+            { ...base, expanded: false },
+            webPaletteTheme,
+            100,
+        );
+        frame.callTreeExpanded = renderToolCallToNode(
+            def,
+            { ...base, expanded: true },
+            webPaletteTheme,
+            100,
+        );
+    } catch {
+        /* fall back to native client rendering */
+    }
+}
+
+function attachWriteResultTrees(
+    frame: ServerMessage,
+    thread: ThreadRuntime | null | undefined,
+    toolName: string,
+    toolCallId: string,
+    args: any,
+    content: any,
+    details: any,
+    isError: boolean,
+): void {
+    if (toolName !== "write" || !thread) return;
+    try {
+        const def = writeRenderDefinition(thread);
+        const base = {
+            toolName,
+            toolCallId,
+            args: args ?? {},
+            cwd: thread.cwd,
+            content,
+            details,
+            isError,
+            isPartial: false,
+        };
+        frame.resultTree = renderToolResultToNode(
+            def,
+            { ...base, expanded: false },
+            webPaletteTheme,
+            100,
+        );
+        frame.resultTreeExpanded = renderToolResultToNode(
+            def,
+            { ...base, expanded: true },
+            webPaletteTheme,
+            100,
+        );
+    } catch {
+        /* fall back to native client rendering */
+    }
+}
 
 // pi version, for the startup banner (mirrors the TUI's `pi v<version>` logo).
 const PI_VERSION = (() => {
@@ -611,19 +695,29 @@ function subscribe(thread: ThreadRuntime) {
                     emit({ kind: "assistant_end" });
                     break;
                 }
-                case "tool_execution_start":
+                case "tool_execution_start": {
                     toolStart.set(ev.toolCallId, Date.now());
                     // Keep args around for the end event, which omits them; the
                     // tool's renderResult context wants them (Parity P1).
                     toolArgs.set(ev.toolCallId, ev.args);
-                    emit({
+                    const frame: ServerMessage = {
                         kind: "tool",
                         id: ev.toolCallId,
                         name: ev.toolName,
                         status: "start",
                         args: ev.args,
-                    });
+                    };
+                    attachWriteCallTrees(
+                        frame,
+                        thread,
+                        ev.toolName,
+                        ev.toolCallId,
+                        ev.args,
+                        true,
+                    );
+                    emit(frame);
                     break;
+                }
                 case "tool_execution_end": {
                     const t0 = toolStart.get(ev.toolCallId);
                     if (t0 != null) toolStart.delete(ev.toolCallId);
@@ -642,6 +736,16 @@ function subscribe(thread: ThreadRuntime) {
                         // how long the tool ran (live turns only; see toolStart)
                         durationMs: t0 != null ? Date.now() - t0 : undefined,
                     };
+                    attachWriteResultTrees(
+                        frame,
+                        thread,
+                        ev.toolName,
+                        ev.toolCallId,
+                        args,
+                        ev.result?.content,
+                        ev.result?.details,
+                        !!ev.isError,
+                    );
                     // Parity P1: extension tools with a custom renderResult render
                     // their pi TUI Component as an AnsiBlock `tree`. Built-ins keep
                     // pi-web's native rendering; the client prefers its own
@@ -878,9 +982,11 @@ async function ensureLoaded(id: string | undefined | null) {
 function replayTranscript(s: AgentSession, send: (msg: ServerMessage) => void) {
     send({ kind: "transcript_reset" });
     // this thread's surface registry, for re-rendering custom messages on replay
-    const replayReg = threadRuntimes.get(
+    const replayThread = threadRuntimes.get(
         s?.sessionManager?.getSessionId?.(),
-    )?.piweb;
+    );
+    const replayReg = replayThread?.piweb;
+    const replayToolArgs = new Map<string, any>();
     let messages: any[] = [];
     try {
         const ctx = s.sessionManager.buildSessionContext?.();
@@ -912,20 +1018,31 @@ function replayTranscript(s: AgentSession, send: (msg: ServerMessage) => void) {
                 // "end" comes from the toolResult message below).
                 if (Array.isArray(m.content)) {
                     for (const b of m.content) {
-                        if (b?.type === "toolCall")
-                            send({
+                        if (b?.type === "toolCall") {
+                            replayToolArgs.set(b.id, b.arguments);
+                            const frame: ServerMessage = {
                                 kind: "tool",
                                 id: b.id,
                                 name: b.name,
                                 status: "start",
                                 args: b.arguments,
-                            });
+                            };
+                            attachWriteCallTrees(
+                                frame,
+                                replayThread,
+                                b.name,
+                                b.id,
+                                b.arguments,
+                                false,
+                            );
+                            send(frame);
+                        }
                     }
                 }
                 break;
             }
-            case "toolResult":
-                send({
+            case "toolResult": {
+                const frame: ServerMessage = {
                     kind: "tool",
                     id: m.toolCallId,
                     name: m.toolName,
@@ -933,8 +1050,20 @@ function replayTranscript(s: AgentSession, send: (msg: ServerMessage) => void) {
                     isError: !!m.isError,
                     result: textOf(m.content),
                     details: m.details,
-                });
+                };
+                attachWriteResultTrees(
+                    frame,
+                    replayThread,
+                    m.toolName,
+                    m.toolCallId,
+                    replayToolArgs.get(m.toolCallId),
+                    m.content,
+                    m.details,
+                    !!m.isError,
+                );
+                send(frame);
                 break;
+            }
             case "custom":
                 // extension-injected custom message: render via a registered
                 // renderer (serialized tree) or fall back to its text content

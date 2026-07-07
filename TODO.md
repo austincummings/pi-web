@@ -50,16 +50,17 @@ Simple, line-based backlog. Check items off as they land.
         - [ ] Render read truncation warnings (`First line exceeds`, line/byte limits).
         - [ ] Render/read image content blocks and image fallbacks.
     - [ ] `write`:
-        - [ ] Render write content preview in the call block, not as generic result
-              text after completion.
-        - [ ] Successful write result should be empty/suppressed; only errors render
+        - [x] Render write content preview in the call block, not as generic result
+              text after completion. (Done via host-adapted pi-tui `renderCall`
+              trees inside the existing web tool shell.)
+        - [x] Successful write result should be empty/suppressed; only errors render
               result text.
-        - [ ] Collapsed write preview shows first 10 lines, expanded shows all.
-        - [ ] More-lines hint includes remaining and total lines:
+        - [x] Collapsed write preview shows first 10 lines, expanded shows all.
+        - [x] More-lines hint includes remaining and total lines:
               `... (N more lines, TOTAL total, alt+o to expand)`.
-        - [ ] Syntax-highlight content preview by file language.
-        - [ ] Show invalid content arg as `[invalid content arg - expected string]`.
-        - [ ] Match path formatting and tab/CR normalization.
+        - [x] Syntax-highlight content preview by file language.
+        - [x] Show invalid content arg as `[invalid content arg - expected string]`.
+        - [x] Match path formatting and tab/CR normalization.
     - [ ] `edit`:
         - [ ] Implement/live-port TUI's call-time preview diff/error while args stream.
         - [ ] Match `renderShell: "self"` behavior/background/framing or document the

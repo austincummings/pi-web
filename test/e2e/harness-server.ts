@@ -90,6 +90,43 @@ const DIALOG_PAGE = `<!doctype html>
 </body>
 </html>`;
 
+// <pi-tool> harness: mounts the real bundled element with enough app CSS to
+// exercise the actual browser DOM rendering path for host-adapted tool trees.
+const TOOL_PAGE = `<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>pi-tool harness</title>
+<style>
+  :root { --dim: #7d8aa0; --muted: #9fb0c0; --acc: #6aa0ff; --ok: #4ade80;
+    --err: #f87171; --tool-success-bg: #092216; --tool-pending-bg: #0f1d2e;
+    --tool-error-bg: #2a1013; --tool-title: #6aa0ff; --tool-output: #9fb0c0; }
+  .tool { display: block; color: var(--dim); border-left: 2px solid var(--ok);
+    background: var(--tool-success-bg); padding: 5px 8px; margin: 6px 0;
+    font-size: 14px; border-radius: 0 4px 4px 0; font-family: ui-monospace, monospace; }
+  .tool.pending { border-left-color: var(--acc); background: var(--tool-pending-bg); }
+  .tool.error { border-left-color: var(--err); background: var(--tool-error-bg); }
+  .tool-head { display: flex; align-items: baseline; white-space: nowrap; overflow: hidden; }
+  .tool-name { color: var(--tool-title); font-weight: 600; margin-right: 6px; }
+  .tool-args { color: var(--acc); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tool-dim { color: var(--dim); white-space: pre; flex-shrink: 0; }
+  .tool-body { margin: 4px 0 0; padding: 0; background: none; color: var(--tool-output);
+    font-size: 14px; white-space: pre-wrap; word-break: break-word; overflow-x: auto; max-width: 100%; }
+  .ansi { margin: 4px 0 0; font-family: ui-monospace, monospace; font-size: 14px;
+    line-height: 1.5; white-space: pre; overflow-x: auto; max-width: 100%; }
+  .ansi-line { min-height: 1.5em; }
+</style>
+</head>
+<body>
+  <pi-tool id="tool"></pi-tool>
+  <script type="module">
+    import "/pi-tool.js";
+    const el = document.getElementById("tool");
+    window.tool = el;
+    window.applyTool = (frame, cwd = "/repo") => el.apply(frame, cwd);
+    window.__ready = true;
+  </script>
+</body>
+</html>`;
+
 // <pi-picker> harness: mounts the real bundled element with the app's overlay
 // CSS so real clicks/backdrop hit-testing behave, exposes window.openList() to
 // populate + open a nav picker, and records row activations + backdrop events.
@@ -144,6 +181,7 @@ const JS: Record<string, string> = {
     "/pi-composer.js": "pi-composer.ts",
     "/pi-dialog.js": "pi-dialog.ts",
     "/pi-picker.js": "pi-picker.ts",
+    "/pi-tool.js": "pi-tool.ts",
 };
 
 Bun.serve({
@@ -175,7 +213,9 @@ Bun.serve({
                 ? DIALOG_PAGE
                 : url.pathname === "/picker"
                   ? PICKER_PAGE
-                  : PAGE;
+                  : url.pathname === "/tool"
+                    ? TOOL_PAGE
+                    : PAGE;
         return new Response(body, {
             headers: { "Content-Type": "text/html; charset=utf-8" },
         });
