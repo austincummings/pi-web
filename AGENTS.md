@@ -36,6 +36,13 @@ Diverging is fine when the medium demands it (the browser reserves keys, support
 HTML/canvas, has a window title instead of a terminal title) — but treat divergence
 as a decision to justify, not the starting point.
 
+## Approval before implementation
+
+- When the user asks whether something should be done or asks for a design
+  recommendation, answer the question and wait for explicit approval before
+  editing code. Do not treat agreement with a recommendation as permission to
+  implement unless the user clearly says to proceed.
+
 ## Project conventions
 
 - **Runtime:** Bun (runs `.ts` directly). `bun start` / `bun dev` (dev sets

@@ -1,12 +1,12 @@
 // <pi-tool> — one tool-call card in the transcript.
 //
-// Mirrors pi-tui's default tool-result view: a header (pending marker + bold
-// name + accented primary arg + muted context) and a result body collapsed to
-// MAX_TOOL_LINES until expanded (click the "more" affordance for this one card,
-// or alt+o to toggle every card at once). The TUI conveys status by tinting the
-// whole block rather than a glyph, so the element carries the `.tool` /
-// `.tool.pending` / `.tool.error`
-// classes and the shared stylesheet does the rest (light DOM, no Shadow DOM).
+// Mirrors pi-tui's tool-result view: a header (pending marker + bold name +
+// accented primary arg + muted context) and a tool-specific result body. Most
+// tools collapse to a short tail until expanded; read delegates to its own
+// renderer to match pi-tui. The TUI conveys status by tinting the whole block
+// rather than a glyph, so the element carries the `.tool` / `.tool.pending` /
+// `.tool.error` classes and the shared stylesheet does the rest (light DOM, no
+// Shadow DOM).
 //
 // The element owns its own `info` state, expand/collapse, and rendering. The
 // host feeds it SSE `tool` frames via apply() and drives expansion via
@@ -22,6 +22,7 @@ import {
     type ToolInfo,
 } from "./tools.ts";
 import { renderStaticNode } from "./nodes.ts";
+import { readMoreLabel, readResultParts } from "./read-tool.ts";
 
 // The shape of an SSE `tool` frame (start = name+args; end = result+isError).
 export interface ToolFrame {
@@ -157,7 +158,6 @@ export class PiTool extends HTMLElement {
 
         if (!info.result) return;
 
-        const { shown, hidden } = truncateResult(info.result, !!info.expanded);
         const makeMore = (label: string) => {
             const more = document.createElement("div");
             more.className = "tool-more";
@@ -165,19 +165,35 @@ export class PiTool extends HTMLElement {
             more.onclick = () => this.toggleExpanded();
             return more;
         };
+        const appendBody = (text: string) => {
+            const body = document.createElement("pre");
+            body.className = "tool-body";
+            body.textContent = text;
+            this.appendChild(body);
+        };
+
+        if (info.name === "read") {
+            const parts = readResultParts(info);
+            if (!parts) return;
+            appendBody(parts.shown);
+            if (parts.remaining > 0) {
+                this.appendChild(makeMore(readMoreLabel(parts.remaining)));
+            }
+            if (info.expanded) this.appendChild(makeMore("collapse (alt+o)"));
+            return;
+        }
+
+        const { shown, hidden } = truncateResult(info.result, !!info.expanded);
         // Collapsed: the preview is the tail, so the "N earlier lines" hint goes
         // ABOVE it (matching pi-tui). Expanded: a "collapse" affordance below.
         if (hidden > 0) {
             this.appendChild(
                 makeMore(
-                    `… ${hidden} earlier line${hidden === 1 ? "" : "s"} (alt+o)`,
+                    `... (${hidden} earlier line${hidden === 1 ? "" : "s"}, alt+o to expand)`,
                 ),
             );
         }
-        const body = document.createElement("pre");
-        body.className = "tool-body";
-        body.textContent = shown;
-        this.appendChild(body);
+        appendBody(shown);
         if (info.expanded) this.appendChild(makeMore("collapse (alt+o)"));
     }
 }

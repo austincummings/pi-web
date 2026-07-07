@@ -108,6 +108,52 @@ test("long results collapse with an 'earlier lines' hint until expanded", () => 
     el.remove();
 });
 
+test("successful collapsed read shows only the header", () => {
+    const el = mount();
+    const result = Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n");
+    el.apply({ id: "t1", name: "read", status: "start" }, "/repo");
+    el.apply({ id: "t1", status: "end", result }, "/repo");
+
+    expect(el.querySelector(".tool-name")?.textContent).toBe("read");
+    expect(el.querySelector(".tool-body")).toBeNull();
+    expect(el.querySelector(".tool-more")).toBeNull();
+
+    el.remove();
+});
+
+test("expanded read shows output from the top", () => {
+    const el = mount();
+    const result = Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n");
+    el.apply({ id: "t1", name: "read", status: "start" }, "/repo");
+    el.apply({ id: "t1", status: "end", result }, "/repo");
+
+    el.setExpanded(true);
+
+    const lines = el.querySelector(".tool-body")!.textContent!.split("\n");
+    expect(lines).toHaveLength(40);
+    expect(lines[0]).toBe("line 0");
+    expect(lines[39]).toBe("line 39");
+
+    el.remove();
+});
+
+test("collapsed read errors show the first 10 lines with a TUI-style hint", () => {
+    const el = mount();
+    const result = Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n");
+    el.apply({ id: "t1", name: "read", status: "start" }, "/repo");
+    el.apply({ id: "t1", status: "end", result, isError: true }, "/repo");
+
+    const lines = el.querySelector(".tool-body")!.textContent!.split("\n");
+    expect(lines).toHaveLength(10);
+    expect(lines[0]).toBe("line 0");
+    expect(lines[9]).toBe("line 9");
+    expect(el.querySelector(".tool-more")?.textContent).toBe(
+        "... (30 more lines, alt+o to expand)",
+    );
+
+    el.remove();
+});
+
 test("setExpanded drives state idempotently (pi ui.setToolsExpanded fan-out)", () => {
     const el = mount();
     const long = Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n");
